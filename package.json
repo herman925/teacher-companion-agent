@@ -19,8 +19,19 @@
     "clean:temp": "node harness/clean-temp.mjs",
     "test": "node --test tests/",
     "hooks:install": "node harness/install-hooks.mjs",
-    "prepare": "node harness/install-hooks.mjs || true"
+    "prepare": "node harness/install-hooks.mjs || true",
+    "demo": "node demo/serve.mjs",
+    "schema-check": "node harness/schema-check.mjs",
+    "prompt-lint": "node harness/prompt-lint.mjs"
   },
-  "keywords": ["kindergarten", "幼儿园", "教师", "陪跑智能体", "theme-inquiry", "prd", "harness"],
+  "keywords": [
+    "kindergarten",
+    "幼儿园",
+    "教师",
+    "陪跑智能体",
+    "theme-inquiry",
+    "prd",
+    "harness"
+  ],
   "license": "UNLICENSED"
 }

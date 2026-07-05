@@ -6,3 +6,6 @@ import './unit/harness.test.mjs';
 import './unit/judges.test.mjs';
 import './unit/glossary-data.test.mjs';
 import './integration/harness-line.test.mjs';
+// Runtime harness (the demo's L2/L3/L4 + engine) — lives next to the demo code.
+import '../demo/tests/runtime-harness.test.mjs';
+import '../demo/tests/mock-walkthrough.test.mjs';

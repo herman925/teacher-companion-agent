@@ -66,6 +66,8 @@ const add = (name, cmd, argv) => { const lv = level(name); if (lv !== 'off' && c
 add('glossary', NODE, [H('glossary-check.mjs')]);
 add('typewriter', NODE, [H('typewriter.mjs'), 'lint']);
 add('parity', NODE, [H('parity-check.mjs')]);
+add('schemaCheck', NODE, [H('schema-check.mjs')]);
+add('promptLint', NODE, [H('prompt-lint.mjs')]);
 
 if (!noJudges && !fast) {
   if (!PY) {
@@ -85,6 +87,7 @@ if (!fast && fs.existsSync(path.join(ROOT, 'tests'))) add('tests', NODE, ['--tes
 
 const label = {
   glossary: 'Glossary check', typewriter: 'Typewriter lint', parity: 'Parity check',
+  schemaCheck: 'Schema check', promptLint: 'Prompt lint',
   designJudge: 'Design judge', wordingJudge: 'Wording judge', tests: 'Tests',
 };
 

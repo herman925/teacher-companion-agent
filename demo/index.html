@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>陪跑智能体 · 教师资源发展平台</title>
+  <meta name="description" content="陪跑智能体演示：陪伴幼儿园教师把本土文化资源长成主题探究课程。">
+  <!-- Noto Serif SC via Google Fonts; the CSS font stack falls back to local
+       serif fonts (Source Han Serif / Songti / SimSun) when offline. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&display=swap">
+  <link rel="stylesheet" href="/src/ui/styles.css">
+</head>
+<body>
+
+  <header class="app-header">
+    <div class="app-header-inner">
+      <h1 class="app-title">陪跑智能体</h1>
+      <div class="app-subtitle" id="subtitle">新课程</div>
+      <div class="header-actions">
+        <button type="button" class="text-btn" id="btn-new">新课程</button>
+        <button type="button" class="icon-btn" id="btn-settings" title="设置（模型与密钥）" aria-label="设置">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.08A1.7 1.7 0 0 0 10.1 3.6V3.5a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56h.08a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.08a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1.28Z"></path>
+          </svg>
+        </button>
+        <button type="button" class="icon-btn" id="btn-debug" title="调试抽屉（Ctrl+`）" aria-label="调试">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14.7 6.3a4.5 4.5 0 0 0-6 5.6L3 17.6a2.1 2.1 0 0 0 3 3l5.7-5.7a4.5 4.5 0 0 0 5.6-6L14 12l-2-2Z"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="chat-main" id="messages" aria-live="polite"></main>
+
+  <div class="composer">
+    <div class="composer-inner">
+      <div class="status-line" id="status-line">
+        <span class="status-caret" aria-hidden="true"></span>
+        <span id="status-text"></span>
+      </div>
+      <div class="composer-row">
+        <textarea class="input-field" id="input" rows="1"
+          placeholder="和我说说你手边的资源，或者现场发生的事…" aria-label="输入消息"></textarea>
+        <button type="button" class="skip-link" id="skip">先跳过</button>
+        <button type="button" class="send-btn" id="send" title="发送" aria-label="发送">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 19V6"></path>
+            <path d="M6 11.5C8 9.5 10 7.5 12 5.5c2 2 4 4 6 6"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <aside class="drawer settings-drawer" id="settings-drawer" aria-label="设置">
+    <div class="drawer-head">
+      <h2 class="drawer-title">设置</h2>
+      <button type="button" class="icon-btn" id="close-settings" aria-label="关闭设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18"></path>
+        </svg>
+      </button>
+    </div>
+    <div class="drawer-body">
+      <div class="settings-field">
+        <label class="settings-label" for="provider-select">模型服务</label>
+        <select class="settings-select" id="provider-select"></select>
+      </div>
+      <div id="keys-box"></div>
+      <p class="settings-note">密钥只保存在这台设备的浏览器里，随每次请求发送给本地演示服务，不会上传到其他任何地方。选「演示模式」可以不填密钥直接体验完整流程。</p>
+    </div>
+  </aside>
+
+  <aside class="drawer debug-drawer" id="debug-drawer" aria-label="调试">
+    <div class="drawer-head">
+      <h2 class="drawer-title">debug</h2>
+      <button type="button" class="icon-btn" id="close-debug" aria-label="关闭调试">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18"></path>
+        </svg>
+      </button>
+    </div>
+    <div class="drawer-body" id="debug-body"></div>
+  </aside>
+
+  <!-- GSAP from CDN; motion.js no-ops (content stays visible) if this fails to load. -->
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>
+  <script type="module" src="/src/ui/main.js"></script>
+</body>
+</html>

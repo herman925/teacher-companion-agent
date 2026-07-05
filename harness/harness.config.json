@@ -25,12 +25,12 @@
       "note": "Turn on (warn or block) once demo/ exists; the judge targets demo/."
     },
     "schemaCheck": {
-      "level": "off",
-      "note": "Placeholder — validates course_state and workflow artifacts against harness/schema/ once those land."
+      "level": "block",
+      "note": "course-state.schema.json structural sanity + drift check against demo engine whitelist and adapter TURN_SCHEMA."
     },
     "promptLint": {
-      "level": "off",
-      "note": "Placeholder — lints system prompts / workflow prompt templates once a prompt corpus lands."
+      "level": "block",
+      "note": "Runtime prompt corpus (demo/src/prompts/) must keep carrying the spec §1 principles, §6 prohibitions, screening contract, and per-stage anchors."
     },
     "handoff": {
       "level": "warn"

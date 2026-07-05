@@ -100,20 +100,22 @@ Cost (pilot, ~50 teachers): resource-point model (2026-06-29): 免费体验版 3
 ```
 demo/
 ├── DESIGN.md            # semantic design system (source of truth for look & feel)
-├── index.html           # chat SPA shell
-├── serve.mjs            # zero-dep local server: static + /api/chat SSE proxy + harness
+├── index.html           # chat SPA shell (zh-CN)
+├── serve.mjs            # zero-dep local server: static + /api/chat SSE + turn pipeline
 ├── src/
-│   ├── main.ts          # UI: chat, closure-loop card, entry-card render, debug drawer
-│   ├── adapter/         # provider registry + JSON strategies + quirk handlers
-│   ├── harness/         # L2 parse · L3 validators · L4 retry (shared with future prod)
-│   ├── engine/          # course_state store (localStorage) + transition table
-│   └── prompts/         # base + per-stage system modules (zh-CN)
-└── tests/               # both-directions validator fixtures
+│   ├── types.mjs        # JSDoc typedefs: turn contract, violations, provider config
+│   ├── adapter.mjs      # provider registry + per-provider JSON strategies + failover
+│   ├── harness.mjs      # runtime harness: L2 parse · L3 validators · L4 policy
+│   ├── engine.mjs       # deterministic course_state engine + stage-gate table
+│   ├── mock.mjs         # scripted contract-compliant walkthrough (no key needed)
+│   ├── prompts/         # L1: base + contract + per-stage system modules (zh-CN)
+│   └── ui/              # main.js · render.js (sanitizeMarkdown) · motion.js · styles.css
+└── tests/               # both-directions validator fixtures + mock walkthrough
 ```
 
-- TypeScript compiled with esbuild-free approach TBD at build time (constraint: keep the repo zero-npm-dependency if practical; otherwise a single pinned dev dependency is an ADR-worthy exception).
-- GSAP via CDN for motion; design per DESIGN.md.
-- No CloudBase in the demo: `engine/` persists to localStorage behind the same interface the CloudBase implementation will use.
+- Plain JSDoc-typed ES modules, no build step (ADR-0001); GSAP via CDN for motion; design per DESIGN.md.
+- No CloudBase in the demo: course_state persists to localStorage in the browser; the server is stateless (state travels with each request), behind the same turn-pipeline interface a CloudBase function will implement.
+- The `mock` provider runs canned turns through the SAME L2/L3/L4 pipeline — UI and harness are demonstrable without any API key.
 
 ## 8. Alternatives considered
 
