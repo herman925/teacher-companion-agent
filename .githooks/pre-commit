@@ -1,0 +1,34 @@
+#!/bin/sh
+# .githooks/pre-commit — 教师资源发展平台 (China Teacher Resources Development Platform).
+# Runs the full quality gate before allowing a commit. Bypass with `git commit --no-verify`.
+#
+# Wired via:  git config core.hooksPath .githooks  (see harness/install-hooks.mjs)
+
+# Locate node on PATH. Git for Windows runs this under sh; PATH should include node,
+# but fall back to common locations if not.
+NODE_BIN="$(command -v node 2>/dev/null)"
+if [ -z "$NODE_BIN" ]; then
+  for cand in /usr/bin/node /usr/local/bin/node "/c/Program Files/nodejs/node.exe"; do
+    if [ -x "$cand" ]; then NODE_BIN="$cand"; break; fi
+  done
+fi
+if [ -z "$NODE_BIN" ]; then
+  echo "pre-commit: node not found on PATH. Install Node >=18 or adjust PATH." >&2
+  echo "            (bypass with: git commit --no-verify)" >&2
+  exit 1
+fi
+
+# Run from the repo root so harness paths resolve.
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+"$NODE_BIN" "$ROOT/harness/gate.mjs"
+STATUS=$?
+
+if [ "$STATUS" -ne 0 ]; then
+  echo "" >&2
+  echo "✗ Commit blocked: the quality gate failed (see findings above)." >&2
+  echo "  Fix the issues, or bypass intentionally with: git commit --no-verify" >&2
+  exit 1
+fi
+
+exit 0

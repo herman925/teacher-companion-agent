@@ -1,0 +1,2 @@
+# Scratch dir for tests that copy fixtures before mutating them (e.g. --fix runs).
+.tmp/

@@ -1,0 +1,26 @@
+{
+  "name": "china-teacher-resources-development-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "教师资源发展平台 — spec, governance, and quality harness (web-based AI companion-chat platform for kindergarten teachers)",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "gate": "node harness/gate.mjs",
+    "gate:fast": "node harness/gate.mjs --fast",
+    "glossary": "node harness/glossary-check.mjs",
+    "lint": "node harness/typewriter.mjs lint",
+    "lint:fix": "node harness/typewriter.mjs lint --fix",
+    "new": "node harness/typewriter.mjs new",
+    "parity": "node harness/parity-check.mjs",
+    "judge:wording": "python harness/judges/wording_judge.py docs",
+    "clean:temp": "node harness/clean-temp.mjs",
+    "test": "node --test tests/",
+    "hooks:install": "node harness/install-hooks.mjs",
+    "prepare": "node harness/install-hooks.mjs || true"
+  },
+  "keywords": ["kindergarten", "幼儿园", "教师", "陪跑智能体", "theme-inquiry", "prd", "harness"],
+  "license": "UNLICENSED"
+}

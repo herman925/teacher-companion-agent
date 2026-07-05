@@ -1,0 +1,231 @@
+{
+  "version": "0.1.0",
+  "project": "教师资源发展平台 / China Teacher Resources Development Platform",
+  "updated": "2026-07-05",
+  "note": "Canonical bilingual glossary. Single source of truth for terminology. The glossary checker (harness/glossary-check.mjs) reads this file. Terms originate from the V1.3 workflow spec (source-docs/workflow-v1.3.zh-CN.md); when a term is resolved or changed, edit it HERE and nowhere else.",
+  "rules": {
+    "casing_en": "Use the canonical English exactly as written (sentence case unless a proper noun).",
+    "punctuation_zh": "Chinese prose uses full-width punctuation （，。！？：；“”）. Half-width is flagged.",
+    "first_use": "On first use in a document, write the bilingual pair: 简中 (English). Thereafter either is acceptable.",
+    "forbidden_is_error": "Any term listed under variants_forbidden is a P1 finding — replace with the canonical term.",
+    "code_identifiers": "State-machine field names (course_state, teacher_mode, …) are code identifiers: always snake_case in inline code, never translated."
+  },
+  "terms": [
+    {
+      "id": "platform",
+      "zh": "教师资源发展平台",
+      "en": "Teacher Resources Development Platform",
+      "category": "core",
+      "definition_zh": "面向幼儿园教师的网页版AI陪跑对话平台，支持围绕本土文化资源的主题探究课程建设。",
+      "definition_en": "The web-based AI companion chat platform for kindergarten teachers, supporting theme-inquiry curriculum built around local cultural resources.",
+      "variants_forbidden": ["教师平台系统", "AI教学系统"]
+    },
+    {
+      "id": "companion-agent",
+      "zh": "陪跑智能体",
+      "en": "companion agent",
+      "category": "core",
+      "definition_zh": "平台的核心AI角色：按状态机分阶段陪伴教师推进主题探究，等待真实反馈后再继续，不替教师和儿童做完所有决定。",
+      "definition_en": "The platform's core AI role: accompanies the teacher stage-by-stage per the state machine, waits for real feedback before continuing, and never decides everything on behalf of teachers or children.",
+      "variants_forbidden": ["聊天机器人", "AI老师"]
+    },
+    {
+      "id": "companion-coaching",
+      "zh": "陪跑",
+      "en": "companion coaching",
+      "category": "core",
+      "definition_zh": "分阶段、以真实回传为节拍的持续陪伴模式；区别于一次性生成完整方案。",
+      "definition_en": "The staged accompaniment mode paced by real classroom feedback round-trips; the opposite of one-shot full-plan generation.",
+      "variants_forbidden": []
+    },
+    {
+      "id": "dynamic-screening",
+      "zh": "动态识别",
+      "en": "dynamic screening",
+      "category": "interaction",
+      "definition_zh": "反表单化的建档与引导方式：先读状态再提问、一次一问、必附示例答案、可推断的信息不再问、已满足的关卡静默跳过。",
+      "definition_en": "The anti-form-filling intake and elicitation style: read state before asking, one question at a time, always with example answers, never asking the inferable, silently skipping satisfied gates.",
+      "variants_forbidden": ["智能表单", "问卷式引导"]
+    },
+    {
+      "id": "closure-loop",
+      "zh": "输出闭环",
+      "en": "closure loop",
+      "category": "interaction",
+      "definition_zh": "每轮收尾必含的四要素：本轮可以去做什么；建议生成/使用哪些素材；回来请告诉我什么；我收到后会继续帮你做什么。",
+      "definition_en": "The mandatory four-part round ending: what you can go do; what materials to generate/use; what to tell me when you return; what I will do next once I receive it.",
+      "variants_forbidden": ["输出闭环四件套"]
+    },
+    {
+      "id": "course-state",
+      "zh": "课程状态",
+      "en": "course state",
+      "category": "engineering",
+      "definition_zh": "每门课程的状态机文档（代码标识符 course_state），记录阶段、证据、问题池、目标轴心与循环历史；由确定性引擎而非大模型决定流转。",
+      "definition_en": "The per-course state-machine document (code identifier course_state) recording stage, evidence, question pool, goals axis, and cycle history; transitions are decided by a deterministic engine, not the LLM.",
+      "variants_forbidden": ["会话状态", "课程档案状态"]
+    },
+    {
+      "id": "entry-card",
+      "zh": "资源课程化切口卡",
+      "en": "resource-to-curriculum entry card",
+      "category": "artifact",
+      "definition_zh": "WF03b 的产物：教师原始主题、初步目标、推荐儿童入口、儿童可感知内容、可做深方向、第一轮体验建议、需避免的成人化表达。",
+      "definition_en": "The WF03b artifact: original theme, initial goal, recommended child entry points, perceivable content, deepening directions, first-round experience suggestion, and adult-phrasing to avoid.",
+      "variants_forbidden": ["资源切入卡", "课程化卡片"]
+    },
+    {
+      "id": "theme-fit-screening",
+      "zh": "主题适配性筛查",
+      "en": "theme-fit screening",
+      "category": "artifact",
+      "definition_zh": "WF02b：判断主题适合走到哪一步——短活动型、主题探究型，或项目化探究潜力型；不把所有主题硬推成项目。",
+      "definition_en": "WF02b: judging how far a theme can go — short activity, theme inquiry, or project-inquiry potential; never forcing every theme into a project.",
+      "variants_forbidden": ["主题筛选", "适配性检测"]
+    },
+    {
+      "id": "child-question-pool",
+      "zh": "儿童问题池",
+      "en": "child question pool",
+      "category": "artifact",
+      "definition_zh": "从儿童原话和表征中整理出的真实问题集合，带来源证据与分类，剔除无儿童证据的成人化问题。",
+      "definition_en": "The set of authentic questions distilled from children's own words and representations, with source evidence and categories; adult-fabricated questions without child evidence are excluded.",
+      "variants_forbidden": ["问题库", "问题清单池"]
+    },
+    {
+      "id": "driving-question",
+      "zh": "核心驱动问题",
+      "en": "driving question",
+      "category": "artifact",
+      "definition_zh": "从儿童问题池推导、按儿童性/真实性/行动性/公共性/文化可能性校验的课程核心问题。",
+      "definition_en": "The course's central question derived from the child question pool and validated for child-appropriateness, authenticity, actionability, public relevance, and cultural possibility.",
+      "variants_forbidden": ["驱动性问题", "本质问题"]
+    },
+    {
+      "id": "cultural-goal-ladder",
+      "zh": "文化目标阶梯",
+      "en": "cultural goal ladder",
+      "category": "artifact",
+      "definition_zh": "文化目标的五层推进：感知层、理解层、关系层、情感层、行动层；先判断当前主题适合停在哪一层，不默认追求最高层。",
+      "definition_en": "The five-rung progression of cultural goals: perception, understanding, relationship, affection, action; judge which rung fits now instead of defaulting to the top.",
+      "variants_forbidden": ["文化阶梯目标"]
+    },
+    {
+      "id": "cultural-hint",
+      "zh": "文化可能性提示",
+      "en": "cultural-possibility hint",
+      "category": "artifact",
+      "definition_zh": "只面向教师后台的文化线索，必须转译为儿童能看、听、问、试、画、说、访谈、比较的小任务；无证据时只能说“可能”。",
+      "definition_en": "A teacher-backstage-only cultural thread, always translated into child-sized tasks (look, listen, ask, try, draw, tell, interview, compare); phrased as 'possibly' when evidence is absent.",
+      "variants_forbidden": ["文化点拨", "文化升华提示"]
+    },
+    {
+      "id": "stuck-point-retrospective",
+      "zh": "卡壳复盘",
+      "en": "stuck-point retrospective",
+      "category": "artifact",
+      "definition_zh": "WF20：把失败或卡住的点回到儿童经验中复盘，转化为下一轮探究的起点；教师不得直接替孩子修正答案。",
+      "definition_en": "WF20: returning failures and stuck points to children's experience for review, turning them into the next round's inquiry; teachers must not correct answers on children's behalf.",
+      "variants_forbidden": ["失败复盘", "问题复盘会"]
+    },
+    {
+      "id": "three-child-observation",
+      "zh": "三类儿童观察",
+      "en": "three-profile child observation",
+      "category": "feedback",
+      "definition_zh": "V1.3 新增回传字段（代码标识符 child_participation_difference）：最主动的孩子、还在观察的孩子、和预设不一样的孩子；不把个别反应概括为全班兴趣。",
+      "definition_en": "The V1.3 feedback field (code identifier child_participation_difference): the most active child, the still-observing child, and the child unlike the teacher's expectation; individual reactions are never generalized to whole-class interest.",
+      "variants_forbidden": ["三种儿童观察", "三类幼儿记录"]
+    },
+    {
+      "id": "focus-feedback",
+      "zh": "三句聚焦反馈",
+      "en": "three-sentence focus feedback",
+      "category": "feedback",
+      "definition_zh": "V1.3 新增回传字段（代码标识符 teacher_focus_feedback）：最值得保留的一条儿童证据；相比上一轮的新变化；下一轮最希望智能体判断的一个问题（第三句须由智能体先给示例）。",
+      "definition_en": "The V1.3 feedback field (code identifier teacher_focus_feedback): the single most keep-worthy piece of child evidence; the new change since last round; the one question the teacher most wants judged next round (the agent drafts examples for the third sentence first).",
+      "variants_forbidden": ["三句反馈法"]
+    },
+    {
+      "id": "child-learning-stage",
+      "zh": "儿童学习阶段",
+      "en": "child learning stage",
+      "category": "artifact",
+      "definition_zh": "五阶段判断（代码标识符 child_learning_stage）：感知体验、问题生成、尝试探究、关系理解、表达迁移。",
+      "definition_en": "The five-stage judgment (code identifier child_learning_stage): sensory experience, question generation, trial inquiry, relationship understanding, expressive transfer.",
+      "variants_forbidden": ["学习进度阶段"]
+    },
+    {
+      "id": "project-signal",
+      "zh": "项目化探究信号",
+      "en": "project-inquiry signal",
+      "category": "artifact",
+      "definition_zh": "主题可能长成项目化探究的证据信号；累计出现3个以上才输出提醒，规模从证据里长出来。",
+      "definition_en": "Evidence signals that a theme may grow into project-based inquiry; an alert fires only when three or more accumulate — scale grows from evidence.",
+      "variants_forbidden": ["项目化信号灯"]
+    },
+    {
+      "id": "interview-card",
+      "zh": "真实人物访谈卡",
+      "en": "real-person interview card",
+      "category": "artifact",
+      "definition_zh": "WF05b：为幼儿生成3个可问的问题、为教师/家长生成3个补充问题，让儿童听到本地人的真实表达；问题必须具体、生活化。",
+      "definition_en": "WF05b: three askable questions for children plus three follow-ups for adults, so children hear real local voices; questions must be concrete and life-scale.",
+      "variants_forbidden": ["访谈问卷卡"]
+    },
+    {
+      "id": "course-story",
+      "zh": "课程故事",
+      "en": "course story",
+      "category": "artifact",
+      "definition_zh": "阶段5的最终沉淀：以真实发生顺序和证据组织的课程叙事，支持完整案例、汇报摘要、申报、公众号多版本导出。",
+      "definition_en": "The Stage 5 distillate: the course narrative organized by true chronology and evidence, exportable as full case, report summary, application, and social-media versions.",
+      "variants_forbidden": ["教学故事", "案例故事"]
+    },
+    {
+      "id": "evidence-first",
+      "zh": "证据优先",
+      "en": "evidence-first",
+      "category": "principle",
+      "definition_zh": "没有儿童原话、作品、照片、观察等证据时，只能提出可能方向和补证据任务；不得编造儿童兴趣、问题、进展和目标达成。",
+      "definition_en": "Without child evidence (utterances, works, photos, observations), only possible directions plus an evidence-gathering task may be offered; fabricating child interest, questions, progress, or attainment is forbidden.",
+      "variants_forbidden": []
+    },
+    {
+      "id": "runtime-harness",
+      "zh": "运行时护栏",
+      "en": "runtime harness",
+      "category": "engineering",
+      "definition_zh": "生产/演示中对模型逐轮生效的四层治理（系统提示词、结构化输出、确定性校验器、带反馈重生成）；与约束仓库的开发护栏相区分。",
+      "definition_en": "The four-layer per-turn governance of the model in demo/production (system prompt, structured output, deterministic validators, regenerate-with-feedback); distinct from the dev harness that governs the repo.",
+      "variants_forbidden": ["运行护栏", "AI防护栏"]
+    },
+    {
+      "id": "dev-harness",
+      "zh": "开发护栏",
+      "en": "dev harness",
+      "category": "engineering",
+      "definition_zh": "约束本仓库的治理工具链：提交门禁、术语一致性、双语对齐、结构检查等；对开发者与编码智能体生效。",
+      "definition_en": "The governance toolchain constraining this repo: commit gate, terminology consistency, bilingual parity, structure checks; applies to developers and coding agents.",
+      "variants_forbidden": []
+    },
+    {
+      "id": "model-adapter",
+      "zh": "模型适配层",
+      "en": "model adapter",
+      "category": "engineering",
+      "definition_zh": "与供应商无关的 OpenAI 兼容调用层：MiniMax 默认，GLM、Kimi 备选故障转移，Qwen 评估开关。",
+      "definition_en": "The provider-agnostic OpenAI-compatible calling layer: MiniMax default, GLM and Kimi fallback failover, Qwen behind an evaluation flag.",
+      "variants_forbidden": ["模型中间件"]
+    },
+    {
+      "id": "teacher-mode",
+      "zh": "教师入口",
+      "en": "teacher entry mode",
+      "category": "interaction",
+      "definition_zh": "五种入口（代码标识符 teacher_mode）：从零陪跑、已有主题优化、过程中续聊、课程故事整理、素材支持；由智能体推断并轻确认，不让教师看菜单选择。",
+      "definition_en": "The five entry modes (code identifier teacher_mode): from zero, optimize existing, mid-course feedback, story export, material support; inferred by the agent and lightly confirmed, never presented as a menu.",
+      "variants_forbidden": ["用户模式", "教师模式选择"]
+    }
+  ]
+}

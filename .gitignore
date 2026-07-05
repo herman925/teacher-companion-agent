@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+build/
+
+# Logs & OS noise
+*.log
+.DS_Store
+Thumbs.db
+.cache/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local scratch / temp (cleaned by `npm run clean:temp -- --apply`)
+tmp/
+.scratch/
+*.tmp
+tests/.tmp/
+# Harness parity-test fixture names — must never be tracked at the repo root
+/a.md
+/b.md
+
+# Secrets — NEVER commit model-provider keys or server keys
+*.env
+.env*
+secrets/
+
+# Claude Code local state
+.claude/settings.local.json
+# Ephemeral git worktrees created by the agent (EnterWorktree) — never commit them.
+.claude/worktrees/
+
+# Editor
+.idea/
+.vscode/*
+!.vscode/extensions.json

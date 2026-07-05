@@ -1,0 +1,78 @@
+{
+  "version": "0.1.0",
+  "project": "教师资源发展平台 / China Teacher Resources Development Platform",
+  "note": "Central harness configuration. 'level' is one of: off | warn | block. 'block' fails the gate (and blocks the commit); 'warn' prints a reminder but does not fail; 'off' skips the check. schemaCheck and promptLint are placeholders — their runners land together with harness/schema/ and the prompt corpus.",
+  "checks": {
+    "glossary": {
+      "level": "block"
+    },
+    "typewriter": {
+      "level": "block"
+    },
+    "parity": {
+      "level": "block"
+    },
+    "tests": {
+      "level": "block"
+    },
+    "wordingJudge": {
+      "level": "warn",
+      "threshold": 6
+    },
+    "designJudge": {
+      "level": "off",
+      "threshold": 6,
+      "note": "Turn on (warn or block) once demo/ exists; the judge targets demo/."
+    },
+    "schemaCheck": {
+      "level": "off",
+      "note": "Placeholder — validates course_state and workflow artifacts against harness/schema/ once those land."
+    },
+    "promptLint": {
+      "level": "off",
+      "note": "Placeholder — lints system prompts / workflow prompt templates once a prompt corpus lands."
+    },
+    "handoff": {
+      "level": "warn"
+    },
+    "tempCleanup": {
+      "level": "warn"
+    }
+  },
+  "tempCleanup": {
+    "paths": [
+      "tmp/",
+      ".scratch/",
+      "*.tmp"
+    ],
+    "note": "True scratch paths. Loose *.tmp files anywhere in the repo are also collected by clean-temp.mjs. When any exists with content, the gate reminds you to review and run `npm run clean:temp -- --apply` (confirm before deleting)."
+  },
+  "bilingualPairs": [
+    {
+      "en": "docs/PRD.md",
+      "zh": "docs/PRD.zh-CN.md"
+    },
+    {
+      "en": "README.md",
+      "zh": "README.zh-CN.md"
+    }
+  ],
+  "handoff": {
+    "file": "HANDOFF.md",
+    "note": "Tracked (NOT gitignored) handoff doc. Run /handoff, then capture the result into this file so the next session/agent can continue. Soft (warn-level): the file may not exist yet in this young repo; the gate nudges without blocking."
+  },
+  "guard": {
+    "note": "Used by .claude/hooks/pre-edit-guard.mjs. 'deny' edits are refused; 'ask' edits trigger a user-confirmation prompt (native Claude Code permission ask); 'warn' edits are allowed with a note. Patterns: trailing '/' = directory, '*.ext' = extension, else exact filename / path suffix. source-docs/ is the immutable spec source — editing it requires explicit confirmation.",
+    "deny": [],
+    "ask": [
+      "docs/glossary.json",
+      "harness/harness.config.json",
+      ".claude/",
+      "source-docs/",
+      ".githooks/"
+    ],
+    "warn": [
+      "docs/adr/"
+    ]
+  }
+}

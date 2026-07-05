@@ -1,0 +1,285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "course-state.schema.json",
+  "title": "course_state",
+  "description": "Per-course state machine document. Fields mirror spec §2 (source-docs/workflow-v1.3.zh-CN.md); platform fields extend it. The LLM proposes deltas; the deterministic engine validates transitions against this schema plus the stage-gate table. Chinese enum glosses are in each field's description.",
+  "type": "object",
+  "required": ["course_id", "schema_version", "stage", "teacher_mode", "awaiting_feedback"],
+  "additionalProperties": false,
+  "properties": {
+    "course_id": { "type": "string", "minLength": 1 },
+    "schema_version": { "type": "string", "description": "Semver of this schema the document was written under." },
+
+    "stage": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5,
+      "description": "0 启动与建档 · 1 聚焦问题补齐经验 · 2 目标与评估轴心 · 3 开启脑洞协作行动 · 4 成果展示迭代进化 · 5 课程故事导出"
+    },
+    "completed_nodes": {
+      "type": "array",
+      "description": "Workflow node ids completed, e.g. WF01, WF03b, WF20d.",
+      "items": { "type": "string", "pattern": "^WF\\d{2}[a-d]?$" },
+      "uniqueItems": true
+    },
+    "awaiting_feedback": {
+      "type": "boolean",
+      "description": "True after a round closes with the closure loop; Stage 3 cycles must not advance while true. 等待教师回传。"
+    },
+    "pending_confirmations": {
+      "type": "array",
+      "description": "Fields awaiting teacher confirmation or marked 待现场确认.",
+      "items": {
+        "type": "object",
+        "required": ["path", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string", "description": "JSON pointer into course_state." },
+          "reason": { "type": "string", "enum": ["teacher_unsure", "needs_field_check", "agent_inferred", "awaiting_choice"] },
+          "note": { "type": "string" }
+        }
+      }
+    },
+
+    "teacher_mode": {
+      "type": "string",
+      "enum": ["from_zero", "optimize_existing", "in_progress_feedback", "story_export", "material_support"],
+      "description": "五种教师入口：从零陪跑 / 已有主题优化 / 过程中续聊 / 课程故事整理 / 素材支持。Inferred by the agent (WF01), lightly confirmed — never a menu."
+    },
+    "class_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "age_band": { "type": "string", "enum": ["小班", "中班", "大班", "混龄"], "description": "年龄段" },
+        "class_size": { "type": "integer", "minimum": 1, "maximum": 60 },
+        "experience_base": { "type": "string", "description": "幼儿经验基础" },
+        "constraints": { "type": "array", "items": { "type": "string" }, "description": "安全、时间、人员、材料等限制" }
+      }
+    },
+    "theme_resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "主题或资源名称，如龙舟、趁墟、祠堂、醒狮。" },
+        "origin": { "type": "string", "description": "来源：园本 / 社区 / 家庭 / 教师个人。" },
+        "available_scenes": { "type": "array", "items": { "type": "string" }, "description": "可接触的真实场域、人物、材料。" },
+        "expected_duration": { "type": "string" }
+      }
+    },
+    "teacher_resource_intent": {
+      "type": "object",
+      "description": "WF03b: why the teacher chose this resource; what children should come to feel beyond knowing. 教师资源意图。",
+      "additionalProperties": false,
+      "properties": {
+        "why_this_resource": { "type": "string" },
+        "first_contact_idea": { "type": "string", "description": "如果第一步不讲知识，孩子从哪里真实接触。" },
+        "hoped_feeling": { "type": "string", "description": "做完后希望孩子不只是知道了，还多感受到什么。" },
+        "confidence": { "type": "string", "enum": ["teacher_stated", "agent_proposed_pending"], "description": "Distinguishes teacher-stated intent from agent-proposed 待现场确认 candidates." }
+      }
+    },
+    "resource_entry_card": {
+      "type": "object",
+      "description": "资源课程化切口卡 (WF03b output).",
+      "additionalProperties": false,
+      "properties": {
+        "original_theme": { "type": "string" },
+        "initial_goal": { "type": "string" },
+        "child_entry_points": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "推荐儿童入口" },
+        "perceivable_content": { "type": "array", "items": { "type": "string" }, "description": "儿童可感知内容" },
+        "deepening_directions": { "type": "array", "items": { "type": "string" }, "description": "可做深方向" },
+        "first_experience": { "type": "string", "description": "第一轮体验建议" },
+        "adult_phrasings_to_avoid": { "type": "array", "items": { "type": "string" }, "description": "需要避免的成人化表达" }
+      }
+    },
+    "theme_fit_level": {
+      "type": "string",
+      "enum": ["short_activity", "theme_inquiry", "project_potential"],
+      "description": "WF02b 主题适配性筛查：短活动型 / 主题探究型 / 项目化探究潜力型。"
+    },
+    "children_evidence": {
+      "type": "array",
+      "description": "The evidence ledger. Every entry the model cites via evidence_refs must exist here. 儿童原话、问题墙、作品、照片、行为、停留点、情绪高频点。",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "content", "recorded_at"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "type": "string", "enum": ["child_words", "question_wall", "artifact", "photo", "video", "behavior", "dwell_point", "teacher_observation", "audience_feedback", "interview_record"] },
+          "content": { "type": "string" },
+          "child_ref": { "type": "string", "description": "Anonymized child reference (e.g. 男孩A), never full names." },
+          "round": { "type": "integer", "minimum": 0 },
+          "recorded_at": { "type": "string" }
+        }
+      }
+    },
+    "child_question_pool": {
+      "type": "array",
+      "description": "儿童问题池 (WF07): authentic questions with source evidence; adult paraphrases flagged.",
+      "items": {
+        "type": "object",
+        "required": ["question", "category", "evidence_refs"],
+        "additionalProperties": false,
+        "properties": {
+          "question": { "type": "string", "description": "儿童原生问题，保留原话。" },
+          "category": { "type": "string", "enum": ["why", "how_to", "playful_exploration", "identity_imitation", "real_inconvenience", "cultural_understanding"], "description": "为什么类 / 怎么做类 / 好玩探索类 / 身份模仿类 / 真实不便类 / 文化理解类" },
+          "evidence_refs": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "adult_processed": { "type": "boolean", "description": "True if the phrasing was reworked by adults; original must stay in evidence." },
+          "potential": { "type": "string", "enum": ["promising", "not_yet_suitable"] },
+          "cultural_hint": {
+            "type": "object",
+            "description": "WF07b 文化可能性提示 — teacher-backstage only.",
+            "additionalProperties": false,
+            "properties": {
+              "possible_life_experience": { "type": "string" },
+              "backstage_cultural_thread": { "type": "string" },
+              "child_task": { "type": "string", "description": "Mandatory translation into a child-actionable micro-task." }
+            }
+          }
+        }
+      }
+    },
+    "driving_question": {
+      "type": "object",
+      "description": "核心驱动问题 (WF08) with its five-way validation.",
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string" },
+        "candidates": { "type": "array", "items": { "type": "string" } },
+        "validation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "child_appropriate": { "type": "boolean", "description": "儿童性" },
+            "authentic": { "type": "boolean", "description": "真实性" },
+            "actionable": { "type": "boolean", "description": "行动性" },
+            "public_relevance": { "type": "boolean", "description": "公共性" },
+            "cultural_possibility": { "type": "boolean", "description": "文化可能性" }
+          }
+        },
+        "chosen_by_teacher": { "type": "boolean" }
+      }
+    },
+    "goals_assessment_axis": {
+      "type": "object",
+      "description": "阶段2 目标与评估轴心。",
+      "additionalProperties": false,
+      "properties": {
+        "core_understanding": { "type": "string", "description": "核心概念性理解目标（教师心中，不给儿童背）。" },
+        "key_experiences": { "type": "array", "items": { "type": "string" }, "description": "关键经验 WHAT，每条绑定观察点。" },
+        "learning_qualities": { "type": "array", "items": { "type": "string" }, "description": "学习品质 WHY。" },
+        "social_interaction": { "type": "array", "items": { "type": "string" }, "description": "社会交往 WHO。" },
+        "cultural_ladder_target": { "type": "string", "enum": ["perception", "understanding", "relationship", "affection", "action"], "description": "文化目标阶梯当前适合停留层：感知/理解/关系/情感/行动。不默认最高层。" },
+        "grasps": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "goal": { "type": "string" },
+            "role": { "type": "string" },
+            "audience": { "type": "string", "description": "真实受众" },
+            "situation": { "type": "string" },
+            "product": { "type": "string", "description": "公共产品" },
+            "standards": { "type": "array", "items": { "type": "string" }, "maxItems": 3, "description": "2–3条儿童和受众能理解的表现标准。" }
+          }
+        },
+        "evidence_plan": { "type": "array", "items": { "type": "string" }, "description": "过程性证据计划 (WF16)。" }
+      }
+    },
+    "cycle_history": {
+      "type": "array",
+      "description": "阶段3 rounds: 开启脑洞—协作行动—卡壳复盘—下一轮判断.",
+      "items": {
+        "type": "object",
+        "required": ["round", "phase"],
+        "additionalProperties": false,
+        "properties": {
+          "round": { "type": "integer", "minimum": 1 },
+          "phase": { "type": "string", "enum": ["collect_ideas", "act_together", "stuck_review", "next_round_judgment"], "description": "收集方案 / 协作行动 / 卡壳复盘 / 下一轮判断" },
+          "sub_question": { "type": "string" },
+          "children_proposals": { "type": "array", "items": { "type": "string" } },
+          "chosen_proposal": { "type": "string" },
+          "stuck_points": { "type": "array", "items": { "type": "string" }, "description": "卡点，含类型：材料/结构/规则/合作/场地/受众反馈/文化理解断点。" },
+          "teacher_feedback_summary": { "type": "string" },
+          "evidence_refs": { "type": "array", "items": { "type": "string" } },
+          "agent_judgment": { "type": "string", "description": "本轮智能体判断：补经验/追问题/做尝试/访谈人物/表达整理/进入成果准备。" }
+        }
+      }
+    },
+    "child_learning_stage": {
+      "type": "string",
+      "enum": ["sensory_experience", "question_generation", "trial_inquiry", "relationship_understanding", "expressive_transfer"],
+      "description": "WF20b 儿童学习阶段：感知体验 / 问题生成 / 尝试探究 / 关系理解 / 表达迁移。Judged per round from evidence."
+    },
+    "project_signal_level": {
+      "type": "string",
+      "enum": ["low", "medium", "high"],
+      "description": "项目化探究信号 (WF21): alert only fires at ≥3 accumulated signals."
+    },
+    "project_signals": {
+      "type": "array",
+      "description": "Individual observed signals backing project_signal_level.",
+      "items": {
+        "type": "object",
+        "required": ["signal", "evidence_refs"],
+        "additionalProperties": false,
+        "properties": {
+          "signal": { "type": "string", "enum": ["question_persists", "exceeds_preset", "needs_real_resources", "children_propose_solutions", "public_delivery_possible"], "description": "问题持续 / 预设装不下 / 需要真实资源人物分工 / 孩子提出方案 / 有公共交付可能" },
+          "evidence_refs": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+        }
+      }
+    },
+    "story_materials": {
+      "type": "object",
+      "description": "阶段5 课程故事 materials + gap check.",
+      "additionalProperties": false,
+      "properties": {
+        "gaps": { "type": "array", "items": { "type": "string" }, "description": "WF28 材料缺口，导出前必查。" },
+        "narrative_spine": { "type": "string", "description": "WF29 叙事主线，保留真实发生顺序。" },
+        "exports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "version": { "type": "string", "enum": ["full_case", "report_summary", "application", "social_media"], "description": "完整案例 / 汇报摘要 / 申报 / 公众号" },
+              "generated_at": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "child_participation_difference": {
+      "type": "array",
+      "description": "V1.3新增 三类儿童观察 per round. Individual reactions never generalized to whole-class interest.",
+      "items": {
+        "type": "object",
+        "required": ["round", "profile"],
+        "additionalProperties": false,
+        "properties": {
+          "round": { "type": "integer", "minimum": 1 },
+          "profile": { "type": "string", "enum": ["most_active", "still_observing", "unlike_preset"], "description": "最主动的孩子 / 还在观察的孩子 / 和预设不一样的孩子" },
+          "child_behavior": { "type": "string" },
+          "child_words_evidence": { "type": "string" },
+          "possible_learning_signal": { "type": "string" },
+          "scope_judgment": { "type": "string", "enum": ["whole_class_interest", "small_group_thread", "individual_thread", "not_observed"], "description": "班级共同兴趣 / 小群体线索 / 个别儿童线索 / 暂未观察到" }
+        }
+      }
+    },
+    "teacher_focus_feedback": {
+      "type": "array",
+      "description": "V1.3新增 三句聚焦反馈 per round. The agent MUST draft 2–3 contextual examples before asking for sentence 3, and MUST answer sentence 3 first in its next analysis.",
+      "items": {
+        "type": "object",
+        "required": ["round"],
+        "additionalProperties": false,
+        "properties": {
+          "round": { "type": "integer", "minimum": 1 },
+          "keep_worthy_evidence": { "type": "string", "description": "本轮最值得保留的一条儿童证据。" },
+          "new_change_vs_last_round": { "type": "string", "description": "和上一轮相比孩子出现的新变化。" },
+          "question_for_agent": { "type": "string", "description": "下一轮希望/最需要智能体判断的一个问题。Analysis priority #1." },
+          "agent_examples_offered": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 3, "description": "The examples the agent drafted before asking." }
+        }
+      }
+    }
+  }
+}

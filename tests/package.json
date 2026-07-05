@@ -1,0 +1,6 @@
+{
+  "name": "china-teacher-resources-development-platform-tests",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs"
+}
