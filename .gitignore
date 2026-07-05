@@ -41,3 +41,7 @@ secrets/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# understand-anything scratch
+.understand-anything/.trash-*/
+.understand-anything/tmp/

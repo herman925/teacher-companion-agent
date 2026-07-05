@@ -1,0 +1,4 @@
+{
+  "outputLanguage": "zh",
+  "note": "Default output language for /understand-anything:understand is Simplified Chinese (zh). Tracked in git so every clone inherits this default."
+}

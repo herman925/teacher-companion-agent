@@ -1,0 +1,5723 @@
+{
+ "version": "1.0.0",
+ "project": {
+  "name": "china-teacher-resources-development-platform",
+  "languages": [
+   "javascript",
+   "json",
+   "unknown",
+   "markdown",
+   "html",
+   "css",
+   "python",
+   "batch",
+   "docx"
+  ],
+  "frameworks": [
+   "GSAP",
+   "Node.js (zero-dependency)",
+   "SSE"
+  ],
+  "description": "教师资源发展平台：面向幼儿园教师的AI陪跑智能体网页平台（番禺主题探究工作流V1.3）。包含双语PRD与架构文档、开发护栏（提交门禁/术语/双语对齐/模式与提示词检查）、以及最小闭环网页演示（运行时护栏、确定性状态机、多供应商模型适配层、对话式动态识别界面）。",
+  "analyzedAt": "2026-07-05T18:22:27Z",
+  "gitCommitHash": "487121b366db10d938ed9d2b7155f303f2349842"
+ },
+ "nodes": [
+  {
+   "id": "file:harness/clean-temp.mjs",
+   "type": "file",
+   "name": "clean-temp.mjs",
+   "filePath": "harness/clean-temp.mjs",
+   "summary": "临时文件清理 CLI：按 harness.config.json 的 tempCleanup.paths 列出（默认干跑）或删除 tmp/、.scratch/ 等本地草稿目录及零散 *.tmp 文件，并拒绝删除任何被 git 跟踪的路径以保证安全。",
+   "tags": [
+    "cli",
+    "清理工具",
+    "utility",
+    "safety-guard",
+    "tested"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "默认干跑（dry run）、--apply 才实际删除的双阶段设计；通过 git ls-files 检查跟踪状态，避免误删受版本控制的文件。"
+  },
+  {
+   "id": "file:harness/gate.mjs",
+   "type": "file",
+   "name": "gate.mjs",
+   "filePath": "harness/gate.mjs",
+   "summary": "提交门禁（commit gate）编排器：按 harness.config.json 中的级别（off/warn/block）依次运行术语表检查、排版 lint、双语对等检查、Python 措辞/设计评审与测试，任一 block 级检查失败即阻止提交，并输出 HANDOFF 与临时文件清理提醒。",
+   "tags": [
+    "entry-point",
+    "cli",
+    "commit-gate",
+    "ci-cd",
+    "编排器",
+    "tested"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "纯 Node 实现，Python 评审通过 spawnSync 外部调用并在缺少 Python 时优雅降级为警告；--fast 与 --no-judges 提供本地快速回路。"
+  },
+  {
+   "id": "file:harness/glossary-check.mjs",
+   "type": "file",
+   "name": "glossary-check.mjs",
+   "filePath": "harness/glossary-check.mjs",
+   "summary": "术语表检查器：读取 docs/glossary.json，扫描 Markdown 文档中的禁用术语变体（如「聊天机器人」对应规范词「陪跑智能体」）并报 P1；对每个变体先按规则掩蔽规范词，避免子串误报。",
+   "tags": [
+    "cli",
+    "validation",
+    "术语检查",
+    "lint",
+    "tested"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "掩蔽逻辑按变体逐个计算：若规范词本身是变体的子串（如「输出闭环」在「输出闭环四件套」内），则该规范词不掩蔽，防止漏报。"
+  },
+  {
+   "id": "file:harness/lib/reminders.mjs",
+   "type": "file",
+   "name": "reminders.mjs",
+   "filePath": "harness/lib/reminders.mjs",
+   "summary": "门禁提醒的纯决策逻辑：根据仓库根目录、待提交文件列表与配置，计算 handoff（提交应更新 HANDOFF.md）与 tempCleanup（草稿目录非空）两类提醒是否触发及其级别与文案。从 gate.mjs 抽出以便脱离 git 状态做单元测试。",
+   "tags": [
+    "utility",
+    "决策逻辑",
+    "commit-gate",
+    "testable",
+    "tested"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "除对 rootDir 的 fs.existsSync 探测外保持纯函数，测试可将 rootDir 指向临时目录实现隔离。"
+  },
+  {
+   "id": "file:harness/lib/util.mjs",
+   "type": "file",
+   "name": "util.mjs",
+   "filePath": "harness/lib/util.mjs",
+   "summary": "开发护栏（dev harness）的共享工具库：提供仓库根路径 ROOT、递归文件遍历 walk、容错读取 read、剔除代码块的 proseLines、CLI 参数解析 parseArgs、术语表加载 loadGlossary，以及严重级别常量与终端着色输出，被所有检查脚本复用。",
+   "tags": [
+    "utility",
+    "共享库",
+    "barrel",
+    "no-deps"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "纯 Node ESM、零依赖；ROOT 由 import.meta.url 反推仓库根目录，保证脚本从任意工作目录运行都能定位仓库。"
+  },
+  {
+   "id": "file:harness/parity-check.mjs",
+   "type": "file",
+   "name": "parity-check.mjs",
+   "filePath": "harness/parity-check.mjs",
+   "summary": "双语对等检查器：确保 EN/简中文档对（如 docs/PRD.md 与 docs/PRD.zh-CN.md）结构同步——各级标题数量必须镜像（否则 P1），提交时只暂存一侧则报 P0，单侧缺失仅报 P2 警告。",
+   "tags": [
+    "cli",
+    "validation",
+    "双语对等",
+    "commit-gate",
+    "tested"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "通过 git diff --cached 检测暂存文件实现「同一提交须同时更新双语孪生文档」的约束；不在提交流程中时自动跳过该检查。"
+  },
+  {
+   "id": "file:harness/prompt-lint.mjs",
+   "type": "file",
+   "name": "prompt-lint.mjs",
+   "filePath": "harness/prompt-lint.mjs",
+   "summary": "运行时提示词语料（demo/src/prompts/*.zh.md）的确定性 lint：校验 base.zh.md 保留规范§1 七原则关键短语与§6 禁令、contract.zh.md 列全回合契约字段、阶段模块 0/1/2/3/5 存在且非空，以及全文使用全角标点。",
+   "tags": [
+    "cli",
+    "validation",
+    "prompt-lint",
+    "runtime-harness"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "提示词即 L1 运行时护栏层，此 lint 防止其不可协商内容在迭代中被悄然侵蚀；目录不存在时以退出码 0 优雅跳过。"
+  },
+  {
+   "id": "file:harness/schema-check.mjs",
+   "type": "file",
+   "name": "schema-check.mjs",
+   "filePath": "harness/schema-check.mjs",
+   "summary": "课程状态 schema 一致性检查：对 harness/schema/course-state.schema.json 做零依赖结构校验，并交叉核对规范§2 字段清单在 schema、引擎白名单与适配器 TURN_SCHEMA 三处保持一致，防止字段改名漂移。",
+   "tags": [
+    "cli",
+    "validation",
+    "schema",
+    "drift-guard"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "刻意不做完整 JSON Schema 校验，只用内置字段清单做漂移防护，保持零依赖。"
+  },
+  {
+   "id": "file:harness/typewriter.mjs",
+   "type": "file",
+   "name": "typewriter.mjs",
+   "filePath": "harness/typewriter.mjs",
+   "summary": "双模式内容排版工具：generate 模式按项目双语规范脚手架生成 ADR、PRD 章节等文档模板；lint 模式强制 Markdown 排版规范——CJK 正文须用全角标点（--fix 可自动修正）、无行尾空白、无制表符、标题层级不得跳级。",
+   "tags": [
+    "cli",
+    "lint",
+    "排版规范",
+    "代码生成",
+    "commit-gate",
+    "tested"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "全角标点修正对 CJK 相邻的 ASCII 标点逐字符判断，并跳过行内代码、URL 与小数点等合法半角场景；模板日期由 TYPEWRITER_DATE 环境变量注入以保持确定性。"
+  },
+  {
+   "id": "function:harness/lib/reminders.mjs:computeReminders",
+   "type": "function",
+   "name": "computeReminders",
+   "filePath": "harness/lib/reminders.mjs",
+   "lineRange": [
+    29,
+    61
+   ],
+   "summary": "根据暂存文件列表与护栏配置计算门禁提醒：HANDOFF.md 未随提交更新时给出 handoff 提醒，草稿路径（tmp/、.scratch/）非空时给出 tempCleanup 提醒，每条提醒带触发状态、级别与文案。",
+   "tags": [
+    "决策逻辑",
+    "commit-gate",
+    "exported"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:harness/lib/util.mjs:walk",
+   "type": "function",
+   "name": "walk",
+   "filePath": "harness/lib/util.mjs",
+   "lineRange": [
+    11,
+    27
+   ],
+   "summary": "递归收集目标路径下的文件，按扩展名过滤并跳过 node_modules、.git 等忽略目录；目标本身是文件时直接返回。",
+   "tags": [
+    "utility",
+    "文件遍历",
+    "exported"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/lib/util.mjs:read",
+   "type": "function",
+   "name": "read",
+   "filePath": "harness/lib/util.mjs",
+   "lineRange": [
+    30,
+    32
+   ],
+   "summary": "以 UTF-8 读取文件内容，出错时返回空字符串而非抛异常，便于检查脚本容错处理缺失文件。",
+   "tags": [
+    "utility",
+    "文件读取",
+    "exported"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/lib/util.mjs:proseLines",
+   "type": "function",
+   "name": "proseLines",
+   "filePath": "harness/lib/util.mjs",
+   "lineRange": [
+    35,
+    43
+   ],
+   "summary": "将文本拆分为带行号的行对象，并剔除围栏代码块与行内代码内容，使各 lint 器只检查正文而跳过代码。",
+   "tags": [
+    "utility",
+    "文本处理",
+    "exported"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/lib/util.mjs:parseArgs",
+   "type": "function",
+   "name": "parseArgs",
+   "filePath": "harness/lib/util.mjs",
+   "lineRange": [
+    46,
+    58
+   ],
+   "summary": "极简 CLI 参数解析器：将 --key value 与 --flag 归入 flags，其余归入位置参数数组 _，供所有护栏脚本共用。",
+   "tags": [
+    "utility",
+    "cli",
+    "参数解析",
+    "exported"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/lib/util.mjs:loadGlossary",
+   "type": "function",
+   "name": "loadGlossary",
+   "filePath": "harness/lib/util.mjs",
+   "lineRange": [
+    61,
+    64
+   ],
+   "summary": "加载并解析术语表 JSON（默认 docs/glossary.json，可传入自定义路径），失败时返回假值由调用方处理。",
+   "tags": [
+    "utility",
+    "术语表",
+    "exported"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/lib/util.mjs:sevTag",
+   "type": "function",
+   "name": "sevTag",
+   "filePath": "harness/lib/util.mjs",
+   "lineRange": [
+    78,
+    81
+   ],
+   "summary": "把严重级别（P0-P3）渲染为带 ANSI 颜色的终端标签：高危红色、中危黄色、低危灰色。",
+   "tags": [
+    "utility",
+    "终端输出",
+    "exported"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/parity-check.mjs:headingProfile",
+   "type": "function",
+   "name": "headingProfile",
+   "filePath": "harness/parity-check.mjs",
+   "lineRange": [
+    37,
+    49
+   ],
+   "summary": "统计单个 Markdown 文件各级标题的数量（忽略围栏代码块内的伪标题），生成用于双语结构对比的标题画像。",
+   "tags": [
+    "utility",
+    "markdown",
+    "结构分析"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/typewriter.mjs:generate",
+   "type": "function",
+   "name": "generate",
+   "filePath": "harness/typewriter.mjs",
+   "lineRange": [
+    26,
+    42
+   ],
+   "summary": "按指定模板类型（adr、prd-section 等）与标题渲染双语文档脚手架，写入 --out 路径或输出到标准输出。",
+   "tags": [
+    "代码生成",
+    "模板",
+    "cli"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/typewriter.mjs:lint",
+   "type": "function",
+   "name": "lint",
+   "filePath": "harness/typewriter.mjs",
+   "lineRange": [
+    100,
+    203
+   ],
+   "summary": "排版 lint 主流程：逐行检查行尾空白、制表符、标题层级跳级与 CJK 半角标点，支持 --fix 就地修正、--json 机器可读输出，并按发现的严重级别决定退出码。",
+   "tags": [
+    "lint",
+    "排版规范",
+    "cli",
+    "自动修复"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:harness/typewriter.mjs:fixCjkPunct",
+   "type": "function",
+   "name": "fixCjkPunct",
+   "filePath": "harness/typewriter.mjs",
+   "lineRange": [
+    206,
+    223
+   ],
+   "summary": "将 CJK 相邻的 ASCII 标点替换为全角标点：按反引号分段跳过行内代码与 URL，并保留数字小数点等合法半角用法。",
+   "tags": [
+    "文本处理",
+    "自动修复",
+    "cjk"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:demo/serve.mjs",
+   "type": "file",
+   "name": "serve.mjs",
+   "filePath": "demo/serve.mjs",
+   "summary": "零依赖的 Node 演示服务器：托管静态页面并实现 /api/chat 单轮管线（提示词组装 → 模型失败转移调用 → L2/L3 校验 → L4 重试 → 引擎应用增量），以 SSE 推送进度；浏览器从不直连模型供应商，密钥仅存内存或环境变量。",
+   "tags": [
+    "entry-point",
+    "http-server",
+    "sse",
+    "turn-pipeline",
+    "代理层"
+   ],
+   "complexity": "complex",
+   "languageNotes": "纯 Node 内置模块（http/fs/path）实现，无第三方依赖；SSE 用手写 res.write 事件流，静态服务含路径逃逸防护。"
+  },
+  {
+   "id": "function:demo/serve.mjs:buildSystemPrompt",
+   "type": "function",
+   "name": "buildSystemPrompt",
+   "filePath": "demo/serve.mjs",
+   "lineRange": [
+    47,
+    59
+   ],
+   "summary": "按当前阶段拼装系统提示词：base + 运行契约 + 阶段模块 + course_state 只读快照，awaiting_feedback 时附加节奏提示。",
+   "tags": [
+    "prompt-assembly",
+    "工具函数",
+    "stage-routing"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/serve.mjs:effectiveRegistry",
+   "type": "function",
+   "name": "effectiveRegistry",
+   "filePath": "demo/serve.mjs",
+   "lineRange": [
+    70,
+    87
+   ],
+   "summary": "为单次请求构建生效的供应商注册表：支持设置抽屉传入的模型覆盖与 OpenAI 兼容自定义端点，不污染全局 PROVIDERS。",
+   "tags": [
+    "configuration",
+    "provider-registry",
+    "per-request-override"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/serve.mjs:runTurn",
+   "type": "function",
+   "name": "runTurn",
+   "filePath": "demo/serve.mjs",
+   "lineRange": [
+    96,
+    164
+   ],
+   "summary": "执行一整轮对话的核心编排：组装消息、调用模型（mock 或真实失败转移链）、经 parseTurn/validateTurn 校验，首次拦截时注入违例反馈重生成一次，仍失败则降级到安全模板，最后由 applyDelta 应用状态增量并通过 SSE 发出 turn 事件与 gate_report。",
+   "tags": [
+    "orchestration",
+    "turn-pipeline",
+    "l4-policy",
+    "retry",
+    "sse"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "file:demo/src/adapter.mjs",
+   "type": "file",
+   "name": "adapter.mjs",
+   "filePath": "demo/src/adapter.mjs",
+   "summary": "供应商无关的模型适配层：内置 MiniMax/GLM/Kimi/Qwen 的 OpenAI 兼容配置（PROVIDERS）、逐供应商 JSON 输出策略（json_schema / tool_call / json_object_prompt）、轮次契约 TURN_SCHEMA，以及带失败转移链的调用入口 callWithFailover。密钥从不进入仓库。",
+   "tags": [
+    "adapter",
+    "llm-provider",
+    "failover",
+    "json-schema",
+    "api-client"
+   ],
+   "complexity": "complex",
+   "languageNotes": "同一套 chat/completions 客户端按 jsonStrategy 分支处理各家结构化输出怪癖（含 MiniMax <think> 剥离与 tool_call 提参）。"
+  },
+  {
+   "id": "function:demo/src/adapter.mjs:buildRequest",
+   "type": "function",
+   "name": "buildRequest",
+   "filePath": "demo/src/adapter.mjs",
+   "lineRange": [
+    99,
+    120
+   ],
+   "summary": "按供应商的 jsonStrategy 生成 chat-completions 请求体：GLM 走 json_schema、MiniMax 走强制 tool_call、Kimi/Qwen 走 json_object 并追加系统消息重申只输出 JSON。",
+   "tags": [
+    "request-builder",
+    "json-strategy",
+    "provider-quirks"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/adapter.mjs:extractPayload",
+   "type": "function",
+   "name": "extractPayload",
+   "filePath": "demo/src/adapter.mjs",
+   "lineRange": [
+    126,
+    141
+   ],
+   "summary": "从补全响应中提取原始轮次载荷：优先取 tool_call 参数，处理 content_filter 拦截与空响应，并可剥离 MiniMax 的 <think> 思考段。",
+   "tags": [
+    "response-parsing",
+    "provider-quirks",
+    "error-handling"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "class:demo/src/adapter.mjs:AdapterError",
+   "type": "class",
+   "name": "AdapterError",
+   "filePath": "demo/src/adapter.mjs",
+   "lineRange": [
+    143,
+    150
+   ],
+   "summary": "携带错误类别（content_filter/http/network/empty_completion）与 HTTP 状态码的适配层错误类型，供失败转移链和前端错误提示消费。",
+   "tags": [
+    "error-type",
+    "adapter",
+    "分类错误"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/adapter.mjs:callProvider",
+   "type": "function",
+   "name": "callProvider",
+   "filePath": "demo/src/adapter.mjs",
+   "lineRange": [
+    156,
+    179
+   ],
+   "summary": "对单个供应商发起一次 chat/completions 调用：AbortController 超时（默认 180 秒）、网络/HTTP 错误归类为 AdapterError，成功后返回提取的载荷与用量。",
+   "tags": [
+    "api-client",
+    "fetch",
+    "timeout",
+    "error-handling"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/adapter.mjs:listModels",
+   "type": "function",
+   "name": "listModels",
+   "filePath": "demo/src/adapter.mjs",
+   "lineRange": [
+    185,
+    208
+   ],
+   "summary": "调用供应商 OpenAI 兼容的 /models 端点，返回去重排序后的模型 id 列表，供设置抽屉的模型选择器使用。",
+   "tags": [
+    "api-client",
+    "model-listing",
+    "工具函数"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/adapter.mjs:callWithFailover",
+   "type": "function",
+   "name": "callWithFailover",
+   "filePath": "demo/src/adapter.mjs",
+   "lineRange": [
+    217,
+    236
+   ],
+   "summary": "失败转移调用：先试首选供应商，再沿 FAILOVER 链依次尝试（跳过无密钥或禁用者），全部失败时抛出携带完整错误链的 AdapterError。",
+   "tags": [
+    "failover",
+    "resilience",
+    "orchestration"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:demo/src/engine.mjs",
+   "type": "file",
+   "name": "engine.mjs",
+   "filePath": "demo/src/engine.mjs",
+   "summary": "确定性 course_state 引擎：模型只能提议增量、由本模块裁决。实现规格 §2 的阶段流转门（stageGateError）、可写字段白名单与按键去重的追加语义（applyDelta），以及平台控制的 awaiting_feedback 节奏。服务器与浏览器两端共用。",
+   "tags": [
+    "state-machine",
+    "stage-gate",
+    "deterministic",
+    "核心引擎",
+    "tested"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "applyDelta 用 structuredClone 保持纯函数语义：非法阶段跳转被剥离并记违例，而不是让整轮失败。"
+  },
+  {
+   "id": "function:demo/src/engine.mjs:createInitialState",
+   "type": "function",
+   "name": "createInitialState",
+   "filePath": "demo/src/engine.mjs",
+   "lineRange": [
+    18,
+    34
+   ],
+   "summary": "创建一份全新的 course_state：阶段 0、空的儿童证据/问题池/循环历史等账本字段，并带 schema_version。",
+   "tags": [
+    "factory",
+    "state-initialization",
+    "data-model"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/engine.mjs:stageGateError",
+   "type": "function",
+   "name": "stageGateError",
+   "filePath": "demo/src/engine.mjs",
+   "lineRange": [
+    40,
+    72
+   ],
+   "summary": "阶段流转门表：合法则返回 null，否则返回中文拒绝理由。核心规则包括禁止跳级、进阶段 2 必须已有儿童证据与驱动问题候选、进阶段 5 必须有过程证据（不虚构）。",
+   "tags": [
+    "stage-gate",
+    "validation",
+    "业务规则"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/engine.mjs:applyDelta",
+   "type": "function",
+   "name": "applyDelta",
+   "filePath": "demo/src/engine.mjs",
+   "lineRange": [
+    102,
+    151
+   ],
+   "summary": "将模型提议的 state_delta 应用到状态副本：白名单外字段丢弃、非法 stage 跳转剥离并记违例、数组字段按去重键追加或原位更新，最后按 teacherTurn/roundComplete 维护 awaiting_feedback。纯函数，返回 { state, violations, applied }。",
+   "tags": [
+    "state-transition",
+    "whitelist",
+    "validation",
+    "pure-function"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "function:demo/src/engine.mjs:evidenceIds",
+   "type": "function",
+   "name": "evidenceIds",
+   "filePath": "demo/src/engine.mjs",
+   "lineRange": [
+    154,
+    156
+   ],
+   "summary": "提取状态中已有儿童证据的 id 集合，供运行护栏的证据虚构检查使用。",
+   "tags": [
+    "工具函数",
+    "evidence",
+    "selector"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:demo/src/harness.mjs",
+   "type": "file",
+   "name": "harness.mjs",
+   "filePath": "demo/src/harness.mjs",
+   "summary": "运行时护栏（约束模型、绝不约束教师）：L2 解析归一化模型输出（parseTurn/extractJson），L3 确定性校验（收尾闭环四要素、单问题带示例、儿童断言必须引用证据、儿童侧内容禁成人口号、阶段门合法性），L4 生成重写反馈与终极安全模板。",
+   "tags": [
+    "runtime-harness",
+    "validation",
+    "guardrail",
+    "evidence-first",
+    "反虚构",
+    "tested"
+   ],
+   "complexity": "complex",
+   "languageNotes": "用中文正则区分「已实现的儿童断言」与「带假设语气的推测」（CHILD_CLAIM_RE 对 HEDGE_RE），这是证据优先规则的语言学核心。"
+  },
+  {
+   "id": "function:demo/src/harness.mjs:parseTurn",
+   "type": "function",
+   "name": "parseTurn",
+   "filePath": "demo/src/harness.mjs",
+   "lineRange": [
+    24,
+    47
+   ],
+   "summary": "L2 解析：把模型原始输出（字符串或对象）解析并结构归一化为轮次契约对象；JSON 解析失败或 reply_markdown 缺失时返回 block 级违例。",
+   "tags": [
+    "parsing",
+    "normalization",
+    "contract",
+    "l2"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/harness.mjs:extractJson",
+   "type": "function",
+   "name": "extractJson",
+   "filePath": "demo/src/harness.mjs",
+   "lineRange": [
+    50,
+    59
+   ],
+   "summary": "从散文包裹的模型输出中尽力抽取最外层 JSON 对象：优先代码围栏，其次首尾花括号切片。",
+   "tags": [
+    "parsing",
+    "工具函数",
+    "robustness"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/harness.mjs:validateTurn",
+   "type": "function",
+   "name": "validateTurn",
+   "filePath": "demo/src/harness.mjs",
+   "lineRange": [
+    67,
+    134
+   ],
+   "summary": "L3 确定性校验器：round_complete 必须带完整四要素收尾闭环、问题必须附 2–3 个示例且正文不许连环追问、儿童断言必须引用已存在或本轮新增的证据 id、儿童侧产物与闭环中禁止成人口号（豁免 adult_phrasings_to_avoid 字段）、stage 提议做门检。返回违例数组。",
+   "tags": [
+    "validation",
+    "guardrail",
+    "evidence-first",
+    "l3",
+    "业务规则"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "function:demo/src/harness.mjs:findClaimSentences",
+   "type": "function",
+   "name": "findClaimSentences",
+   "filePath": "demo/src/harness.mjs",
+   "lineRange": [
+    137,
+    143
+   ],
+   "summary": "在回复正文（剔除代码块）中找出断言儿童已发生反应/理解的句子，排除带假设语气（可能/建议观察等）的合法表述。",
+   "tags": [
+    "nlp-heuristic",
+    "反虚构",
+    "regex",
+    "中文处理"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/harness.mjs:violationFeedback",
+   "type": "function",
+   "name": "violationFeedback",
+   "filePath": "demo/src/harness.mjs",
+   "lineRange": [
+    154,
+    161
+   ],
+   "summary": "L4 策略：把 block 级违例清单拼装成注入给模型的重写指令（要求修正问题、不道歉、不提被拦截）。",
+   "tags": [
+    "l4-policy",
+    "feedback",
+    "regeneration"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/harness.mjs:safeTemplate",
+   "type": "function",
+   "name": "safeTemplate",
+   "filePath": "demo/src/harness.mjs",
+   "lineRange": [
+    164,
+    180
+   ],
+   "summary": "L4 终极降级：重生成也失败时返回的安全模板轮次——放慢节奏、只问一个带示例的现场信息问题、零状态增量，本身完全契约合规。",
+   "tags": [
+    "fallback",
+    "l4-policy",
+    "degradation",
+    "safety"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:demo/src/mock.mjs",
+   "type": "file",
+   "name": "mock.mjs",
+   "filePath": "demo/src/mock.mjs",
+   "summary": "演示模式供应商：按 course_state 键控的醒狮主题脚本化走查（意图问题 → 切口卡 → 证据摄入/问题池 → 协作行动任务 → 课程故事片段），让 UI、SSE 管线、护栏与引擎在无 API 密钥时可被完整验证。每个罐装轮次都必须通过与真实供应商相同的 L2/L3 校验。",
+   "tags": [
+    "mock-provider",
+    "walkthrough",
+    "demo",
+    "fixture",
+    "醒狮脚本",
+    "tested"
+   ],
+   "complexity": "complex",
+   "languageNotes": "分支不看轮数而看状态缺什么（无 theme_resource → 问意图；无证据 → 等待或摄入……），因此走查天然幂等且可从任意中间状态续跑。"
+  },
+  {
+   "id": "function:demo/src/mock.mjs:mockTurn",
+   "type": "function",
+   "name": "mockTurn",
+   "filePath": "demo/src/mock.mjs",
+   "lineRange": [
+    13,
+    22
+   ],
+   "summary": "演示模式唯一出口：按 course_state 缺失的字段依次路由到六个脚本化轮次生成器，返回契约合规的 turn 对象。",
+   "tags": [
+    "mock-provider",
+    "dispatcher",
+    "entry-point"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/mock.mjs:turnIntentQuestion",
+   "type": "function",
+   "name": "turnIntentQuestion",
+   "filePath": "demo/src/mock.mjs",
+   "lineRange": [
+    24,
+    44
+   ],
+   "summary": "走查第 1 轮：从教师消息里识别资源（龙舟/趁墟/祠堂/默认醒狮），记录 theme_resource 并只问一个带示例的资源意图问题。",
+   "tags": [
+    "mock-turn",
+    "intake",
+    "screening"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/mock.mjs:turnEntryCard",
+   "type": "function",
+   "name": "turnEntryCard",
+   "filePath": "demo/src/mock.mjs",
+   "lineRange": [
+    46,
+    129
+   ],
+   "summary": "走查第 2 轮：产出资源课程化切口卡、主题适配性筛查、第一轮体验方案与访谈卡四个产物，附完整收尾闭环，并提议进入阶段 1（WF01/WF02b/WF03b）。",
+   "tags": [
+    "mock-turn",
+    "artifacts",
+    "entry-card",
+    "stage-transition"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "function:demo/src/mock.mjs:turnAwaitOrIngest",
+   "type": "function",
+   "name": "turnAwaitOrIngest",
+   "filePath": "demo/src/mock.mjs",
+   "lineRange": [
+    131,
+    207
+   ],
+   "summary": "走查第 3 轮：用正则启发式判断教师消息是否像现场反馈——不是则原地等待并提供支持；是则把儿童原话/行为/停留点摄入为证据条目，生成问题池与候选驱动问题。",
+   "tags": [
+    "mock-turn",
+    "evidence-ingestion",
+    "question-pool",
+    "heuristic"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "function:demo/src/mock.mjs:turnCycleTask",
+   "type": "function",
+   "name": "turnCycleTask",
+   "filePath": "demo/src/mock.mjs",
+   "lineRange": [
+    215,
+    259
+   ],
+   "summary": "走查第 4 轮：确定驱动问题与目标评估轴心草稿，产出第一轮协作行动小任务卡（引用行为证据 ev-behavior-1），提议进入阶段 2。",
+   "tags": [
+    "mock-turn",
+    "cycle-task",
+    "goals-axis",
+    "stage-transition"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/mock.mjs:turnStoryFragment",
+   "type": "function",
+   "name": "turnStoryFragment",
+   "filePath": "demo/src/mock.mjs",
+   "lineRange": [
+    261,
+    291
+   ],
+   "summary": "走查末轮：基于已有证据生成课程故事片段草稿，只写有证据的部分并诚实列出缺口清单，evidence_refs 引用状态中真实存在的证据 id。",
+   "tags": [
+    "mock-turn",
+    "story-export",
+    "evidence-first"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:demo/tests/mock-walkthrough.test.mjs",
+   "type": "file",
+   "name": "mock-walkthrough.test.mjs",
+   "filePath": "demo/tests/mock-walkthrough.test.mjs",
+   "summary": "集成测试：五条脚本化教师消息驱动整个 mock 走查，断言每一轮都通过 L2 解析、无 block 级 L3 违例、无非法阶段跳转，且最终课程推进到阶段 2+、证据账本 ≥5 条、故事片段诚实列缺口。护栏收紧或 mock 漂移时先于人工演示失败。",
+   "tags": [
+    "test",
+    "integration",
+    "walkthrough",
+    "regression"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:demo/tests/runtime-harness.test.mjs",
+   "type": "file",
+   "name": "runtime-harness.test.mjs",
+   "filePath": "demo/tests/runtime-harness.test.mjs",
+   "summary": "运行时护栏与引擎的双向测试：每条规则都有「违规夹具触发 + 合规夹具静默」两个方向的用例，覆盖 L2 解析、收尾闭环、单问题契约、证据虚构检测（含假设语气豁免与本轮新证据）、成人口号（含豁免字段）、阶段门、applyDelta 白名单/去重/节奏与 L4 反馈及安全模板。",
+   "tags": [
+    "test",
+    "both-directions",
+    "guardrail",
+    "fixtures"
+   ],
+   "complexity": "complex",
+   "languageNotes": "遵循 CLAUDE.md 的双向纪律：规则必须在违规夹具上触发、在合规夹具上保持沉默，防止护栏只测一半。"
+  },
+  {
+   "id": "function:demo/tests/runtime-harness.test.mjs:goodTurn",
+   "type": "function",
+   "name": "goodTurn",
+   "filePath": "demo/tests/runtime-harness.test.mjs",
+   "lineRange": [
+    21,
+    32
+   ],
+   "summary": "测试夹具工厂：返回一个完全契约合规的收尾轮次对象，各用例通过覆盖字段构造违规变体。",
+   "tags": [
+    "test-fixture",
+    "factory",
+    "工具函数"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:tests/index.mjs",
+   "type": "file",
+   "name": "index.mjs",
+   "filePath": "tests/index.mjs",
+   "summary": "测试聚合入口：为兼容 Node 23+ 对目录参数的 import 解析行为，把全部单元、集成与 demo 运行时测试模块统一导入，使 `node --test tests/` 在单次运行中注册所有测试套件。",
+   "tags": [
+    "entry-point",
+    "barrel",
+    "test",
+    "测试聚合"
+   ],
+   "complexity": "simple",
+   "languageNotes": "利用 package.json 的 \"main\" 字段让目录导入解析到本文件，绕开 Node 23+ 的 ERR_UNSUPPORTED_DIR_IMPORT。"
+  },
+  {
+   "id": "file:tests/integration/harness-line.test.mjs",
+   "type": "file",
+   "name": "harness-line.test.mjs",
+   "filePath": "tests/integration/harness-line.test.mjs",
+   "summary": "端到端集成测试：对开发护栏全链路的每个机制做双向断言——坏情况必须触发（阻断/警告）、好情况必须保持沉默，覆盖术语表检查、typewriter 排版、双语 parity、代码评审、评审判官、Claude 编辑钩子、git 钩子、提醒机制与 gate 汇总。",
+   "tags": [
+    "test",
+    "integration-test",
+    "governance",
+    "双向断言",
+    "开发护栏"
+   ],
+   "complexity": "complex",
+   "languageNotes": "纯 node:test + node:assert 黑盒测试，通过 spawnSync 调用真实脚本；启动时清除所有 GIT_* 环境变量，避免 pre-commit 钩子内运行时子 git 进程误操作真实提交索引；gate 只以 --fast 调用以防递归执行自身。"
+  },
+  {
+   "id": "file:tests/unit/glossary-data.test.mjs",
+   "type": "file",
+   "name": "glossary-data.test.mjs",
+   "filePath": "tests/unit/glossary-data.test.mjs",
+   "summary": "直接校验 docs/glossary.json 数据完整性的单元测试：JSON 合法性、必填字段（id/zh/en/category）、id 与中文术语唯一性、术语不得把自身规范形式列为禁用变体、禁用变体不得撞上其他术语的规范名。",
+   "tags": [
+    "test",
+    "validation",
+    "data-integrity",
+    "术语表"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:tests/unit/harness.test.mjs",
+   "type": "file",
+   "name": "harness.test.mjs",
+   "filePath": "tests/unit/harness.test.mjs",
+   "summary": "以黑盒方式运行 Node 护栏 CLI（glossary-check、typewriter）的单元测试：断言禁用术语被拦截、规范术语掩码不误报但含规范前缀的禁用变体仍触发、CJK 半角标点被检出且可 --fix 修复、ADR 脚手架输出双语模板。",
+   "tags": [
+    "test",
+    "cli",
+    "governance",
+    "术语检查",
+    "排版"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:tests/unit/judges.test.mjs",
+   "type": "file",
+   "name": "judges.test.mjs",
+   "filePath": "tests/unit/judges.test.mjs",
+   "summary": "以黑盒方式测试两个 Python 判官脚本（design_judge.py、wording_judge.py）：确认 --self-test 通过、--json 输出符合文档化 schema 且总分落在 0-10 区间；PATH 上无 Python 时全部用例带消息跳过。",
+   "tags": [
+    "test",
+    "python-interop",
+    "judge",
+    "graceful-skip"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "跨语言测试模式：Node 测试通过 spawnSync 探测 python/python3/py 解释器，缺失时用 node:test 的 skip 选项优雅降级，保证无 Python 的 CI 依然通过。"
+  },
+  {
+   "id": "function:tests/unit/harness.test.mjs:runNode",
+   "type": "function",
+   "name": "runNode",
+   "filePath": "tests/unit/harness.test.mjs",
+   "lineRange": [
+    24,
+    33
+   ],
+   "summary": "从仓库根目录以子进程方式运行 node 脚本并返回 { code, stdout, stderr }；强制非 TTY 管道（FORCE_COLOR=0）确保工具输出无颜色码、便于 JSON 解析。",
+   "tags": [
+    "utility",
+    "test-helper",
+    "subprocess"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:demo/src/ui/main.js",
+   "type": "file",
+   "name": "main.js",
+   "filePath": "demo/src/ui/main.js",
+   "summary": "陪跑智能体演示聊天页的应用主逻辑：把课程状态、对话记录、供应商选择与 API 密钥托管在 localStorage，通过 /api/chat 的 SSE 流与本地演示服务器通信，并驱动消息渲染、设置抽屉、调试面板与整页事件绑定。",
+   "tags": [
+    "entry-point",
+    "event-handler",
+    "sse-流式",
+    "本地存储",
+    "状态管理"
+   ],
+   "complexity": "complex",
+   "languageNotes": "JSDoc 类型化的原生 ESM，零构建步骤（ADR-0001）；密钥只存 localStorage，仅随请求体发往本地演示服务器。"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:renderWelcome",
+   "type": "function",
+   "name": "renderWelcome",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    162,
+    176
+   ],
+   "summary": "渲染首屏欢迎卡片，包含产品说明与三个可点击的开场话题按钮（醒狮、龙舟、课程故事）。",
+   "tags": [
+    "渲染",
+    "欢迎页",
+    "ui"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:renderTurnGroup",
+   "type": "function",
+   "name": "renderTurnGroup",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    184,
+    237
+   ],
+   "summary": "把一次 turn SSE 事件渲染为完整消息组：智能体消息、产物卡片、提问块、收尾卡与等待注记，并按顺序触发入场动画。",
+   "tags": [
+    "渲染",
+    "消息组",
+    "动画编排",
+    "核心流程"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:replayTranscript",
+   "type": "function",
+   "name": "replayTranscript",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    239,
+    258
+   ],
+   "summary": "从持久化的对话记录重建整个消息流：清空容器后依次重放教师消息与智能体 turn，恢复页面到上次会话状态。",
+   "tags": [
+    "状态恢复",
+    "渲染",
+    "持久化"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:readSSE",
+   "type": "function",
+   "name": "readSSE",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    267,
+    289
+   ],
+   "summary": "手工解析 fetch 响应体的 SSE 流：按空行切分事件、提取 event/data 字段并逐事件回调。",
+   "tags": [
+    "sse-流式",
+    "解析",
+    "网络"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "不用 EventSource 而是基于 ReadableStream 手写解析，以便走 POST 请求携带请求体。"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:chatRequestBody",
+   "type": "function",
+   "name": "chatRequestBody",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    304,
+    320
+   ],
+   "summary": "组装 /api/chat 请求体：对话历史、当前课程状态、所选供应商、模型与密钥（含自定义端点配置）。",
+   "tags": [
+    "请求构造",
+    "序列化",
+    "api"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:send",
+   "type": "function",
+   "name": "send",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    326,
+    375
+   ],
+   "summary": "发送教师消息的主流程：渲染用户消息、POST /api/chat、读取 SSE 流、成功则交给 handleTurn，失败则显示可重试的错误提示。",
+   "tags": [
+    "核心流程",
+    "网络",
+    "错误处理",
+    "事件处理"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:handleTurn",
+   "type": "function",
+   "name": "handleTurn",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    378,
+    395
+   ],
+   "summary": "应用一次成功的 turn：把用户消息与智能体回复推入对话记录、更新课程状态并持久化到 localStorage，然后重新渲染消息组、页头与调试面板。",
+   "tags": [
+    "状态管理",
+    "持久化",
+    "核心流程"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:providerOptions",
+   "type": "function",
+   "name": "providerOptions",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    413,
+    423
+   ],
+   "summary": "根据当前供应商列表重建设置抽屉里的供应商下拉框，并校正失效的已选项。",
+   "tags": [
+    "设置界面",
+    "渲染",
+    "供应商"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:settingsField",
+   "type": "function",
+   "name": "settingsField",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    426,
+    439
+   ],
+   "summary": "构建带标签的设置输入字段（如 API 密钥输入框），支持占位符、密码类型与输入回调。",
+   "tags": [
+    "设置界面",
+    "表单",
+    "工厂函数"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:modelRow",
+   "type": "function",
+   "name": "modelRow",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    448,
+    532
+   ],
+   "summary": "构建单个供应商的模型选择行：可调用 /api/models 拉取模型列表生成下拉框，或切换为手动输入模型名，选择结果写回配置。",
+   "tags": [
+    "设置界面",
+    "模型选择",
+    "网络",
+    "表单"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:providerSection",
+   "type": "function",
+   "name": "providerSection",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    535,
+    570
+   ],
+   "summary": "为单个模型供应商构建可折叠设置区：密钥输入（含服务器已有环境密钥的提示）与模型选择行。",
+   "tags": [
+    "设置界面",
+    "供应商",
+    "渲染"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:customSection",
+   "type": "function",
+   "name": "customSection",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    573,
+    605
+   ],
+   "summary": "构建自定义 OpenAI 兼容端点的设置区：Base URL、密钥、显示名与模型配置。",
+   "tags": [
+    "设置界面",
+    "自定义端点",
+    "表单"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:initProviders",
+   "type": "function",
+   "name": "initProviders",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    621,
+    633
+   ],
+   "summary": "启动时请求 /api/health 获取服务器端供应商能力（默认模型、是否已配环境密钥），失败则回退到内置列表，随后重建设置界面。",
+   "tags": [
+    "初始化",
+    "健康检查",
+    "降级回退"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:resetCourse",
+   "type": "function",
+   "name": "resetCourse",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    637,
+    651
+   ],
+   "summary": "经 window.confirm 确认后重置课程：调用引擎生成全新初始课程状态、清空对话记录并持久化，随后重绘整个界面。",
+   "tags": [
+    "状态管理",
+    "重置",
+    "事件处理"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:wire",
+   "type": "function",
+   "name": "wire",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    655,
+    707
+   ],
+   "summary": "绑定全部 DOM 事件：开场话题点击、发送按钮与回车发送、跳过链接、新课程/设置/调试按钮、抽屉开关、Esc 关闭与供应商切换。",
+   "tags": [
+    "事件绑定",
+    "初始化",
+    "ui"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/ui/main.js:boot",
+   "type": "function",
+   "name": "boot",
+   "filePath": "demo/src/ui/main.js",
+   "lineRange": [
+    711,
+    721
+   ],
+   "summary": "应用启动入口：持久化初始状态、绑定事件、回放对话记录、刷新页头与调试面板并初始化供应商列表。",
+   "tags": [
+    "entry-point",
+    "初始化",
+    "启动"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:demo/src/ui/motion.js",
+   "type": "file",
+   "name": "motion.js",
+   "filePath": "demo/src/ui/motion.js",
+   "summary": "GSAP 入场动画编排模块，落实 DESIGN.md §6 的\"纸张落定、晨光\"基调：power2.out 缓动、280–420ms 时长、60–80ms 交错；prefers-reduced-motion 时全部退化为简单淡入。",
+   "tags": [
+    "动画",
+    "gsap",
+    "无障碍",
+    "渐进增强"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "全部使用 gsap.from/fromTo，元素默认处于最终可见状态；GSAP CDN 加载失败时每个函数静默无操作，内容永不因动画失败而被隐藏。"
+  },
+  {
+   "id": "function:demo/src/ui/motion.js:messageIn",
+   "type": "function",
+   "name": "messageIn",
+   "filePath": "demo/src/ui/motion.js",
+   "lineRange": [
+    26,
+    34
+   ],
+   "summary": "新消息入场动画：上移 12px 并淡入；减少动效模式下只保留淡入。",
+   "tags": [
+    "动画",
+    "消息",
+    "入场"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/motion.js:cardIn",
+   "type": "function",
+   "name": "cardIn",
+   "filePath": "demo/src/ui/motion.js",
+   "lineRange": [
+    42,
+    59
+   ],
+   "summary": "产物卡片入场动画：卡片整体上浮淡入，内部区块再做轻微交错进入。",
+   "tags": [
+    "动画",
+    "卡片",
+    "交错"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/motion.js:chipsIn",
+   "type": "function",
+   "name": "chipsIn",
+   "filePath": "demo/src/ui/motion.js",
+   "lineRange": [
+    66,
+    75
+   ],
+   "summary": "选项按钮组入场动画：各 chip 以 60–80ms 交错依次浮现。",
+   "tags": [
+    "动画",
+    "chips",
+    "交错"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/motion.js:closureIn",
+   "type": "function",
+   "name": "closureIn",
+   "filePath": "demo/src/ui/motion.js",
+   "lineRange": [
+    82,
+    106
+   ],
+   "summary": "收尾卡入场编排：标题与各行交错进入，金圈进度用 gsap.fromTo 从 0 动画到目标值，是本模块最复杂的一段编排。",
+   "tags": [
+    "动画",
+    "收尾卡",
+    "svg",
+    "编排"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/ui/motion.js:fadeIn",
+   "type": "function",
+   "name": "fadeIn",
+   "filePath": "demo/src/ui/motion.js",
+   "lineRange": [
+    113,
+    117
+   ],
+   "summary": "通用淡入动画，用于等待注记、错误提示等次要元素。",
+   "tags": [
+    "动画",
+    "淡入",
+    "工具函数"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:demo/src/ui/render.js",
+   "type": "file",
+   "name": "render.js",
+   "filePath": "demo/src/ui/render.js",
+   "summary": "纯 DOM 渲染器集合：教师/智能体消息、产物卡、提问块、收尾卡与调试面板。所有模型输出文本先经 sanitizeMarkdown()/sanitizeInline() 转义再写入 innerHTML，仅放行最小 markdown 子集，无原始 HTML 直通。",
+   "tags": [
+    "渲染",
+    "组件",
+    "sanitization",
+    "安全"
+   ],
+   "complexity": "complex",
+   "languageNotes": "自研极简 sanitizer：先整体 HTML 转义，再在已转义文本上应用加粗/斜体/标题/列表等有限规则，从根上杜绝 XSS。"
+  },
+  {
+   "id": "function:demo/src/ui/render.js:sanitizeInline",
+   "type": "function",
+   "name": "sanitizeInline",
+   "filePath": "demo/src/ui/render.js",
+   "lineRange": [
+    28,
+    30
+   ],
+   "summary": "把单行模型文本转成安全的行内 HTML：先转义，再只应用加粗与斜体。",
+   "tags": [
+    "sanitization",
+    "安全",
+    "工具函数"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/render.js:sanitizeMarkdown",
+   "type": "function",
+   "name": "sanitizeMarkdown",
+   "filePath": "demo/src/ui/render.js",
+   "lineRange": [
+    39,
+    89
+   ],
+   "summary": "把模型 markdown 转成安全 HTML 的逐行状态机：先整体转义，再识别标题、有序/无序列表、段落与换行；不支持链接与原始 HTML。",
+   "tags": [
+    "sanitization",
+    "markdown",
+    "解析",
+    "安全"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/ui/render.js:el",
+   "type": "function",
+   "name": "el",
+   "filePath": "demo/src/ui/render.js",
+   "lineRange": [
+    99,
+    104
+   ],
+   "summary": "创建带类名与文本的 DOM 元素的小工具，是本目录所有渲染函数的基础构件。",
+   "tags": [
+    "工具函数",
+    "dom",
+    "工厂函数"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/render.js:renderTeacherMessage",
+   "type": "function",
+   "name": "renderTeacherMessage",
+   "filePath": "demo/src/ui/render.js",
+   "lineRange": [
+    112,
+    114
+   ],
+   "summary": "渲染教师（用户）消息气泡，内容以纯文本写入。",
+   "tags": [
+    "渲染",
+    "消息",
+    "组件"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/render.js:renderAgentMessage",
+   "type": "function",
+   "name": "renderAgentMessage",
+   "filePath": "demo/src/ui/render.js",
+   "lineRange": [
+    122,
+    139
+   ],
+   "summary": "渲染智能体消息：markdown 经 sanitizeMarkdown 净化后写入，可选带上点击展开调试抽屉的阶段徽章。",
+   "tags": [
+    "渲染",
+    "消息",
+    "sanitization",
+    "组件"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/render.js:renderScalar",
+   "type": "function",
+   "name": "renderScalar",
+   "filePath": "demo/src/ui/render.js",
+   "lineRange": [
+    206,
+    217
+   ],
+   "summary": "渲染产物卡中的标量值：行内净化后输出，并给命中\"待定\"字样（PROVISIONAL_RE）的值加标记样式。",
+   "tags": [
+    "渲染",
+    "产物卡",
+    "标记"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/render.js:renderValue",
+   "type": "function",
+   "name": "renderValue",
+   "filePath": "demo/src/ui/render.js",
+   "lineRange": [
+    225,
+    247
+   ],
+   "summary": "递归渲染产物卡中的任意 JSON 值：数组转列表、对象转键值行、标量交给 renderScalar。",
+   "tags": [
+    "渲染",
+    "递归",
+    "产物卡"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:demo/src/ui/render.js:renderArtifactCard",
+   "type": "function",
+   "name": "renderArtifactCard",
+   "filePath": "demo/src/ui/render.js",
+   "lineRange": [
+    253,
+    266
+   ],
+   "summary": "渲染一张产物卡片：标题头加各字段区块，内容经 renderValue 递归展开。",
+   "tags": [
+    "渲染",
+    "产物卡",
+    "组件"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/render.js:renderQuestionBlock",
+   "type": "function",
+   "name": "renderQuestionBlock",
+   "filePath": "demo/src/ui/render.js",
+   "lineRange": [
+    275,
+    292
+   ],
+   "summary": "渲染智能体的提问块：问题文本加可点击的选项 chip 按钮（携带 data-reply 供 main.js 事件委托捕获）。",
+   "tags": [
+    "渲染",
+    "提问",
+    "交互",
+    "组件"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/render.js:renderClosureCard",
+   "type": "function",
+   "name": "renderClosureCard",
+   "filePath": "demo/src/ui/render.js",
+   "lineRange": [
+    322,
+    336
+   ],
+   "summary": "渲染收尾闭环卡：按 CLOSURE_ROWS 逐行输出勾选状态，每行前置 SVG 金圈进度指示。",
+   "tags": [
+    "渲染",
+    "收尾卡",
+    "svg",
+    "组件"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/render.js:renderAwaitingNote",
+   "type": "function",
+   "name": "renderAwaitingNote",
+   "filePath": "demo/src/ui/render.js",
+   "lineRange": [
+    341,
+    343
+   ],
+   "summary": "渲染\"等待教师补充信息\"的轻量提示注记。",
+   "tags": [
+    "渲染",
+    "提示",
+    "组件"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/render.js:renderErrorNotice",
+   "type": "function",
+   "name": "renderErrorNotice",
+   "filePath": "demo/src/ui/render.js",
+   "lineRange": [
+    350,
+    361
+   ],
+   "summary": "渲染错误提示条，附带\"重试\"按钮：点击后移除提示并回调 onRetry 重发上一条消息。",
+   "tags": [
+    "渲染",
+    "错误处理",
+    "交互",
+    "组件"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:demo/src/ui/render.js:renderDebug",
+   "type": "function",
+   "name": "renderDebug",
+   "filePath": "demo/src/ui/render.js",
+   "lineRange": [
+    384,
+    425
+   ],
+   "summary": "渲染调试抽屉内容：当前阶段与证据清单、完整 course_state JSON、上次 turn 事件（含违规重试详情）与 token 用量。",
+   "tags": [
+    "渲染",
+    "调试",
+    "可观测性"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "document:AGENTS.md",
+   "type": "document",
+   "name": "AGENTS.md",
+   "filePath": "AGENTS.md",
+   "summary": "仓库工作约定的唯一权威文档：界定项目定位（教师资源发展平台的规范、治理与演示之家）、五条不可妥协底线（绝不编造儿童证据、严格对准模型而非教师、文化后台化、儿童数据敏感、密钥不入库）、工作规则（术语表即法律、双语孪生、门禁必过）与目录布局。人类与编码智能体共同遵循。",
+   "tags": [
+    "documentation",
+    "governance",
+    "working-agreements",
+    "entry-point"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "明确区分两套护栏：开发护栏（harness/，约束开发者）与运行时护栏（demo/src/，约束模型），是理解本仓库结构的关键。"
+  },
+  {
+   "id": "document:CLAUDE.md",
+   "type": "document",
+   "name": "CLAUDE.md",
+   "filePath": "CLAUDE.md",
+   "summary": "Claude Code 专属指令层：通过 @AGENTS.md 导入通用工作约定，并附加钩子行为（编辑前守卫、编辑后即时 lint）、提交前门禁要求、双语孪生纪律以及需要 AskUserQuestion 确认的敏感操作清单。",
+   "tags": [
+    "documentation",
+    "configuration",
+    "ai-agent-rules"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "document:HANDOFF.md",
+   "type": "document",
+   "name": "HANDOFF.md",
+   "filePath": "HANDOFF.md",
+   "summary": "会话交接记录（最新在前）：记录 2026-07-05 引导会话的成果——双语 PRD、架构与模型 API 调研、从 Hualong 移植的开发护栏（含 schema-check 与 prompt-lint 两个新检查）、全部通过测试的演示核心（89/89），以及后续步骤与开放风险（如 MiniMax-M3 JSON 可靠性、儿童照片合规 ADR）。",
+   "tags": [
+    "documentation",
+    "handoff",
+    "session-log",
+    "roadmap"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "document:README.md",
+   "type": "document",
+   "name": "README.md",
+   "filePath": "README.md",
+   "summary": "项目英文入口文档：一句话命题（把严格对准模型、把自然对话留给教师）、仓库地图、快速开始命令（npm install / gate / test）与第0期状态说明；与 README.zh-CN.md 互为双语孪生。",
+   "tags": [
+    "documentation",
+    "entry-point",
+    "overview"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "document:README.zh-CN.md",
+   "type": "document",
+   "name": "README.zh-CN.md",
+   "filePath": "README.zh-CN.md",
+   "summary": "README.md 的简体中文孪生版本：介绍平台命题、仓库地图、快速开始与当前状态，内容与英文版逐节对应，受 parity-check 门禁保障一致性。",
+   "tags": [
+    "documentation",
+    "entry-point",
+    "overview",
+    "i18n"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:launch-demo.bat",
+   "type": "file",
+   "name": "launch-demo.bat",
+   "filePath": "launch-demo.bat",
+   "summary": "Windows 一键演示启动脚本：检查 Node.js 18+ 是否在 PATH 上，接受可选端口参数（默认 8787），延时打开浏览器后运行零依赖演示服务器 demo/serve.mjs。",
+   "tags": [
+    "script",
+    "launcher",
+    "demo",
+    "windows"
+   ],
+   "complexity": "simple",
+   "languageNotes": "用 `start cmd /c timeout` 实现\"先启动浏览器延时、再前台跑服务器\"的批处理惯用法；关闭窗口即停止服务。"
+  },
+  {
+   "id": "config:package.json",
+   "type": "config",
+   "name": "package.json",
+   "filePath": "package.json",
+   "summary": "项目清单（零运行时依赖，Node 18+，ESM）：定义全部 npm 脚本入口——开发护栏门禁（gate/glossary/lint/parity/schema-check/prompt-lint）、测试、git 钩子安装（prepare 自动执行）与演示服务器启动。",
+   "tags": [
+    "configuration",
+    "build-system",
+    "npm-scripts",
+    "entry-point"
+   ],
+   "complexity": "simple",
+   "languageNotes": "`prepare` 脚本在 npm install 时自动安装 git 钩子（失败时用 `|| true` 兜底），实现零依赖仓库的自动治理接线。"
+  },
+  {
+   "id": "document:demo/src/prompts/base.zh.md",
+   "type": "document",
+   "name": "base.zh.md",
+   "filePath": "demo/src/prompts/base.zh.md",
+   "summary": "陪跑智能体的基础系统提示词：定义智能体身份（陪伴幼儿园教师做本土文化主题探究的教研同事）、七条系统运行原则（状态机优先、证据优先、文化后台提示等）、动态识别契约（反表单化、一次一问、必附示例）、全局禁止规则（禁止编造儿童反馈、禁止成人口号）以及语言语气规范。",
+   "tags": [
+    "system-prompt",
+    "运行原则",
+    "证据优先",
+    "反表单化",
+    "runtime-harness"
+   ],
+   "complexity": "simple",
+   "languageNotes": "全文为简体中文提示词，采用编号规则加粗体关键句的结构，便于模型逐条遵守；「不得编造儿童兴趣」等禁令直接对应产品最高级不可协商项。"
+  },
+  {
+   "id": "document:demo/src/prompts/contract.zh.md",
+   "type": "document",
+   "name": "contract.zh.md",
+   "filePath": "demo/src/prompts/contract.zh.md",
+   "summary": "输出契约提示词：规定模型每轮必须返回的 JSON 结构（reply_markdown、question、artifacts、closure_loop、state_delta、evidence_refs、round_complete）及七条填写规则，例如断言儿童行为必须引用已有证据条目、stage 变更仅为提议由引擎裁决。",
+   "tags": [
+    "output-contract",
+    "json-schema",
+    "llm-prompt",
+    "证据引用",
+    "闭环输出"
+   ],
+   "complexity": "simple",
+   "languageNotes": "以 JSON 代码块示例加规则清单的方式约束模型输出，是运行时护栏（validateTurn / TURN_SCHEMA）的自然语言对照物。"
+  },
+  {
+   "id": "document:demo/src/prompts/stage0.zh.md",
+   "type": "document",
+   "name": "stage0.zh.md",
+   "filePath": "demo/src/prompts/stage0.zh.md",
+   "summary": "阶段0（启动与建档／资源意图校准）提示词：涵盖 WF01 静默入口识别、WF02 按需信息补全、WF02b 主题适配性筛查（三档判断）与核心节点 WF03b 资源意图三问及 entry_card 切口卡生成，并给出引擎检查的阶段完成条件。",
+   "tags": [
+    "stage-prompt",
+    "建档",
+    "资源意图",
+    "workflow-v1.3",
+    "llm-prompt"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "document:demo/src/prompts/stage1.zh.md",
+   "type": "document",
+   "name": "stage1.zh.md",
+   "filePath": "demo/src/prompts/stage1.zh.md",
+   "summary": "阶段1（聚焦问题、补齐经验的蓄水期）提示词：指导生成 WF05 真实体验方案与内嵌访谈卡、处理教师回传并逐条写入 children_evidence、整理 WF07 儿童问题池与文化可能性提示、推导 WF08 核心驱动问题，并强调无儿童证据不得进入阶段2。",
+   "tags": [
+    "stage-prompt",
+    "儿童证据",
+    "问题池",
+    "驱动问题",
+    "llm-prompt"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "document:demo/src/prompts/stage2.zh.md",
+   "type": "document",
+   "name": "stage2.zh.md",
+   "filePath": "demo/src/prompts/stage2.zh.md",
+   "summary": "阶段2（目标与评估轴心）提示词：驱动问题确立后一次性生成教师后台的目标轴心草稿，含核心概念性理解目标（WF10）、四维目标（WF11–14）、GRASPS（WF15）与低负担过程性证据计划（WF16），全部以可删改姿态交教师确认。",
+   "tags": [
+    "stage-prompt",
+    "目标轴心",
+    "grasps",
+    "教师支架",
+    "llm-prompt"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "document:demo/src/prompts/stage3.zh.md",
+   "type": "document",
+   "name": "stage3.zh.md",
+   "filePath": "demo/src/prompts/stage3.zh.md",
+   "summary": "阶段3（协作行动推进期，多轮循环）提示词：规定每轮十步内部顺序——读取状态、判断轨迹、读取三类儿童差异观察与三句聚焦反馈（V1.3 核心）、证据强制的儿童分析、学习阶段识别（WF20b）、文化语义回看（WF20c）、卡壳复盘（WF20）、项目化信号累计判断（WF21）、下发 cycle_task 小任务并以 round_complete 暂停等待回传。",
+   "tags": [
+    "stage-prompt",
+    "多轮循环",
+    "差异观察",
+    "卡壳复盘",
+    "项目化信号"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "十个编号小节构成一轮循环的固定执行顺序，多处粗体禁令（如不得把个别儿童表现扩大为全班兴趣）直接可被运行时护栏检验。"
+  },
+  {
+   "id": "document:demo/src/prompts/stage5.zh.md",
+   "type": "document",
+   "name": "stage5.zh.md",
+   "filePath": "demo/src/prompts/stage5.zh.md",
+   "summary": "阶段5（课程故事片段，演示版）提示词：先做 WF28 材料完整性强制检查（缺料只列缺口清单、不虚构过程），再按 WF29+WF30 生成三段式 story_fragment（主题缘起、儿童问题生成、第一轮行动与反思），要求逐条引用儿童原话证据、保留真实发生顺序。",
+   "tags": [
+    "stage-prompt",
+    "课程故事",
+    "证据引用",
+    "材料检查",
+    "llm-prompt"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "document:docs/ARCHITECTURE.md",
+   "type": "document",
+   "name": "ARCHITECTURE.md",
+   "filePath": "docs/ARCHITECTURE.md",
+   "summary": "系统设计文档（草案 v0.1）：定义教师浏览器→代理层→LLM厂商的整体架构、回合处理管线（运行时护栏所在地）、确定性状态机引擎、腾讯云开发 CloudBase 后端选型与成本、PIPL/未成年人合规姿态，以及本期演示切片的目录结构与备选方案对比。核心设计规则是演示的本地 Node 代理与生产 CloudBase 函数共享同一套核心模块（adapter、runtime harness、state engine）。",
+   "tags": [
+    "documentation",
+    "architecture",
+    "系统设计",
+    "backend",
+    "合规"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "包含 ASCII 系统上下文图与阶段流转门控表；「LLM 提议、引擎裁决」（LLM proposes, the engine disposes）是防伪造的核心架构决策。"
+  },
+  {
+   "id": "document:docs/LAUNCH-COMPLIANCE.md",
+   "type": "document",
+   "name": "LAUNCH-COMPLIANCE.md",
+   "filePath": "docs/LAUNCH-COMPLIANCE.md",
+   "summary": "上线合规关键路径清单：以 ICP 备案为核心阻塞项，梳理三个前置决策（法律主体、域名、试点数据范围）和四条并行轨道——ICP 备案、生成式AI产品层登记、PIPL/未成年人数据保护、微信开放平台接入，并以待办台账形式记录待核实项与责任人。",
+   "tags": [
+    "documentation",
+    "合规",
+    "备案",
+    "pipl",
+    "checklist"
+   ],
+   "complexity": "simple",
+   "languageNotes": "严格遵循「不猜测」工作规则：未经核实的事项统一标注「待核实」并指定核实责任方。"
+  },
+  {
+   "id": "document:docs/MODEL-APIS.md",
+   "type": "document",
+   "name": "MODEL-APIS.md",
+   "filePath": "docs/MODEL-APIS.md",
+   "summary": "国产 LLM 供应商评估（2026-07-05 快照）：对比 MiniMax-M3（默认）、智谱 GLM-5.2（回退1/JSON正确性锚点）、月之暗面 Kimi k2.6（回退2）、通义千问（低成本/容灾层）的上下文窗口、价格、JSON 约束能力、限流与备案状态，并给出对演示适配层的规范性设计结论（每厂商 jsonStrategy、故障转移链、服务端校验）。",
+   "tags": [
+    "documentation",
+    "llm-provider",
+    "调研",
+    "api",
+    "适配层"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "结论明确：四家厂商均封禁浏览器直连（CORS），服务端代理为强制项；仅 GLM 支持 json_schema 约束解码。"
+  },
+  {
+   "id": "document:docs/PRD.md",
+   "type": "document",
+   "name": "PRD.md",
+   "filePath": "docs/PRD.md",
+   "summary": "产品需求文档（英文版，草案 v0.1）：定义面向番禺幼儿园教师的AI主题探究陪跑智能体——核心命题是「严格性对准模型而非教师」，以动态识别（一次一问、必附示例、可推断不再问）取代表单填写，运行时护栏强制证据优先、输出闭环四要素与阶段门控合法性。涵盖用户画像、25+ 用户故事、系统需求、演示验收标准与试点度量。",
+   "tags": [
+    "documentation",
+    "prd",
+    "需求",
+    "产品愿景",
+    "entry-point"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "V1.3 工作流规范（source-docs）被定位为行为契约上游；本文档与 PRD.zh-CN.md 为双语孪生，受护栏一致性检查约束。"
+  },
+  {
+   "id": "document:docs/PRD.zh-CN.md",
+   "type": "document",
+   "name": "PRD.zh-CN.md",
+   "filePath": "docs/PRD.zh-CN.md",
+   "summary": "产品需求文档的简体中文孪生版本，与英文版 PRD.md 逐节对应（22 个章节结构一致）：问题陈述、产品愿景、动态识别契约、范围、用户故事、系统需求、演示验收标准与术语锚点。按仓库工作约定，两个版本必须在同一变更中同步更新，由开发护栏做双语一致性检查。",
+   "tags": [
+    "documentation",
+    "prd",
+    "双语孪生",
+    "需求",
+    "zh-cn"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "config:docs/glossary.json",
+   "type": "config",
+   "name": "glossary.json",
+   "filePath": "docs/glossary.json",
+   "summary": "规范双语术语表（v0.1.0），是全仓库术语的唯一事实来源：定义教师资源发展平台、陪跑智能体、动态识别、输出闭环等核心术语的中英对照、定义与禁用变体，并附使用规则（首次出现写双语对、禁用词为 P1 级错误、状态机字段名保持 snake_case 代码标识）。由开发护栏的术语检查器读取执行。",
+   "tags": [
+    "configuration",
+    "术语表",
+    "glossary",
+    "governance",
+    "双语"
+   ],
+   "complexity": "moderate",
+   "languageNotes": "术语源自 V1.3 工作流规范；「术语表即法律」——禁用变体在护栏检查中是阻塞性错误。"
+  },
+  {
+   "id": "document:tests/fixtures/clean.md",
+   "type": "document",
+   "name": "clean.md",
+   "filePath": "tests/fixtures/clean.md",
+   "summary": "全干净测试夹具：仅使用规范术语（陪跑智能体、输出闭环、儿童问题池）与规范标点的双语示例文档，用于验证词汇表检查在合规文本上不产生误报。",
+   "tags": [
+    "test-fixture",
+    "词汇表",
+    "阴性样例",
+    "documentation"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "document:tests/fixtures/glossary-bad.md",
+   "type": "document",
+   "name": "glossary-bad.md",
+   "filePath": "tests/fixtures/glossary-bad.md",
+   "summary": "违规测试夹具：故意使用禁用变体“聊天机器人”指代陪跑智能体，用于验证 glossary-check 能够报出禁用术语。",
+   "tags": [
+    "test-fixture",
+    "词汇表",
+    "阳性样例",
+    "禁用术语"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "document:tests/fixtures/glossary-canonical-mask.md",
+   "type": "document",
+   "name": "glossary-canonical-mask.md",
+   "filePath": "tests/fixtures/glossary-canonical-mask.md",
+   "summary": "边界测试夹具：包含与禁用变体字面相近的规范术语（输出闭环、核心驱动问题、儿童问题池），用于验证词汇表检查的规范词掩蔽逻辑不会误报规范用法。",
+   "tags": [
+    "test-fixture",
+    "词汇表",
+    "边界用例",
+    "误报防护"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:tests/fixtures/sample.html",
+   "type": "file",
+   "name": "sample.html",
+   "filePath": "tests/fixtures/sample.html",
+   "summary": "设计评审测试夹具：一个符合设计规范的最小中文页面（CSS 变量令牌、16px 正文、1.8 行高、48px 触控目标），用于验证 design-judge 在合规 HTML 上通过。",
+   "tags": [
+    "test-fixture",
+    "design-judge",
+    "markup",
+    "阴性样例"
+   ],
+   "complexity": "simple",
+   "languageNotes": "通过 :root 自定义属性（--color-*、--space-*）演示设计令牌用法，并以 min-width/min-height 48px 满足触控目标下限。"
+  },
+  {
+   "id": "document:tests/fixtures/typewriter-bad.md",
+   "type": "document",
+   "name": "typewriter-bad.md",
+   "filePath": "tests/fixtures/typewriter-bad.md",
+   "summary": "违规测试夹具：中文句子里故意混用半角括号、逗号和句号，用于验证 typewriter 标点检查能够报错。",
+   "tags": [
+    "test-fixture",
+    "标点检查",
+    "阳性样例",
+    "全角标点"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "document:tests/fixtures/typewriter-clean.md",
+   "type": "document",
+   "name": "typewriter-clean.md",
+   "filePath": "tests/fixtures/typewriter-clean.md",
+   "summary": "合规测试夹具：中文全角标点使用规范，并包含数字小数点与英文逗号等不应误判的合法半角场景，用于验证 typewriter 检查通过干净文本。",
+   "tags": [
+    "test-fixture",
+    "标点检查",
+    "阴性样例",
+    "误报防护"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "document:tests/fixtures/wording-sample.md",
+   "type": "document",
+   "name": "wording-sample.md",
+   "filePath": "tests/fixtures/wording-sample.md",
+   "summary": "措辞评审测试夹具：双语示例阐述陪跑智能体“证据优先、无儿童证据只给方向”的表述，用于验证 wording-judge 的评审输入。",
+   "tags": [
+    "test-fixture",
+    "wording-judge",
+    "证据优先",
+    "双语"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:.claude/hooks/post-edit-check.mjs",
+   "type": "file",
+   "name": "post-edit-check.mjs",
+   "filePath": ".claude/hooks/post-edit-check.mjs",
+   "summary": "Claude Code 的 PostToolUse 钩子：每次 Edit/Write 后对刚编辑的 Markdown 文件运行 typewriter 与 glossary 检查器，发现阻断级问题时以退出码 2 要求立即修复。",
+   "tags": [
+    "hook",
+    "lint-on-write",
+    "质量门禁",
+    "event-handler",
+    "tested"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:.claude/hooks/post-edit-check.mjs:readStdin",
+   "type": "function",
+   "name": "readStdin",
+   "filePath": ".claude/hooks/post-edit-check.mjs",
+   "lineRange": [
+    32,
+    49
+   ],
+   "summary": "异步读取 stdin 中的钩子 JSON 载荷，带超时兜底避免进程挂起。",
+   "tags": [
+    "utility",
+    "stdin",
+    "异步"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:.claude/hooks/post-edit-check.mjs:runChecker",
+   "type": "function",
+   "name": "runChecker",
+   "filePath": ".claude/hooks/post-edit-check.mjs",
+   "lineRange": [
+    56,
+    72
+   ],
+   "summary": "以子进程方式运行指定的 harness 检查脚本，并从输出中截取解析 JSON 结果。",
+   "tags": [
+    "utility",
+    "子进程",
+    "json解析"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:.claude/hooks/post-edit-check.mjs:main",
+   "type": "function",
+   "name": "main",
+   "filePath": ".claude/hooks/post-edit-check.mjs",
+   "lineRange": [
+    74,
+    151
+   ],
+   "summary": "钩子主流程：解析编辑事件、按路径与扩展名过滤，对 Markdown 文件运行 typewriter 与 glossary 检查并汇总阻断级发现后决定退出码。",
+   "tags": [
+    "entry-point",
+    "event-handler",
+    "验证"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:.claude/hooks/pre-edit-guard.mjs",
+   "type": "file",
+   "name": "pre-edit-guard.mjs",
+   "filePath": ".claude/hooks/pre-edit-guard.mjs",
+   "summary": "Claude Code 的 PreToolUse 钩子：按 harness.config.json 中 guard 段的配置，对受保护路径（词汇表、护栏配置、source-docs、.githooks 等）做 deny/ask/warn 决策后再放行编辑。",
+   "tags": [
+    "hook",
+    "权限守卫",
+    "配置驱动",
+    "event-handler",
+    "tested"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:.claude/hooks/pre-edit-guard.mjs:readStdin",
+   "type": "function",
+   "name": "readStdin",
+   "filePath": ".claude/hooks/pre-edit-guard.mjs",
+   "lineRange": [
+    40,
+    55
+   ],
+   "summary": "异步读取 stdin 中的钩子 JSON 载荷，带超时兜底避免进程挂起。",
+   "tags": [
+    "utility",
+    "stdin",
+    "异步"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:.claude/hooks/pre-edit-guard.mjs:matches",
+   "type": "function",
+   "name": "matches",
+   "filePath": ".claude/hooks/pre-edit-guard.mjs",
+   "lineRange": [
+    61,
+    70
+   ],
+   "summary": "将文件路径与 guard 模式匹配：尾部『/』视为目录、『*.ext』按扩展名、其余按精确文件名或路径后缀。",
+   "tags": [
+    "utility",
+    "模式匹配",
+    "路径处理"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:.claude/hooks/pre-edit-guard.mjs:main",
+   "type": "function",
+   "name": "main",
+   "filePath": ".claude/hooks/pre-edit-guard.mjs",
+   "lineRange": [
+    80,
+    104
+   ],
+   "summary": "读取编辑事件并依次比对 deny/ask/warn 列表，输出对应的权限决策 JSON 或警告后放行。",
+   "tags": [
+    "entry-point",
+    "验证",
+    "权限"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "config:.claude/settings.json",
+   "type": "config",
+   "name": "settings.json",
+   "filePath": ".claude/settings.json",
+   "summary": "Claude Code 项目级设置：为 Edit/Write/MultiEdit 工具挂接 PreToolUse（pre-edit-guard）与 PostToolUse（post-edit-check）两个钩子。",
+   "tags": [
+    "configuration",
+    "hooks",
+    "claude-code"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:.gitattributes",
+   "type": "file",
+   "name": ".gitattributes",
+   "filePath": ".gitattributes",
+   "summary": "Git 属性配置：文本文件自动规范化，并强制 .mjs/.sh/.py 与 .githooks 下的钩子使用 LF 行尾，保证跨平台一致。",
+   "tags": [
+    "configuration",
+    "git",
+    "行尾规范"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:.githooks/commit-msg",
+   "type": "file",
+   "name": "commit-msg",
+   "filePath": ".githooks/commit-msg",
+   "summary": "Git commit-msg 钩子（sh 脚本）：强制提交信息首行符合本仓库的 Conventional Commits 类型集，merge/revert/fixup 提交直接放行。",
+   "tags": [
+    "git-hook",
+    "conventional-commits",
+    "质量门禁",
+    "tested"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:.githooks/pre-commit",
+   "type": "file",
+   "name": "pre-commit",
+   "filePath": ".githooks/pre-commit",
+   "summary": "Git pre-commit 钩子（sh 脚本）：定位 Node 后运行 harness/gate.mjs 全量质量门禁，失败则阻止提交，可用 --no-verify 显式绕过。",
+   "tags": [
+    "git-hook",
+    "质量门禁",
+    "自动化",
+    "tested"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:.understand-anything/.understandignore",
+   "type": "file",
+   "name": ".understandignore",
+   "filePath": ".understand-anything/.understandignore",
+   "summary": "understand-anything 分析排除清单（语法同 .gitignore）：忽略 tmp/、.scratch/、本地设置与 worktree 等目录，其余条目以注释形式备选。",
+   "tags": [
+    "configuration",
+    "ignore规则",
+    "工具配置"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "config:.understand-anything/config.json",
+   "type": "config",
+   "name": "config.json",
+   "filePath": ".understand-anything/config.json",
+   "summary": "understand-anything 的输出语言配置：默认生成简体中文（zh）分析结果，随仓库克隆继承。",
+   "tags": [
+    "configuration",
+    "本地化",
+    "工具配置"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "document:demo/DESIGN.md",
+   "type": "document",
+   "name": "DESIGN.md",
+   "filePath": "demo/DESIGN.md",
+   "summary": "演示界面的设计系统规范：定义『耐心同事的书桌』视觉主题、暖纸色系调色板与配色角色、字体规则、组件样式、布局原则和 GSAP 动效约束，是 demo UI 与设计评审器的唯一设计依据。",
+   "tags": [
+    "documentation",
+    "design-system",
+    "设计规范",
+    "ui"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:demo/index.html",
+   "type": "file",
+   "name": "index.html",
+   "filePath": "demo/index.html",
+   "summary": "演示页面的 HTML 骨架：中文聊天界面，含页头、消息区、输入区、设置抽屉（模型与密钥）与调试抽屉，通过 ES module 加载 main.js，并从 CDN 引入 GSAP（加载失败时动效自动降级）。",
+   "tags": [
+    "markup",
+    "entry-point",
+    "聊天界面",
+    "demo"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:demo/src/types.mjs",
+   "type": "file",
+   "name": "types.mjs",
+   "filePath": "demo/src/types.mjs",
+   "summary": "演示项目共享的 JSDoc 类型定义：Turn、TurnQuestion、TurnArtifact、ClosureLoop、Violation、GateReport、ProviderConfig 等每轮对话契约类型，镜像 contract.zh.md 与 course-state.schema.json 两份规范。",
+   "tags": [
+    "type-definition",
+    "jsdoc",
+    "契约"
+   ],
+   "complexity": "simple",
+   "languageNotes": "以 JSDoc @typedef 代替 TypeScript 接口，实现零构建、零依赖的类型提示（见 ADR-0001）。"
+  },
+  {
+   "id": "file:demo/src/ui/styles.css",
+   "type": "file",
+   "name": "styles.css",
+   "filePath": "demo/src/ui/styles.css",
+   "summary": "实现 demo/DESIGN.md 的完整样式表：以 CSS 变量落地米纸暖白、榕树深绿、柿橙点缀等调色板，覆盖聊天气泡、产物卡片、闭环卡、抽屉与响应式布局；教师界面只用暖色系，冷色 slate 隔离在调试抽屉，仅浅色模式。",
+   "tags": [
+    "markup",
+    "stylesheet",
+    "design-tokens",
+    "ui"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "document:docs/adr/0001-demo-zero-build-jsdoc-esm.md",
+   "type": "document",
+   "name": "0001-demo-zero-build-jsdoc-esm.md",
+   "filePath": "docs/adr/0001-demo-zero-build-jsdoc-esm.md",
+   "summary": "ADR-0001：决定 demo 采用带 JSDoc 类型注释的原生 ES 模块、零构建零依赖，类型检查按需通过 npx tsc --checkJs 完成；记录了放弃 TypeScript+构建链的取舍与后果。",
+   "tags": [
+    "documentation",
+    "adr",
+    "架构决策"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:harness/code-review.mjs",
+   "type": "file",
+   "name": "code-review.mjs",
+   "filePath": "harness/code-review.mjs",
+   "summary": "轻量静态代码审查脚本：扫描 demo/src 下源码，检查 eval、硬编码密钥、http:// 明文地址、遗留 console.log、宽松相等以及未经 sanitize 的 innerHTML 写入等反模式；P0/P1 发现使检查失败。",
+   "tags": [
+    "静态检查",
+    "security",
+    "质量门禁",
+    "lint",
+    "tested"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:harness/code-review.mjs:walk",
+   "type": "function",
+   "name": "walk",
+   "filePath": "harness/code-review.mjs",
+   "lineRange": [
+    43,
+    57
+   ],
+   "summary": "递归遍历目标目录，按扩展名收集需要审查的源码文件，跳过 node_modules 等忽略目录。",
+   "tags": [
+    "utility",
+    "文件遍历"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "config:harness/harness.config.json",
+   "type": "config",
+   "name": "harness.config.json",
+   "filePath": "harness/harness.config.json",
+   "summary": "开发护栏中心配置：定义各项检查（glossary、typewriter、parity、tests、两个 judge、schemaCheck、promptLint 等）的 off/warn/block 级别、双语文档配对、临时文件清理路径、handoff 提醒以及编辑守卫的 ask/warn 路径清单。",
+   "tags": [
+    "configuration",
+    "质量门禁",
+    "governance"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "file:harness/install-hooks.mjs",
+   "type": "file",
+   "name": "install-hooks.mjs",
+   "filePath": "harness/install-hooks.mjs",
+   "summary": "把 git core.hooksPath 指向 .githooks 的安装脚本，使 pre-commit 与 commit-msg 钩子生效；由 npm prepare 触发，非 git 仓库时友好跳过、绝不报错。",
+   "tags": [
+    "utility",
+    "git-hook",
+    "安装脚本"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/install-hooks.mjs:main",
+   "type": "function",
+   "name": "main",
+   "filePath": "harness/install-hooks.mjs",
+   "lineRange": [
+    29,
+    57
+   ],
+   "summary": "检测是否为 git 仓库后执行 git config core.hooksPath .githooks，并打印安装结果或跳过说明。",
+   "tags": [
+    "entry-point",
+    "git配置"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:harness/judges/design_judge.py",
+   "type": "file",
+   "name": "design_judge.py",
+   "filePath": "harness/judges/design_judge.py",
+   "summary": "确定性设计质量评审器：仅用 Python 标准库对 HTML/CSS/WXSS/Markdown 设计文件按五维度（体系一致性、视觉层级、工艺质量、可用性、原创性）打 0-10 分，内置 CJK 排版规则与反 AI slop 检查，门禁按阈值判定通过与否。",
+   "tags": [
+    "评审器",
+    "design-quality",
+    "静态检查",
+    "cli",
+    "tested"
+   ],
+   "complexity": "complex",
+   "languageNotes": "纯标准库实现，无随机、无网络、无时钟，保证评分结果可复现。"
+  },
+  {
+   "id": "function:harness/judges/design_judge.py:_looks_binary",
+   "type": "function",
+   "name": "_looks_binary",
+   "filePath": "harness/judges/design_judge.py",
+   "lineRange": [
+    56,
+    72
+   ],
+   "summary": "通过 UTF-8/UTF-16 解码尝试与控制字符占比，判断文件内容是否为二进制。",
+   "tags": [
+    "utility",
+    "二进制检测"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/judges/design_judge.py:read_text_file",
+   "type": "function",
+   "name": "read_text_file",
+   "filePath": "harness/judges/design_judge.py",
+   "lineRange": [
+    75,
+    90
+   ],
+   "summary": "读取文件并按 UTF-8（失败时回退其他编码）解码为文本，二进制文件返回 None。",
+   "tags": [
+    "utility",
+    "编码处理",
+    "文件读取"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/judges/design_judge.py:collect_files",
+   "type": "function",
+   "name": "collect_files",
+   "filePath": "harness/judges/design_judge.py",
+   "lineRange": [
+    93,
+    102
+   ],
+   "summary": "收集指定路径下所有可评审的设计文件（按扩展名过滤并排序，保证顺序确定）。",
+   "tags": [
+    "utility",
+    "文件遍历"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/judges/design_judge.py:assess_file",
+   "type": "function",
+   "name": "assess_file",
+   "filePath": "harness/judges/design_judge.py",
+   "lineRange": [
+    174,
+    457
+   ],
+   "summary": "对单个设计文件执行五维度启发式评估：CSS 变量体系、字号层级比、8pt 栅格、触控目标尺寸、AI slop 模式（渐变、emoji 图标、假数据）等，返回各维得分与发现列表。",
+   "tags": [
+    "核心逻辑",
+    "启发式评估",
+    "design-quality"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "function:harness/judges/design_judge.py:judge_path",
+   "type": "function",
+   "name": "judge_path",
+   "filePath": "harness/judges/design_judge.py",
+   "lineRange": [
+    480,
+    526
+   ],
+   "summary": "汇总一个路径下全部设计文件的评估结果，计算总分与质量档位，并按阈值和 strict 模式给出通过/失败结论。",
+   "tags": [
+    "聚合",
+    "评分",
+    "门禁判定"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:harness/judges/design_judge.py:print_report",
+   "type": "function",
+   "name": "print_report",
+   "filePath": "harness/judges/design_judge.py",
+   "lineRange": [
+    532,
+    546
+   ],
+   "summary": "以人类可读格式打印评审报告：各维分数、质量档位与发现明细。",
+   "tags": [
+    "报告输出",
+    "cli"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/judges/design_judge.py:self_test",
+   "type": "function",
+   "name": "self_test",
+   "filePath": "harness/judges/design_judge.py",
+   "lineRange": [
+    562,
+    597
+   ],
+   "summary": "内置自检：用合成的违规与干净样例验证各维度检查会触发且干净样例能通过。",
+   "tags": [
+    "test",
+    "自检"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:harness/judges/design_judge.py:build_parser",
+   "type": "function",
+   "name": "build_parser",
+   "filePath": "harness/judges/design_judge.py",
+   "lineRange": [
+    603,
+    615
+   ],
+   "summary": "构建 argparse 命令行参数解析器（--json、--threshold、--strict、--self-test）。",
+   "tags": [
+    "cli",
+    "参数解析"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/judges/design_judge.py:main",
+   "type": "function",
+   "name": "main",
+   "filePath": "harness/judges/design_judge.py",
+   "lineRange": [
+    618,
+    646
+   ],
+   "summary": "CLI 入口：解析参数、运行评审或自检，按结果返回退出码 0/1/2。",
+   "tags": [
+    "entry-point",
+    "cli"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "file:harness/judges/wording_judge.py",
+   "type": "file",
+   "name": "wording_judge.py",
+   "filePath": "harness/judges/wording_judge.py",
+   "summary": "确定性文档措辞评审器：按五维度（清晰度、双语对齐、术语表合规、中文标点/格式、语气与房屋风格）为 Markdown 文档打 0-10 分，从 docs/glossary.json 加载禁用变体词，供门禁以 warn 级使用。",
+   "tags": [
+    "评审器",
+    "文案质量",
+    "术语表",
+    "cli",
+    "tested"
+   ],
+   "complexity": "complex",
+   "languageNotes": "纯标准库实现的确定性启发式；术语表缺失时以中性 7 分跳过而非报错。"
+  },
+  {
+   "id": "function:harness/judges/wording_judge.py:_looks_binary",
+   "type": "function",
+   "name": "_looks_binary",
+   "filePath": "harness/judges/wording_judge.py",
+   "lineRange": [
+    86,
+    100
+   ],
+   "summary": "通过解码尝试与控制字符占比判断文件内容是否为二进制。",
+   "tags": [
+    "utility",
+    "二进制检测"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/judges/wording_judge.py:read_text_file",
+   "type": "function",
+   "name": "read_text_file",
+   "filePath": "harness/judges/wording_judge.py",
+   "lineRange": [
+    103,
+    114
+   ],
+   "summary": "读取文件并解码为文本，二进制或不可解码文件返回 None。",
+   "tags": [
+    "utility",
+    "编码处理",
+    "文件读取"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/judges/wording_judge.py:collect_files",
+   "type": "function",
+   "name": "collect_files",
+   "filePath": "harness/judges/wording_judge.py",
+   "lineRange": [
+    117,
+    125
+   ],
+   "summary": "收集指定路径下所有 Markdown 文档文件并排序。",
+   "tags": [
+    "utility",
+    "文件遍历"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/judges/wording_judge.py:load_glossary",
+   "type": "function",
+   "name": "load_glossary",
+   "filePath": "harness/judges/wording_judge.py",
+   "lineRange": [
+    128,
+    140
+   ],
+   "summary": "从 docs/glossary.json 加载术语表（canonical 术语与禁用变体），文件缺失或损坏时返回 None 以便中性跳过。",
+   "tags": [
+    "术语表",
+    "配置加载"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/judges/wording_judge.py:split_en_sentences",
+   "type": "function",
+   "name": "split_en_sentences",
+   "filePath": "harness/judges/wording_judge.py",
+   "lineRange": [
+    185,
+    197
+   ],
+   "summary": "将英文文本切分为句子，用于长句与被动语态密度检测。",
+   "tags": [
+    "utility",
+    "文本处理"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/judges/wording_judge.py:split_zh_sentences",
+   "type": "function",
+   "name": "split_zh_sentences",
+   "filePath": "harness/judges/wording_judge.py",
+   "lineRange": [
+    200,
+    212
+   ],
+   "summary": "按中文句末标点切分中文句子，用于超长句（>80 字）检测。",
+   "tags": [
+    "utility",
+    "文本处理",
+    "中文"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/judges/wording_judge.py:assess_file",
+   "type": "function",
+   "name": "assess_file",
+   "filePath": "harness/judges/wording_judge.py",
+   "lineRange": [
+    222,
+    438
+   ],
+   "summary": "对单个 Markdown 文件执行五维度评估：长句/模糊词、双语结构对齐、禁用术语与大小写、中文半角标点混用、营销废话与正文 emoji 等，返回得分与发现。",
+   "tags": [
+    "核心逻辑",
+    "启发式评估",
+    "文案质量"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "function:harness/judges/wording_judge.py:judge_path",
+   "type": "function",
+   "name": "judge_path",
+   "filePath": "harness/judges/wording_judge.py",
+   "lineRange": [
+    461,
+    507
+   ],
+   "summary": "汇总一个路径下全部文档的评估结果，计算总分与质量档位，并按阈值给出通过/失败结论。",
+   "tags": [
+    "聚合",
+    "评分",
+    "门禁判定"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:harness/judges/wording_judge.py:print_report",
+   "type": "function",
+   "name": "print_report",
+   "filePath": "harness/judges/wording_judge.py",
+   "lineRange": [
+    518,
+    532
+   ],
+   "summary": "以人类可读格式打印文案评审报告：各维分数、质量档位与发现明细。",
+   "tags": [
+    "报告输出",
+    "cli"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/judges/wording_judge.py:self_test",
+   "type": "function",
+   "name": "self_test",
+   "filePath": "harness/judges/wording_judge.py",
+   "lineRange": [
+    543,
+    595
+   ],
+   "summary": "内置自检：用合成的违规与干净样例验证五个维度的检查会触发且干净样例能通过。",
+   "tags": [
+    "test",
+    "自检"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "function:harness/judges/wording_judge.py:build_parser",
+   "type": "function",
+   "name": "build_parser",
+   "filePath": "harness/judges/wording_judge.py",
+   "lineRange": [
+    601,
+    615
+   ],
+   "summary": "构建 argparse 命令行参数解析器（--json、--threshold、--strict、--self-test）。",
+   "tags": [
+    "cli",
+    "参数解析"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "function:harness/judges/wording_judge.py:main",
+   "type": "function",
+   "name": "main",
+   "filePath": "harness/judges/wording_judge.py",
+   "lineRange": [
+    618,
+    647
+   ],
+   "summary": "CLI 入口：解析参数、运行评审或自检，按结果返回退出码 0/1/2。",
+   "tags": [
+    "entry-point",
+    "cli"
+   ],
+   "complexity": "simple"
+  },
+  {
+   "id": "config:harness/schema/course-state.schema.json",
+   "type": "config",
+   "name": "course-state.schema.json",
+   "filePath": "harness/schema/course-state.schema.json",
+   "summary": "course_state 状态机的 JSON Schema（draft 2020-12）：定义 0-5 阶段、五种教师入口模式、班级画像、幼儿证据、待确认字段与闭环等待标志等，镜像 V1.3 规范 §2；LLM 只提出 delta，由确定性引擎按此 schema 与阶段门规则校验。",
+   "tags": [
+    "schema-definition",
+    "状态机",
+    "validation",
+    "契约"
+   ],
+   "complexity": "complex"
+  },
+  {
+   "id": "file:source-docs/【锋改】番禺幼教AI主题探究陪跑智能体_集成工作流V1.3.docx",
+   "type": "file",
+   "name": "【锋改】番禺幼教AI主题探究陪跑智能体_集成工作流V1.3.docx",
+   "filePath": "source-docs/【锋改】番禺幼教AI主题探究陪跑智能体_集成工作流V1.3.docx",
+   "summary": "上游 V1.3 集成工作流规范的原始 Word 文档（属于锋/陈枫方的过程文件），是本仓库的只读行为契约来源；workflow-v1.3.zh-CN.md 是它的忠实 Markdown 提取版本。",
+   "tags": [
+    "规范",
+    "上游文档",
+    "只读",
+    "docx"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "document:source-docs/workflow-v1.3.zh-CN.md",
+   "type": "document",
+   "name": "workflow-v1.3.zh-CN.md",
+   "filePath": "source-docs/workflow-v1.3.zh-CN.md",
+   "summary": "V1.3 工作流规范的忠实 Markdown 提取：涵盖系统运行原则总提示词、状态机字段与 0-5 阶段流转、集成工作流对照表、阶段三循环内部提示词、教师回传模板与全局禁止规则，是陪跑智能体的行为契约。",
+   "tags": [
+    "规范",
+    "documentation",
+    "行为契约",
+    "状态机"
+   ],
+   "complexity": "moderate"
+  },
+  {
+   "id": "config:tests/package.json",
+   "type": "config",
+   "name": "package.json",
+   "filePath": "tests/package.json",
+   "summary": "tests 目录的最小 package.json：声明 ESM 模块类型与 index.mjs 入口，让 Node 原生测试运行器可直接执行。",
+   "tags": [
+    "configuration",
+    "test",
+    "esm"
+   ],
+   "complexity": "simple"
+  }
+ ],
+ "edges": [
+  {
+   "source": "file:harness/clean-temp.mjs",
+   "target": "file:harness/lib/util.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:harness/gate.mjs",
+   "target": "file:harness/lib/reminders.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:harness/gate.mjs",
+   "target": "file:harness/lib/util.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:harness/glossary-check.mjs",
+   "target": "file:harness/lib/util.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:harness/parity-check.mjs",
+   "target": "file:harness/lib/util.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:harness/prompt-lint.mjs",
+   "target": "file:harness/lib/util.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:harness/schema-check.mjs",
+   "target": "file:harness/lib/util.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:harness/typewriter.mjs",
+   "target": "file:harness/lib/util.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:harness/lib/reminders.mjs",
+   "target": "function:harness/lib/reminders.mjs:computeReminders",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/lib/util.mjs",
+   "target": "function:harness/lib/util.mjs:walk",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/lib/util.mjs",
+   "target": "function:harness/lib/util.mjs:read",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/lib/util.mjs",
+   "target": "function:harness/lib/util.mjs:proseLines",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/lib/util.mjs",
+   "target": "function:harness/lib/util.mjs:parseArgs",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/lib/util.mjs",
+   "target": "function:harness/lib/util.mjs:loadGlossary",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/lib/util.mjs",
+   "target": "function:harness/lib/util.mjs:sevTag",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/parity-check.mjs",
+   "target": "function:harness/parity-check.mjs:headingProfile",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/typewriter.mjs",
+   "target": "function:harness/typewriter.mjs:generate",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/typewriter.mjs",
+   "target": "function:harness/typewriter.mjs:lint",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/typewriter.mjs",
+   "target": "function:harness/typewriter.mjs:fixCjkPunct",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/lib/reminders.mjs",
+   "target": "function:harness/lib/reminders.mjs:computeReminders",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/lib/util.mjs",
+   "target": "function:harness/lib/util.mjs:walk",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/lib/util.mjs",
+   "target": "function:harness/lib/util.mjs:read",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/lib/util.mjs",
+   "target": "function:harness/lib/util.mjs:proseLines",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/lib/util.mjs",
+   "target": "function:harness/lib/util.mjs:parseArgs",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/lib/util.mjs",
+   "target": "function:harness/lib/util.mjs:loadGlossary",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/lib/util.mjs",
+   "target": "function:harness/lib/util.mjs:sevTag",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/clean-temp.mjs",
+   "target": "function:harness/lib/util.mjs:walk",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/clean-temp.mjs",
+   "target": "function:harness/lib/util.mjs:read",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/clean-temp.mjs",
+   "target": "function:harness/lib/util.mjs:parseArgs",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/gate.mjs",
+   "target": "function:harness/lib/util.mjs:read",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/gate.mjs",
+   "target": "function:harness/lib/util.mjs:parseArgs",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/gate.mjs",
+   "target": "function:harness/lib/reminders.mjs:computeReminders",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/glossary-check.mjs",
+   "target": "function:harness/lib/util.mjs:walk",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/glossary-check.mjs",
+   "target": "function:harness/lib/util.mjs:read",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/glossary-check.mjs",
+   "target": "function:harness/lib/util.mjs:proseLines",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/glossary-check.mjs",
+   "target": "function:harness/lib/util.mjs:parseArgs",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/glossary-check.mjs",
+   "target": "function:harness/lib/util.mjs:loadGlossary",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/glossary-check.mjs",
+   "target": "function:harness/lib/util.mjs:sevTag",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/parity-check.mjs",
+   "target": "function:harness/lib/util.mjs:read",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/parity-check.mjs",
+   "target": "function:harness/lib/util.mjs:parseArgs",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/parity-check.mjs",
+   "target": "function:harness/lib/util.mjs:sevTag",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/prompt-lint.mjs",
+   "target": "function:harness/lib/util.mjs:read",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/prompt-lint.mjs",
+   "target": "function:harness/lib/util.mjs:parseArgs",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/prompt-lint.mjs",
+   "target": "function:harness/lib/util.mjs:sevTag",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/schema-check.mjs",
+   "target": "function:harness/lib/util.mjs:read",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/schema-check.mjs",
+   "target": "function:harness/lib/util.mjs:parseArgs",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/schema-check.mjs",
+   "target": "function:harness/lib/util.mjs:sevTag",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/typewriter.mjs",
+   "target": "function:harness/lib/util.mjs:walk",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/typewriter.mjs",
+   "target": "function:harness/lib/util.mjs:read",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/typewriter.mjs",
+   "target": "function:harness/lib/util.mjs:proseLines",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/typewriter.mjs",
+   "target": "function:harness/lib/util.mjs:parseArgs",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/typewriter.mjs",
+   "target": "function:harness/lib/util.mjs:sevTag",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/serve.mjs",
+   "target": "file:demo/src/adapter.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:demo/serve.mjs",
+   "target": "file:demo/src/engine.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:demo/serve.mjs",
+   "target": "file:demo/src/harness.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:demo/serve.mjs",
+   "target": "file:demo/src/mock.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "file:demo/src/engine.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:demo/tests/mock-walkthrough.test.mjs",
+   "target": "file:demo/src/engine.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:demo/tests/mock-walkthrough.test.mjs",
+   "target": "file:demo/src/harness.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:demo/tests/mock-walkthrough.test.mjs",
+   "target": "file:demo/src/mock.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:demo/tests/runtime-harness.test.mjs",
+   "target": "file:demo/src/engine.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:demo/tests/runtime-harness.test.mjs",
+   "target": "file:demo/src/harness.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:demo/serve.mjs",
+   "target": "function:demo/serve.mjs:buildSystemPrompt",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/serve.mjs",
+   "target": "function:demo/serve.mjs:effectiveRegistry",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/serve.mjs",
+   "target": "function:demo/serve.mjs:runTurn",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/adapter.mjs",
+   "target": "function:demo/src/adapter.mjs:buildRequest",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/adapter.mjs",
+   "target": "function:demo/src/adapter.mjs:extractPayload",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/adapter.mjs",
+   "target": "class:demo/src/adapter.mjs:AdapterError",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/adapter.mjs",
+   "target": "function:demo/src/adapter.mjs:callProvider",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/adapter.mjs",
+   "target": "function:demo/src/adapter.mjs:listModels",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/adapter.mjs",
+   "target": "function:demo/src/adapter.mjs:callWithFailover",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/engine.mjs",
+   "target": "function:demo/src/engine.mjs:createInitialState",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/engine.mjs",
+   "target": "function:demo/src/engine.mjs:stageGateError",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/engine.mjs",
+   "target": "function:demo/src/engine.mjs:applyDelta",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/engine.mjs",
+   "target": "function:demo/src/engine.mjs:evidenceIds",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "function:demo/src/harness.mjs:parseTurn",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "function:demo/src/harness.mjs:extractJson",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "function:demo/src/harness.mjs:validateTurn",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "function:demo/src/harness.mjs:findClaimSentences",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "function:demo/src/harness.mjs:violationFeedback",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "function:demo/src/harness.mjs:safeTemplate",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/mock.mjs",
+   "target": "function:demo/src/mock.mjs:mockTurn",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/mock.mjs",
+   "target": "function:demo/src/mock.mjs:turnIntentQuestion",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/mock.mjs",
+   "target": "function:demo/src/mock.mjs:turnEntryCard",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/mock.mjs",
+   "target": "function:demo/src/mock.mjs:turnAwaitOrIngest",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/mock.mjs",
+   "target": "function:demo/src/mock.mjs:turnCycleTask",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/mock.mjs",
+   "target": "function:demo/src/mock.mjs:turnStoryFragment",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/tests/runtime-harness.test.mjs",
+   "target": "function:demo/tests/runtime-harness.test.mjs:goodTurn",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/adapter.mjs",
+   "target": "function:demo/src/adapter.mjs:buildRequest",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/adapter.mjs",
+   "target": "function:demo/src/adapter.mjs:extractPayload",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/adapter.mjs",
+   "target": "class:demo/src/adapter.mjs:AdapterError",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/adapter.mjs",
+   "target": "function:demo/src/adapter.mjs:callProvider",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/adapter.mjs",
+   "target": "function:demo/src/adapter.mjs:listModels",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/adapter.mjs",
+   "target": "function:demo/src/adapter.mjs:callWithFailover",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/engine.mjs",
+   "target": "function:demo/src/engine.mjs:createInitialState",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/engine.mjs",
+   "target": "function:demo/src/engine.mjs:stageGateError",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/engine.mjs",
+   "target": "function:demo/src/engine.mjs:applyDelta",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/engine.mjs",
+   "target": "function:demo/src/engine.mjs:evidenceIds",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "function:demo/src/harness.mjs:parseTurn",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "function:demo/src/harness.mjs:extractJson",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "function:demo/src/harness.mjs:validateTurn",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "function:demo/src/harness.mjs:findClaimSentences",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "function:demo/src/harness.mjs:violationFeedback",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "function:demo/src/harness.mjs:safeTemplate",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/mock.mjs",
+   "target": "function:demo/src/mock.mjs:mockTurn",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/serve.mjs:runTurn",
+   "target": "function:demo/src/engine.mjs:createInitialState",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/serve.mjs:runTurn",
+   "target": "function:demo/src/engine.mjs:applyDelta",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/serve.mjs:runTurn",
+   "target": "function:demo/src/adapter.mjs:callWithFailover",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/serve.mjs:runTurn",
+   "target": "function:demo/src/mock.mjs:mockTurn",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/serve.mjs:runTurn",
+   "target": "function:demo/src/harness.mjs:parseTurn",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/serve.mjs:runTurn",
+   "target": "function:demo/src/harness.mjs:validateTurn",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/serve.mjs:runTurn",
+   "target": "function:demo/src/harness.mjs:violationFeedback",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/serve.mjs:runTurn",
+   "target": "function:demo/src/harness.mjs:safeTemplate",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/serve.mjs",
+   "target": "function:demo/src/adapter.mjs:listModels",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/harness.mjs:validateTurn",
+   "target": "function:demo/src/engine.mjs:evidenceIds",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/harness.mjs:validateTurn",
+   "target": "function:demo/src/engine.mjs:stageGateError",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/mock.mjs",
+   "target": "file:demo/tests/mock-walkthrough.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "file:demo/tests/mock-walkthrough.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:demo/src/engine.mjs",
+   "target": "file:demo/tests/mock-walkthrough.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:demo/src/harness.mjs",
+   "target": "file:demo/tests/runtime-harness.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:demo/src/engine.mjs",
+   "target": "file:demo/tests/runtime-harness.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:tests/index.mjs",
+   "target": "file:demo/tests/mock-walkthrough.test.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:tests/index.mjs",
+   "target": "file:demo/tests/runtime-harness.test.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:tests/index.mjs",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:tests/index.mjs",
+   "target": "file:tests/unit/glossary-data.test.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:tests/index.mjs",
+   "target": "file:tests/unit/harness.test.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:tests/index.mjs",
+   "target": "file:tests/unit/judges.test.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:tests/unit/harness.test.mjs",
+   "target": "function:tests/unit/harness.test.mjs:runNode",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/glossary-check.mjs",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:harness/typewriter.mjs",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:harness/parity-check.mjs",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:harness/gate.mjs",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:harness/code-review.mjs",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:harness/lib/reminders.mjs",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:harness/clean-temp.mjs",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:.claude/hooks/pre-edit-guard.mjs",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:.claude/hooks/post-edit-check.mjs",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:.githooks/commit-msg",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:.githooks/pre-commit",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:harness/glossary-check.mjs",
+   "target": "file:tests/unit/harness.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:harness/typewriter.mjs",
+   "target": "file:tests/unit/harness.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "file:tests/unit/judges.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "file:tests/unit/judges.test.mjs",
+   "type": "tested_by",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:tests/integration/harness-line.test.mjs",
+   "target": "file:harness/lib/reminders.mjs",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "file:tests/integration/harness-line.test.mjs",
+   "target": "config:harness/harness.config.json",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "file:tests/integration/harness-line.test.mjs",
+   "target": "config:.claude/settings.json",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "file:tests/unit/glossary-data.test.mjs",
+   "target": "config:docs/glossary.json",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "file:demo/src/engine.mjs",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "file:demo/src/ui/motion.js",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "file:demo/src/ui/render.js",
+   "type": "imports",
+   "direction": "forward",
+   "weight": 0.7
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:renderWelcome",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:renderTurnGroup",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:replayTranscript",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:readSSE",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:chatRequestBody",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:send",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:handleTurn",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:providerOptions",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:settingsField",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:modelRow",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:providerSection",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:customSection",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:initProviders",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:resetCourse",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:wire",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/main.js",
+   "target": "function:demo/src/ui/main.js:boot",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/motion.js",
+   "target": "function:demo/src/ui/motion.js:messageIn",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/motion.js",
+   "target": "function:demo/src/ui/motion.js:cardIn",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/motion.js",
+   "target": "function:demo/src/ui/motion.js:chipsIn",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/motion.js",
+   "target": "function:demo/src/ui/motion.js:closureIn",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/motion.js",
+   "target": "function:demo/src/ui/motion.js:fadeIn",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:sanitizeInline",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:sanitizeMarkdown",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:el",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderTeacherMessage",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderAgentMessage",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderScalar",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderValue",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderArtifactCard",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderQuestionBlock",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderClosureCard",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderAwaitingNote",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderErrorNotice",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderDebug",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:demo/src/ui/motion.js",
+   "target": "function:demo/src/ui/motion.js:messageIn",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/motion.js",
+   "target": "function:demo/src/ui/motion.js:cardIn",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/motion.js",
+   "target": "function:demo/src/ui/motion.js:chipsIn",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/motion.js",
+   "target": "function:demo/src/ui/motion.js:closureIn",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/motion.js",
+   "target": "function:demo/src/ui/motion.js:fadeIn",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:sanitizeInline",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:sanitizeMarkdown",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:el",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderTeacherMessage",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderAgentMessage",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderArtifactCard",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderQuestionBlock",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderClosureCard",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderAwaitingNote",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderErrorNotice",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:demo/src/ui/render.js",
+   "target": "function:demo/src/ui/render.js:renderDebug",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:renderWelcome",
+   "target": "function:demo/src/ui/render.js:el",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:renderTurnGroup",
+   "target": "function:demo/src/ui/render.js:el",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:renderTurnGroup",
+   "target": "function:demo/src/ui/render.js:renderAgentMessage",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:renderTurnGroup",
+   "target": "function:demo/src/ui/render.js:renderArtifactCard",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:renderTurnGroup",
+   "target": "function:demo/src/ui/render.js:renderQuestionBlock",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:renderTurnGroup",
+   "target": "function:demo/src/ui/render.js:renderClosureCard",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:renderTurnGroup",
+   "target": "function:demo/src/ui/render.js:renderAwaitingNote",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:renderTurnGroup",
+   "target": "function:demo/src/ui/motion.js:messageIn",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:renderTurnGroup",
+   "target": "function:demo/src/ui/motion.js:cardIn",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:renderTurnGroup",
+   "target": "function:demo/src/ui/motion.js:chipsIn",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:renderTurnGroup",
+   "target": "function:demo/src/ui/motion.js:closureIn",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:renderTurnGroup",
+   "target": "function:demo/src/ui/motion.js:fadeIn",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:replayTranscript",
+   "target": "function:demo/src/ui/render.js:renderTeacherMessage",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:replayTranscript",
+   "target": "function:demo/src/ui/render.js:renderAgentMessage",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:send",
+   "target": "function:demo/src/ui/render.js:renderTeacherMessage",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:send",
+   "target": "function:demo/src/ui/motion.js:messageIn",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:providerOptions",
+   "target": "function:demo/src/ui/render.js:el",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:settingsField",
+   "target": "function:demo/src/ui/render.js:el",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:modelRow",
+   "target": "function:demo/src/ui/render.js:el",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:providerSection",
+   "target": "function:demo/src/ui/render.js:el",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:customSection",
+   "target": "function:demo/src/ui/render.js:el",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "function:demo/src/ui/main.js:resetCourse",
+   "target": "function:demo/src/engine.mjs:createInitialState",
+   "type": "calls",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "document:README.md",
+   "target": "document:README.zh-CN.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:README.md",
+   "target": "document:AGENTS.md",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:README.md",
+   "target": "document:docs/PRD.md",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:README.md",
+   "target": "file:harness/gate.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:README.md",
+   "target": "file:demo/serve.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:README.zh-CN.md",
+   "target": "document:AGENTS.md",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:README.zh-CN.md",
+   "target": "document:docs/PRD.zh-CN.md",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:README.zh-CN.md",
+   "target": "file:demo/serve.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:AGENTS.md",
+   "target": "document:source-docs/workflow-v1.3.zh-CN.md",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:AGENTS.md",
+   "target": "document:docs/PRD.md",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:AGENTS.md",
+   "target": "config:docs/glossary.json",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:AGENTS.md",
+   "target": "file:harness/gate.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:CLAUDE.md",
+   "target": "document:AGENTS.md",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "document:CLAUDE.md",
+   "target": "config:harness/harness.config.json",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:CLAUDE.md",
+   "target": "file:harness/gate.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:HANDOFF.md",
+   "target": "document:source-docs/workflow-v1.3.zh-CN.md",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:HANDOFF.md",
+   "target": "document:docs/PRD.md",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:HANDOFF.md",
+   "target": "document:docs/ARCHITECTURE.md",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:HANDOFF.md",
+   "target": "document:docs/MODEL-APIS.md",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:HANDOFF.md",
+   "target": "document:demo/DESIGN.md",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:launch-demo.bat",
+   "target": "file:demo/serve.mjs",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:package.json",
+   "target": "file:harness/gate.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:package.json",
+   "target": "file:harness/glossary-check.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:package.json",
+   "target": "file:harness/typewriter.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:package.json",
+   "target": "file:harness/parity-check.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:package.json",
+   "target": "file:harness/judges/wording_judge.py",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:package.json",
+   "target": "file:harness/clean-temp.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:package.json",
+   "target": "file:harness/install-hooks.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:package.json",
+   "target": "file:harness/schema-check.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:package.json",
+   "target": "file:harness/prompt-lint.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:package.json",
+   "target": "file:demo/serve.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:package.json",
+   "target": "file:tests/index.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "document:demo/src/prompts/contract.zh.md",
+   "target": "file:demo/src/harness.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/src/prompts/contract.zh.md",
+   "target": "file:demo/src/adapter.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/src/prompts/base.zh.md",
+   "target": "file:demo/src/engine.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/src/prompts/stage0.zh.md",
+   "target": "file:demo/src/engine.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/src/prompts/stage1.zh.md",
+   "target": "file:demo/src/engine.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/src/prompts/contract.zh.md",
+   "target": "document:demo/src/prompts/base.zh.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/src/prompts/stage0.zh.md",
+   "target": "document:demo/src/prompts/base.zh.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/src/prompts/stage1.zh.md",
+   "target": "document:demo/src/prompts/base.zh.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/src/prompts/stage2.zh.md",
+   "target": "document:demo/src/prompts/base.zh.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/src/prompts/stage3.zh.md",
+   "target": "document:demo/src/prompts/base.zh.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/src/prompts/stage5.zh.md",
+   "target": "document:demo/src/prompts/base.zh.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/src/prompts/stage0.zh.md",
+   "target": "document:demo/src/prompts/stage1.zh.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/src/prompts/stage1.zh.md",
+   "target": "document:demo/src/prompts/stage2.zh.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/src/prompts/stage2.zh.md",
+   "target": "document:demo/src/prompts/stage3.zh.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/src/prompts/stage3.zh.md",
+   "target": "document:demo/src/prompts/stage5.zh.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/ARCHITECTURE.md",
+   "target": "document:docs/PRD.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/ARCHITECTURE.md",
+   "target": "document:docs/MODEL-APIS.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/ARCHITECTURE.md",
+   "target": "file:demo/serve.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/ARCHITECTURE.md",
+   "target": "file:demo/src/adapter.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/ARCHITECTURE.md",
+   "target": "file:demo/src/harness.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/ARCHITECTURE.md",
+   "target": "file:demo/src/engine.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/ARCHITECTURE.md",
+   "target": "file:demo/src/mock.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/LAUNCH-COMPLIANCE.md",
+   "target": "document:docs/ARCHITECTURE.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/LAUNCH-COMPLIANCE.md",
+   "target": "document:docs/MODEL-APIS.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/MODEL-APIS.md",
+   "target": "file:demo/src/adapter.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/PRD.md",
+   "target": "document:docs/PRD.zh-CN.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/PRD.md",
+   "target": "document:source-docs/workflow-v1.3.zh-CN.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/PRD.md",
+   "target": "document:demo/DESIGN.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/PRD.zh-CN.md",
+   "target": "document:source-docs/workflow-v1.3.zh-CN.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "config:docs/glossary.json",
+   "target": "file:harness/glossary-check.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:docs/glossary.json",
+   "target": "document:source-docs/workflow-v1.3.zh-CN.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "config:docs/glossary.json",
+   "target": "document:docs/PRD.md",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:tests/fixtures/clean.md",
+   "target": "file:tests/unit/harness.test.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:tests/fixtures/clean.md",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:tests/fixtures/clean.md",
+   "target": "file:harness/glossary-check.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:tests/fixtures/glossary-bad.md",
+   "target": "file:tests/unit/harness.test.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:tests/fixtures/glossary-bad.md",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:tests/fixtures/glossary-bad.md",
+   "target": "file:harness/glossary-check.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:tests/fixtures/glossary-canonical-mask.md",
+   "target": "file:tests/unit/harness.test.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:tests/fixtures/glossary-canonical-mask.md",
+   "target": "file:tests/integration/harness-line.test.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:tests/fixtures/glossary-canonical-mask.md",
+   "target": "file:harness/glossary-check.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:tests/fixtures/sample.html",
+   "target": "file:tests/unit/judges.test.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:tests/fixtures/typewriter-bad.md",
+   "target": "file:tests/unit/harness.test.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:tests/fixtures/typewriter-bad.md",
+   "target": "file:harness/typewriter.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:tests/fixtures/typewriter-clean.md",
+   "target": "file:tests/unit/harness.test.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:tests/fixtures/typewriter-clean.md",
+   "target": "file:harness/typewriter.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:tests/fixtures/wording-sample.md",
+   "target": "file:tests/unit/judges.test.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:.claude/hooks/post-edit-check.mjs",
+   "target": "function:.claude/hooks/post-edit-check.mjs:readStdin",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:.claude/hooks/post-edit-check.mjs",
+   "target": "function:.claude/hooks/post-edit-check.mjs:runChecker",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:.claude/hooks/post-edit-check.mjs",
+   "target": "function:.claude/hooks/post-edit-check.mjs:main",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:.claude/hooks/pre-edit-guard.mjs",
+   "target": "function:.claude/hooks/pre-edit-guard.mjs:readStdin",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:.claude/hooks/pre-edit-guard.mjs",
+   "target": "function:.claude/hooks/pre-edit-guard.mjs:matches",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:.claude/hooks/pre-edit-guard.mjs",
+   "target": "function:.claude/hooks/pre-edit-guard.mjs:main",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/code-review.mjs",
+   "target": "function:harness/code-review.mjs:walk",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/install-hooks.mjs",
+   "target": "function:harness/install-hooks.mjs:main",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:_looks_binary",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:read_text_file",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:collect_files",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:assess_file",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:judge_path",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:print_report",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:self_test",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:build_parser",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:main",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:_looks_binary",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:read_text_file",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:collect_files",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:load_glossary",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:split_en_sentences",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:split_zh_sentences",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:assess_file",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:judge_path",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:print_report",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:self_test",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:build_parser",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:main",
+   "type": "contains",
+   "direction": "forward",
+   "weight": 1
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:_looks_binary",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:read_text_file",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:collect_files",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:assess_file",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:judge_path",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:print_report",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:self_test",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:build_parser",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/design_judge.py",
+   "target": "function:harness/judges/design_judge.py:main",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:_looks_binary",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:read_text_file",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:collect_files",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:load_glossary",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:split_en_sentences",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:split_zh_sentences",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:assess_file",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:judge_path",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:print_report",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:self_test",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:build_parser",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "function:harness/judges/wording_judge.py:main",
+   "type": "exports",
+   "direction": "forward",
+   "weight": 0.8
+  },
+  {
+   "source": "config:.claude/settings.json",
+   "target": "file:.claude/hooks/pre-edit-guard.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:.claude/settings.json",
+   "target": "file:.claude/hooks/post-edit-check.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:harness/harness.config.json",
+   "target": "file:harness/gate.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:harness/harness.config.json",
+   "target": "file:.claude/hooks/pre-edit-guard.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:harness/harness.config.json",
+   "target": "file:harness/clean-temp.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:harness/harness.config.json",
+   "target": "file:harness/parity-check.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "file:.claude/hooks/post-edit-check.mjs",
+   "target": "file:harness/typewriter.mjs",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "file:.claude/hooks/post-edit-check.mjs",
+   "target": "file:harness/glossary-check.mjs",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "file:.githooks/pre-commit",
+   "target": "file:harness/gate.mjs",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "file:harness/install-hooks.mjs",
+   "target": "file:.githooks/pre-commit",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "file:harness/install-hooks.mjs",
+   "target": "file:.githooks/commit-msg",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "file:harness/judges/wording_judge.py",
+   "target": "config:docs/glossary.json",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "document:demo/DESIGN.md",
+   "target": "file:demo/src/ui/styles.css",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/DESIGN.md",
+   "target": "file:demo/index.html",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:demo/DESIGN.md",
+   "target": "file:harness/judges/design_judge.py",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/adr/0001-demo-zero-build-jsdoc-esm.md",
+   "target": "file:demo/src/types.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:docs/adr/0001-demo-zero-build-jsdoc-esm.md",
+   "target": "file:demo/serve.mjs",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "file:demo/index.html",
+   "target": "file:demo/src/ui/main.js",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "file:demo/index.html",
+   "target": "file:demo/src/ui/styles.css",
+   "type": "depends_on",
+   "direction": "forward",
+   "weight": 0.6
+  },
+  {
+   "source": "config:harness/schema/course-state.schema.json",
+   "target": "file:demo/src/types.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "config:harness/schema/course-state.schema.json",
+   "target": "file:harness/schema-check.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "config:harness/schema/course-state.schema.json",
+   "target": "file:demo/src/engine.mjs",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:source-docs/workflow-v1.3.zh-CN.md",
+   "target": "config:harness/schema/course-state.schema.json",
+   "type": "documents",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "document:source-docs/workflow-v1.3.zh-CN.md",
+   "target": "file:source-docs/【锋改】番禺幼教AI主题探究陪跑智能体_集成工作流V1.3.docx",
+   "type": "related",
+   "direction": "forward",
+   "weight": 0.5
+  },
+  {
+   "source": "config:tests/package.json",
+   "target": "file:tests/index.mjs",
+   "type": "configures",
+   "direction": "forward",
+   "weight": 0.6
+  }
+ ],
+ "layers": [
+  {
+   "id": "layer:source-spec",
+   "name": "上游规范层",
+   "description": "不可变的上游业务规范：番禺幼教 AI 主题探究陪跑智能体集成工作流 V1.3 原始 docx 及其中文 Markdown 转写，是全仓库产品与实现的最终依据。",
+   "nodeIds": [
+    "file:source-docs/【锋改】番禺幼教AI主题探究陪跑智能体_集成工作流V1.3.docx",
+    "document:source-docs/workflow-v1.3.zh-CN.md"
+   ]
+  },
+  {
+   "id": "layer:documentation",
+   "name": "产品文档层",
+   "description": "双语产品与架构文档：PRD 中英对照、系统架构、模型 API 与上线合规说明、术语表、ADR 决策记录，以及 README 双语入口和演示设计说明。",
+   "nodeIds": [
+    "document:docs/ARCHITECTURE.md",
+    "document:docs/LAUNCH-COMPLIANCE.md",
+    "document:docs/MODEL-APIS.md",
+    "document:docs/PRD.md",
+    "document:docs/PRD.zh-CN.md",
+    "config:docs/glossary.json",
+    "document:docs/adr/0001-demo-zero-build-jsdoc-esm.md",
+    "document:README.md",
+    "document:README.zh-CN.md",
+    "document:demo/DESIGN.md"
+   ]
+  },
+  {
+   "id": "layer:governance",
+   "name": "治理与开发护栏层",
+   "description": "提交门禁与开发护栏：harness 门禁编排器及术语表/排版/双语对等/schema 检查、Python 措辞与设计评审 judge、编辑器与 git 钩子（.claude/.githooks）、代理协作规范（AGENTS/CLAUDE/HANDOFF）及项目级配置。",
+   "nodeIds": [
+    "file:harness/clean-temp.mjs",
+    "file:harness/gate.mjs",
+    "file:harness/glossary-check.mjs",
+    "file:harness/lib/reminders.mjs",
+    "file:harness/lib/util.mjs",
+    "file:harness/parity-check.mjs",
+    "file:harness/prompt-lint.mjs",
+    "file:harness/schema-check.mjs",
+    "file:harness/typewriter.mjs",
+    "file:harness/code-review.mjs",
+    "config:harness/harness.config.json",
+    "file:harness/install-hooks.mjs",
+    "file:harness/judges/design_judge.py",
+    "file:harness/judges/wording_judge.py",
+    "config:harness/schema/course-state.schema.json",
+    "file:.claude/hooks/post-edit-check.mjs",
+    "file:.claude/hooks/pre-edit-guard.mjs",
+    "config:.claude/settings.json",
+    "file:.githooks/commit-msg",
+    "file:.githooks/pre-commit",
+    "document:AGENTS.md",
+    "document:CLAUDE.md",
+    "document:HANDOFF.md",
+    "config:package.json",
+    "file:.gitattributes",
+    "file:.understand-anything/.understandignore",
+    "config:.understand-anything/config.json"
+   ]
+  },
+  {
+   "id": "layer:test",
+   "name": "测试层",
+   "description": "Node 原生测试套件：harness 门禁与 judge 的单元/集成测试、术语表数据校验、Markdown/HTML 测试夹具，以及演示运行时的 mock 走查与 runtime-harness 测试。",
+   "nodeIds": [
+    "file:tests/index.mjs",
+    "file:tests/integration/harness-line.test.mjs",
+    "file:tests/unit/glossary-data.test.mjs",
+    "file:tests/unit/harness.test.mjs",
+    "file:tests/unit/judges.test.mjs",
+    "document:tests/fixtures/clean.md",
+    "document:tests/fixtures/glossary-bad.md",
+    "document:tests/fixtures/glossary-canonical-mask.md",
+    "file:tests/fixtures/sample.html",
+    "document:tests/fixtures/typewriter-bad.md",
+    "document:tests/fixtures/typewriter-clean.md",
+    "document:tests/fixtures/wording-sample.md",
+    "config:tests/package.json",
+    "file:demo/tests/mock-walkthrough.test.mjs",
+    "file:demo/tests/runtime-harness.test.mjs"
+   ]
+  },
+  {
+   "id": "layer:runtime-core",
+   "name": "运行时核心层",
+   "description": "最小闭环演示的服务端与领域核心：零依赖 SSE 服务器（serve.mjs）、模型 adapter、课程状态 engine 与运行时 harness、mock 数据源、JSDoc 类型定义、各探究阶段中文 system prompt，以及一键启动脚本。",
+   "nodeIds": [
+    "file:demo/serve.mjs",
+    "file:demo/src/adapter.mjs",
+    "file:demo/src/engine.mjs",
+    "file:demo/src/harness.mjs",
+    "file:demo/src/mock.mjs",
+    "file:demo/src/types.mjs",
+    "file:launch-demo.bat",
+    "document:demo/src/prompts/base.zh.md",
+    "document:demo/src/prompts/contract.zh.md",
+    "document:demo/src/prompts/stage0.zh.md",
+    "document:demo/src/prompts/stage1.zh.md",
+    "document:demo/src/prompts/stage2.zh.md",
+    "document:demo/src/prompts/stage3.zh.md",
+    "document:demo/src/prompts/stage5.zh.md"
+   ]
+  },
+  {
+   "id": "layer:ui",
+   "name": "界面层",
+   "description": "教师端聊天界面：浏览器入口 index.html、SSE 消费与交互逻辑（main.js）、消息渲染（render.js）、GSAP 动效（motion.js）与全局样式。",
+   "nodeIds": [
+    "file:demo/src/ui/main.js",
+    "file:demo/src/ui/motion.js",
+    "file:demo/src/ui/render.js",
+    "file:demo/src/ui/styles.css",
+    "file:demo/index.html"
+   ]
+  }
+ ],
+ "tour": [
+  {
+   "order": 1,
+   "title": "项目概览与工作约定",
+   "description": "从 README 双语入口开始：本仓库是「教师资源发展平台」的规范、治理与演示之家，核心命题一句话——把严格性对准模型，把自然对话留给教师。AGENTS.md 是人与编码智能体共同遵循的工作约定，定下五条不可妥协底线（绝不编造儿童证据、严格对准模型而非教师、文化后台化、儿童数据敏感、密钥不入库）。读懂这三份文档，后面每一层代码的存在理由都有了着落。",
+   "nodeIds": [
+    "document:README.md",
+    "document:README.zh-CN.md",
+    "document:AGENTS.md"
+   ]
+  },
+  {
+   "order": 2,
+   "title": "上游规范：行为契约",
+   "description": "一切实现的最终依据是番禺幼教 V1.3 集成工作流规范：原始 Word 文档属于上游（锋/陈枫方）的只读过程文件，workflow-v1.3.zh-CN.md 是它的忠实 Markdown 提取。这份规范定义了系统运行原则、course_state 状态机字段、0-5 阶段流转与全局禁止规则——它是陪跑智能体的行为契约，仓库任何偏离都必须是有记录的深思决定。",
+   "nodeIds": [
+    "file:source-docs/【锋改】番禺幼教AI主题探究陪跑智能体_集成工作流V1.3.docx",
+    "document:source-docs/workflow-v1.3.zh-CN.md"
+   ]
+  },
+  {
+   "order": 3,
+   "title": "产品命题与系统架构",
+   "description": "PRD 把第 2 步的规范转译成产品命题：规范很严格，天真的实现会变成逼教师填表的机器人；本平台的解法是用「动态识别」（一次一问、必附示例、可推断不再问）取代表单，把严格性交给运行时护栏去约束模型。ARCHITECTURE.md 给出承载这一命题的整体架构——教师浏览器 → 代理层 → LLM 厂商，并规定演示与生产共享同一套核心模块。注意 PRD 是中英双语孪生，两份必须同一变更中同步更新。",
+   "nodeIds": [
+    "document:docs/PRD.md",
+    "document:docs/PRD.zh-CN.md",
+    "document:docs/ARCHITECTURE.md"
+   ]
+  },
+  {
+   "order": 4,
+   "title": "状态机：schema 与确定性引擎",
+   "description": "把规范 §2 的状态机变成代码的第一步是数据契约：course-state.schema.json 用 JSON Schema 定义 0-5 阶段、教师入口模式、幼儿证据等全部字段；types.mjs 用 JSDoc 镜像出每轮对话的类型。engine.mjs 是关键设计决策的落点——模型只能「提议」增量（delta），由这个确定性引擎按阶段门规则与可写字段白名单裁决，教师节奏（awaiting_feedback）由平台控制而非模型。这就是「严格对准模型」在状态层的实现。",
+   "nodeIds": [
+    "config:harness/schema/course-state.schema.json",
+    "file:demo/src/engine.mjs",
+    "file:demo/src/types.mjs"
+   ],
+   "languageLesson": "JSON Schema（draft 2020-12）在数据层面强制执行契约：enum 限定合法阶段值，additionalProperties 拦截未知字段。配合 JSDoc 类型注释，零构建的原生 ES 模块也能用 npx tsc --checkJs 获得静态类型检查（见 ADR-0001）。"
+  },
+  {
+   "order": 5,
+   "title": "提示词层（L1）：教模型说话",
+   "description": "运行时管线的第一层是纯 Markdown 的中文 system prompt：base.zh.md 定义智能体身份、七条运行原则与动态识别契约（反表单化、一次一问、必附示例）；contract.zh.md 规定每轮必须返回的 JSON 结构；各阶段提示词（stage0 资源意图校准、stage2 目标轴心、stage5 课程故事）按 course_state 当前阶段动态拼装。注意 stage5 的诚实原则：缺料只列缺口清单、绝不虚构过程——第 1 步的头号底线在提示词层的体现。",
+   "nodeIds": [
+    "document:demo/src/prompts/base.zh.md",
+    "document:demo/src/prompts/contract.zh.md",
+    "document:demo/src/prompts/stage0.zh.md",
+    "document:demo/src/prompts/stage2.zh.md",
+    "document:demo/src/prompts/stage5.zh.md"
+   ],
+   "languageLesson": "把 system prompt 存为独立 Markdown 文件而非代码内嵌字符串，让提示词可以被 diff、评审和 lint（本仓库有专门的 prompt-lint 检查），也让「按阶段拼装」成为简单的文件读取与串接。"
+  },
+  {
+   "order": 6,
+   "title": "运行时护栏（L2-L4）：不信任但可用",
+   "description": "提示词只是请求，harness.mjs 才是强制：L2 解析并归一化模型输出，L3 做确定性校验——收尾闭环四要素、单问题必附示例、断言儿童行为必须引用已有证据、儿童侧内容禁成人口号、阶段门合法性，L4 对违例生成重写反馈并在多次失败后回落到安全模板。它约束模型、绝不约束教师。mock.mjs 是无密钥时的脚本化供应商：每个罐装轮次都要通过和真实供应商完全相同的 L2/L3 校验，让整条管线随时可验证。",
+   "nodeIds": [
+    "file:demo/src/harness.mjs",
+    "file:demo/src/mock.mjs"
+   ]
+  },
+  {
+   "order": 7,
+   "title": "供应商适配与服务端管线",
+   "description": "adapter.mjs 把国产大模型（MiniMax/GLM/Kimi/Qwen）抽象成统一接口，按厂商选择 JSON 输出策略并提供失败转移链 callWithFailover；选型依据在 MODEL-APIS.md 的调研快照里。serve.mjs 是入口：零依赖 Node 服务器实现 /api/chat 单轮管线——提示词组装 → 模型调用 → L2/L3 校验 → L4 重试 → 引擎应用增量，以 SSE 推送进度。浏览器从不直连模型厂商，密钥只在内存或环境变量中；launch-demo.bat 提供 Windows 一键启动。",
+   "nodeIds": [
+    "file:demo/src/adapter.mjs",
+    "file:demo/serve.mjs",
+    "document:docs/MODEL-APIS.md",
+    "file:launch-demo.bat"
+   ],
+   "languageLesson": "SSE（Server-Sent Events）是单向的服务器推送流：设置 Content-Type: text/event-stream 后按 data: 行分块写出即可，比 WebSocket 更轻，正适合「一次请求、多步进度」的回合管线。"
+  },
+  {
+   "order": 8,
+   "title": "教师界面：温暖的前台",
+   "description": "严格性全部藏在后台，教师看到的只是一个温暖的中文聊天页。index.html 是零构建的 ES module 骨架；main.js 托管课程状态与密钥（localStorage）并消费 SSE 流；render.js 把每轮的产物卡、提问块、收尾卡渲染成 DOM，所有模型文本先经 sanitize 转义。styles.css 落地 DESIGN.md 的「耐心同事的书桌」主题——米纸暖白与榕树深绿留给教师，冷色 slate 只出现在调试抽屉。",
+   "nodeIds": [
+    "file:demo/index.html",
+    "file:demo/src/ui/main.js",
+    "file:demo/src/ui/render.js",
+    "file:demo/src/ui/styles.css",
+    "document:demo/DESIGN.md"
+   ],
+   "languageLesson": "把不可信的 LLM 输出写入 innerHTML 前必须转义：render.js 的 sanitizeMarkdown() 只放行最小 markdown 子集、不允许任何原始 HTML 直通，这是聊天类 UI 防 XSS 的最低标准。"
+  },
+  {
+   "order": 9,
+   "title": "开发护栏：治理仓库的另一套 harness",
+   "description": "仓库里有两套护栏，切勿混淆：第 6 步的运行时护栏约束模型，而 harness/ 目录的开发护栏约束开发者与编码智能体。gate.mjs 是提交门禁编排器，按 harness.config.json 的 off/warn/block 级别依次运行各项检查：glossary-check 用 docs/glossary.json（术语表即法律）拦截禁用变体，parity-check 保证中英孪生文档结构镜像——这正是第 3 步 PRD 双语纪律的技术执行者。",
+   "nodeIds": [
+    "file:harness/gate.mjs",
+    "file:harness/glossary-check.mjs",
+    "file:harness/parity-check.mjs",
+    "config:harness/harness.config.json",
+    "config:docs/glossary.json"
+   ]
+  },
+  {
+   "order": 10,
+   "title": "测试纪律：每条规则测两个方向",
+   "description": "本仓库的测试哲学是双向断言：每条护栏规则必须既有「违规夹具触发」又有「合规夹具静默」的用例。harness-line.test.mjs 对开发护栏全链路做端到端验证；runtime-harness.test.mjs 用同样纪律覆盖 L2 解析、证据虚构检测、阶段门与 applyDelta；mock-walkthrough.test.mjs 则驱动五轮完整走查，在人工演示之前就发现护栏与 mock 的漂移。tests/index.mjs 把所有套件聚合进一次 node --test 运行。",
+   "nodeIds": [
+    "file:tests/index.mjs",
+    "file:tests/integration/harness-line.test.mjs",
+    "file:demo/tests/runtime-harness.test.mjs",
+    "file:demo/tests/mock-walkthrough.test.mjs"
+   ],
+   "languageLesson": "Node 原生测试框架（node:test）零依赖即可写单元与集成测试。「双向测试」模式对 lint/校验类代码尤其重要：只测「坏例被拦」会漏掉误报，只测「好例通过」会漏掉漏报。"
+  },
+  {
+   "order": 11,
+   "title": "合规、决策与交接",
+   "description": "最后看项目如何面向真实上线与持续协作：LAUNCH-COMPLIANCE.md 梳理以 ICP 备案为核心阻塞项的合规关键路径（生成式AI登记、PIPL 与未成年人数据保护、微信接入）；ADR-0001 示范了决策记录的写法——为什么 demo 选择零构建的 JSDoc ESM 而不是 TypeScript 构建链；HANDOFF.md 是会话交接账本，记录每次重要工作的成果、验证状态与开放风险。至此你已走完从「为什么」到「怎么做」再到「如何守住」的完整闭环。",
+   "nodeIds": [
+    "document:docs/LAUNCH-COMPLIANCE.md",
+    "document:docs/adr/0001-demo-zero-build-jsdoc-esm.md",
+    "document:HANDOFF.md"
+   ]
+  }
+ ]
+}

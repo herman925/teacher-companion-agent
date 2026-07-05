@@ -1,0 +1,3067 @@
+{
+  "version": "1.0.0",
+  "gitCommitHash": "487121b366db10d938ed9d2b7155f303f2349842",
+  "generatedAt": "2026-07-05T18:22:52.947Z",
+  "files": {
+    ".claude/hooks/post-edit-check.mjs": {
+      "filePath": ".claude/hooks/post-edit-check.mjs",
+      "contentHash": "d9316d46096755779ffac742e386f96e948b25ba0c75ac3735744159bc71c45a",
+      "functions": [
+        {
+          "name": "readStdin",
+          "params": [],
+          "exported": false,
+          "lineCount": 18
+        },
+        {
+          "name": "norm",
+          "params": [
+            "p"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "runChecker",
+          "params": [
+            "scriptRel",
+            "file"
+          ],
+          "exported": false,
+          "lineCount": 17
+        },
+        {
+          "name": "main",
+          "params": [],
+          "exported": false,
+          "lineCount": 78
+        },
+        {
+          "name": "relish",
+          "params": [
+            "f"
+          ],
+          "exported": false,
+          "lineCount": 7
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:process",
+          "specifiers": [
+            "process"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        },
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawnSync"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 163,
+      "hasStructuralAnalysis": true
+    },
+    ".claude/hooks/pre-edit-guard.mjs": {
+      "filePath": ".claude/hooks/pre-edit-guard.mjs",
+      "contentHash": "d0223a532985c1931079328a9866903774e0fd780d56ec1ffd0b90d92b00eedd",
+      "functions": [
+        {
+          "name": "loadGuard",
+          "params": [],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "readStdin",
+          "params": [],
+          "exported": false,
+          "lineCount": 16
+        },
+        {
+          "name": "norm",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "base",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "matches",
+          "params": [
+            "p",
+            "pattern"
+          ],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "decision",
+          "params": [
+            "kind",
+            "reason"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "warn",
+          "params": [
+            "msg"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "main",
+          "params": [],
+          "exported": false,
+          "lineCount": 25
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:process",
+          "specifiers": [
+            "process"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 107,
+      "hasStructuralAnalysis": true
+    },
+    ".claude/settings.json": {
+      "filePath": ".claude/settings.json",
+      "contentHash": "3c125b4fac25adc9caf1b876bff31749855c5eb3665ee3928451eed44fe614c7",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 27,
+      "hasStructuralAnalysis": true
+    },
+    ".gitattributes": {
+      "filePath": ".gitattributes",
+      "contentHash": "11be400f7c70f1df4d984c1e12e7cda32337bf78f0f624888d73337617667486",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 6,
+      "hasStructuralAnalysis": false
+    },
+    ".githooks/commit-msg": {
+      "filePath": ".githooks/commit-msg",
+      "contentHash": "3d987e65440ce3df138b346c3fd95ad150d1cc314c579987746fa9e941417adb",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 41,
+      "hasStructuralAnalysis": false
+    },
+    ".githooks/pre-commit": {
+      "filePath": ".githooks/pre-commit",
+      "contentHash": "3fdbfa292e44c6ef7c819f681b73953f4e01e9f5fad81f49e3f600c3ed27af0d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 35,
+      "hasStructuralAnalysis": false
+    },
+    ".understand-anything/.understandignore": {
+      "filePath": ".understand-anything/.understandignore",
+      "contentHash": "419e84f181db2e59d46f753b043de7fab8267ba0a57229bfc52399ff29f14660",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 53,
+      "hasStructuralAnalysis": false
+    },
+    ".understand-anything/config.json": {
+      "filePath": ".understand-anything/config.json",
+      "contentHash": "5d50de3434ff01dd711590c3d0e2c43b6e7cf927df2ba9c559b5bb6cc736dd9a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 5,
+      "hasStructuralAnalysis": true
+    },
+    "AGENTS.md": {
+      "filePath": "AGENTS.md",
+      "contentHash": "a1317614a562142e8de7c449a50b6d8caaf0099583c1df51976ca57fe93e8676",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 48,
+      "hasStructuralAnalysis": true
+    },
+    "CLAUDE.md": {
+      "filePath": "CLAUDE.md",
+      "contentHash": "9dfc91d525cc0018261850dbfb4666754713fd27722dbee9e1789dc88c6c8751",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 13,
+      "hasStructuralAnalysis": true
+    },
+    "demo/DESIGN.md": {
+      "filePath": "demo/DESIGN.md",
+      "contentHash": "bde2f35ae321d8325682ec554e64f732f108e3811a236745a3f34d33236eb751",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 72,
+      "hasStructuralAnalysis": true
+    },
+    "demo/index.html": {
+      "filePath": "demo/index.html",
+      "contentHash": "c8e815822ed5b72fd02c2c8f32fb690920c20845d8e5e1f687f79e6e4ea545c0",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 96,
+      "hasStructuralAnalysis": false
+    },
+    "demo/serve.mjs": {
+      "filePath": "demo/serve.mjs",
+      "contentHash": "9473f4b43964545d0d4cd8acb6a1beb3f1791b7de70010ad8ac827564492bfd4",
+      "functions": [
+        {
+          "name": "loadPrompt",
+          "params": [
+            "name"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "buildSystemPrompt",
+          "params": [
+            "state"
+          ],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "effectiveRegistry",
+          "params": [
+            "req"
+          ],
+          "exported": false,
+          "lineCount": 18
+        },
+        {
+          "name": "runTurn",
+          "params": [
+            "req",
+            "emit"
+          ],
+          "exported": false,
+          "lineCount": 69
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:http",
+          "specifiers": [
+            "http"
+          ]
+        },
+        {
+          "source": "node:fs/promises",
+          "specifiers": [
+            "readFile"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "existsSync",
+            "readFileSync"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        },
+        {
+          "source": "./src/adapter.mjs",
+          "specifiers": [
+            "PROVIDERS",
+            "callWithFailover",
+            "listModels"
+          ]
+        },
+        {
+          "source": "./src/mock.mjs",
+          "specifiers": [
+            "mockTurn"
+          ]
+        },
+        {
+          "source": "./src/harness.mjs",
+          "specifiers": [
+            "parseTurn",
+            "validateTurn",
+            "violationFeedback",
+            "safeTemplate"
+          ]
+        },
+        {
+          "source": "./src/engine.mjs",
+          "specifiers": [
+            "applyDelta",
+            "createInitialState",
+            "STAGE_NAMES"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 253,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/adapter.mjs": {
+      "filePath": "demo/src/adapter.mjs",
+      "contentHash": "8b1795b29203f216b6b378211496039ad45c74d043538094d672b662b8aa97af",
+      "functions": [
+        {
+          "name": "buildRequest",
+          "params": [
+            "p",
+            "messages"
+          ],
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "extractPayload",
+          "params": [
+            "p",
+            "completion"
+          ],
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "callProvider",
+          "params": [
+            "p",
+            "apiKey",
+            "messages"
+          ],
+          "exported": true,
+          "lineCount": 24
+        },
+        {
+          "name": "listModels",
+          "params": [
+            "p",
+            "apiKey"
+          ],
+          "exported": true,
+          "lineCount": 24
+        },
+        {
+          "name": "callWithFailover",
+          "params": [
+            "preferred",
+            "keys",
+            "messages"
+          ],
+          "exported": true,
+          "lineCount": 20
+        }
+      ],
+      "classes": [
+        {
+          "name": "AdapterError",
+          "methods": [
+            "constructor"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 8
+        }
+      ],
+      "imports": [],
+      "exports": [
+        "PROVIDERS",
+        "FAILOVER",
+        "TURN_SCHEMA",
+        "buildRequest",
+        "extractPayload",
+        "AdapterError",
+        "callProvider",
+        "listModels",
+        "callWithFailover"
+      ],
+      "totalLines": 237,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/engine.mjs": {
+      "filePath": "demo/src/engine.mjs",
+      "contentHash": "4e37475f963d85371fe942a60b64d7a8964be54d2d710b05ac83037328643cc8",
+      "functions": [
+        {
+          "name": "createInitialState",
+          "params": [
+            "courseId"
+          ],
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "stageGateError",
+          "params": [
+            "state",
+            "toStage"
+          ],
+          "exported": true,
+          "lineCount": 33
+        },
+        {
+          "name": "applyDelta",
+          "params": [
+            "state",
+            "delta"
+          ],
+          "exported": true,
+          "lineCount": 50
+        },
+        {
+          "name": "evidenceIds",
+          "params": [
+            "state"
+          ],
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "STAGE_NAMES",
+        "createInitialState",
+        "stageGateError",
+        "applyDelta",
+        "evidenceIds"
+      ],
+      "totalLines": 157,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/harness.mjs": {
+      "filePath": "demo/src/harness.mjs",
+      "contentHash": "4eedefb49c11b23ed3e6c326ab588af1e7b6b2922f072ef8c76a4c40a888e551",
+      "functions": [
+        {
+          "name": "parseTurn",
+          "params": [
+            "raw"
+          ],
+          "exported": true,
+          "lineCount": 24
+        },
+        {
+          "name": "extractJson",
+          "params": [
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "validateTurn",
+          "params": [
+            "turn",
+            "state"
+          ],
+          "exported": true,
+          "lineCount": 68
+        },
+        {
+          "name": "findClaimSentences",
+          "params": [
+            "markdown"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "countQuestionSentences",
+          "params": [
+            "markdown"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "violationFeedback",
+          "params": [
+            "violations"
+          ],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "safeTemplate",
+          "params": [
+            "state"
+          ],
+          "exported": true,
+          "lineCount": 17
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "./engine.mjs",
+          "specifiers": [
+            "evidenceIds",
+            "stageGateError"
+          ]
+        }
+      ],
+      "exports": [
+        "parseTurn",
+        "extractJson",
+        "validateTurn",
+        "findClaimSentences",
+        "violationFeedback",
+        "safeTemplate"
+      ],
+      "totalLines": 181,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/mock.mjs": {
+      "filePath": "demo/src/mock.mjs",
+      "contentHash": "e430860ce9d797332822f82495698690a673ccf62378d7263931461d7f91e398",
+      "functions": [
+        {
+          "name": "mockTurn",
+          "params": [
+            "state",
+            "history",
+            "message"
+          ],
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "turnIntentQuestion",
+          "params": [
+            "message"
+          ],
+          "exported": false,
+          "lineCount": 21
+        },
+        {
+          "name": "turnEntryCard",
+          "params": [],
+          "exported": false,
+          "lineCount": 84
+        },
+        {
+          "name": "turnAwaitOrIngest",
+          "params": [
+            "state",
+            "message"
+          ],
+          "exported": false,
+          "lineCount": 77
+        },
+        {
+          "name": "turnQuestionPool",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "turnCycleTask",
+          "params": [],
+          "exported": false,
+          "lineCount": 45
+        },
+        {
+          "name": "turnStoryFragment",
+          "params": [
+            "state"
+          ],
+          "exported": false,
+          "lineCount": 31
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "mockTurn"
+      ],
+      "totalLines": 292,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/prompts/base.zh.md": {
+      "filePath": "demo/src/prompts/base.zh.md",
+      "contentHash": "c1deadc76cbcd97b5182a477faddfacd1525dfe39c889a659e38091094fbe83b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 41,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/prompts/contract.zh.md": {
+      "filePath": "demo/src/prompts/contract.zh.md",
+      "contentHash": "6cfc66565fdf6def3de7b4d7fa4573880e0c894aaf211a8f7f37a9cdcc86cfea",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 41,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/prompts/stage0.zh.md": {
+      "filePath": "demo/src/prompts/stage0.zh.md",
+      "contentHash": "5266e4c3e922f1f41e3dadfdf57bd287a1ae1acd5593d89797b631cc42dc1c15",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 44,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/prompts/stage1.zh.md": {
+      "filePath": "demo/src/prompts/stage1.zh.md",
+      "contentHash": "ca8a74fb91fe5ddee32289dfd5a15554b8144c652d9fda35c1ac72c05b02e1e9",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 35,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/prompts/stage2.zh.md": {
+      "filePath": "demo/src/prompts/stage2.zh.md",
+      "contentHash": "91f571119044b07eea2e0ef9e7ca8b12655a4d2424de76ae683d6b14a2dac86f",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 17,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/prompts/stage3.zh.md": {
+      "filePath": "demo/src/prompts/stage3.zh.md",
+      "contentHash": "00248a16967e818dbf3c1e24b3a0d0bcebcab2bea5ee01ddd2de7f347ce5b5bd",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 50,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/prompts/stage5.zh.md": {
+      "filePath": "demo/src/prompts/stage5.zh.md",
+      "contentHash": "5b127df915205cf86b6e52c54fb45acb6929039c0c33b90c2996831f3fb43a1e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 22,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/types.mjs": {
+      "filePath": "demo/src/types.mjs",
+      "contentHash": "c4bd4a8da4d74a4969e435f393fddf7b328fa777e0f8d7862bb5519e926fc6b8",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 66,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/ui/main.js": {
+      "filePath": "demo/src/ui/main.js",
+      "contentHash": "95cce712d4a597397531f6a2634cd15b93402075882996bae2895e4977d24d7a",
+      "functions": [
+        {
+          "name": "load",
+          "params": [
+            "key",
+            "fallback"
+          ],
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "save",
+          "params": [
+            "key",
+            "value"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "providerInfo",
+          "params": [
+            "id"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "$",
+          "params": [
+            "sel"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "updateHeader",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "updateSkipLink",
+          "params": [],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "setStatus",
+          "params": [
+            "text"
+          ],
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "refreshDebug",
+          "params": [],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "scrollToEnd",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "autogrow",
+          "params": [],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "openDrawer",
+          "params": [
+            "drawer"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "closeDrawers",
+          "params": [],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "clearAwaitingNotes",
+          "params": [],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "removeWelcome",
+          "params": [],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "renderWelcome",
+          "params": [],
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "renderTurnGroup",
+          "params": [
+            "ev"
+          ],
+          "exported": false,
+          "lineCount": 54
+        },
+        {
+          "name": "replayTranscript",
+          "params": [],
+          "exported": false,
+          "lineCount": 20
+        },
+        {
+          "name": "readSSE",
+          "params": [
+            "res",
+            "onEvent"
+          ],
+          "exported": false,
+          "lineCount": 23
+        },
+        {
+          "name": "wireHistory",
+          "params": [],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "chatRequestBody",
+          "params": [
+            "text"
+          ],
+          "exported": false,
+          "lineCount": 17
+        },
+        {
+          "name": "send",
+          "params": [
+            "message"
+          ],
+          "exported": false,
+          "lineCount": 50
+        },
+        {
+          "name": "handleTurn",
+          "params": [
+            "userText",
+            "ev"
+          ],
+          "exported": false,
+          "lineCount": 18
+        },
+        {
+          "name": "showError",
+          "params": [
+            "message"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "saveKeys",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "saveModels",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "saveCustom",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "providerOptions",
+          "params": [],
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "settingsField",
+          "params": [
+            "labelText",
+            "inputId"
+          ],
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "modelRow",
+          "params": [
+            "id",
+            "cfg"
+          ],
+          "exported": false,
+          "lineCount": 85
+        },
+        {
+          "name": "providerSection",
+          "params": [
+            "info"
+          ],
+          "exported": false,
+          "lineCount": 36
+        },
+        {
+          "name": "customSection",
+          "params": [],
+          "exported": false,
+          "lineCount": 33
+        },
+        {
+          "name": "buildProviderSections",
+          "params": [],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "syncOpenSection",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "initProviders",
+          "params": [],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "resetCourse",
+          "params": [],
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "wire",
+          "params": [],
+          "exported": false,
+          "lineCount": 53
+        },
+        {
+          "name": "boot",
+          "params": [],
+          "exported": false,
+          "lineCount": 11
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "../engine.mjs",
+          "specifiers": [
+            "createInitialState",
+            "STAGE_NAMES"
+          ]
+        },
+        {
+          "source": "./render.js",
+          "specifiers": [
+            "renderTeacherMessage",
+            "renderAgentMessage",
+            "renderArtifactCard",
+            "renderQuestionBlock",
+            "renderClosureCard",
+            "renderAwaitingNote",
+            "renderErrorNotice",
+            "renderDebug",
+            "el"
+          ]
+        },
+        {
+          "source": "./motion.js",
+          "specifiers": [
+            "messageIn",
+            "cardIn",
+            "chipsIn",
+            "closureIn",
+            "fadeIn"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 724,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/ui/motion.js": {
+      "filePath": "demo/src/ui/motion.js",
+      "contentHash": "6411c9733ba01f5d7dab158738d1465fddc2a20694fb502881a4d05059821ce0",
+      "functions": [
+        {
+          "name": "gsapOrNull",
+          "params": [],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "reducedMotion",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "messageIn",
+          "params": [
+            "node"
+          ],
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "cardIn",
+          "params": [
+            "node"
+          ],
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "chipsIn",
+          "params": [
+            "chips"
+          ],
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "closureIn",
+          "params": [
+            "card"
+          ],
+          "exported": true,
+          "lineCount": 25
+        },
+        {
+          "name": "fadeIn",
+          "params": [
+            "node"
+          ],
+          "exported": true,
+          "lineCount": 5
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "messageIn",
+        "cardIn",
+        "chipsIn",
+        "closureIn",
+        "fadeIn"
+      ],
+      "totalLines": 118,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/ui/render.js": {
+      "filePath": "demo/src/ui/render.js",
+      "contentHash": "b261b17ad6952091f239f66780efa6ea10d6699d49170399d706ca114d647819",
+      "functions": [
+        {
+          "name": "escapeHtml",
+          "params": [
+            "s"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "applyInline",
+          "params": [
+            "escaped"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "sanitizeInline",
+          "params": [
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "sanitizeMarkdown",
+          "params": [
+            "md"
+          ],
+          "exported": true,
+          "lineCount": 51
+        },
+        {
+          "name": "el",
+          "params": [
+            "tag",
+            "cls",
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "renderTeacherMessage",
+          "params": [
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "renderAgentMessage",
+          "params": [
+            "markdown"
+          ],
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "renderScalar",
+          "params": [
+            "v"
+          ],
+          "exported": false,
+          "lineCount": 12
+        },
+        {
+          "name": "renderValue",
+          "params": [
+            "v"
+          ],
+          "exported": false,
+          "lineCount": 23
+        },
+        {
+          "name": "renderArtifactCard",
+          "params": [
+            "artifact"
+          ],
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "renderQuestionBlock",
+          "params": [
+            "q"
+          ],
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "goldCircle",
+          "params": [
+            "n"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "renderClosureCard",
+          "params": [
+            "closure"
+          ],
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "renderAwaitingNote",
+          "params": [],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "renderErrorNotice",
+          "params": [
+            "message",
+            "onRetry"
+          ],
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "debugSection",
+          "params": [
+            "heading",
+            "node"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "pre",
+          "params": [
+            "value"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "renderDebug",
+          "params": [
+            "container",
+            "info"
+          ],
+          "exported": true,
+          "lineCount": 42
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "sanitizeInline",
+        "sanitizeMarkdown",
+        "el",
+        "renderTeacherMessage",
+        "renderAgentMessage",
+        "renderArtifactCard",
+        "renderQuestionBlock",
+        "renderClosureCard",
+        "renderAwaitingNote",
+        "renderErrorNotice",
+        "renderDebug"
+      ],
+      "totalLines": 426,
+      "hasStructuralAnalysis": true
+    },
+    "demo/src/ui/styles.css": {
+      "filePath": "demo/src/ui/styles.css",
+      "contentHash": "053c1b424dd93c076bc9cca8cdff9dc1cc7aa614685aa487720511d257073953",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 727,
+      "hasStructuralAnalysis": false
+    },
+    "demo/tests/mock-walkthrough.test.mjs": {
+      "filePath": "demo/tests/mock-walkthrough.test.mjs",
+      "contentHash": "c1f913fc6325fad4f44c7e3cea491c6924118c83388c7f16382446f914edd568",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:test",
+          "specifiers": [
+            "test"
+          ]
+        },
+        {
+          "source": "node:assert/strict",
+          "specifiers": [
+            "assert"
+          ]
+        },
+        {
+          "source": "../src/mock.mjs",
+          "specifiers": [
+            "mockTurn"
+          ]
+        },
+        {
+          "source": "../src/harness.mjs",
+          "specifiers": [
+            "parseTurn",
+            "validateTurn"
+          ]
+        },
+        {
+          "source": "../src/engine.mjs",
+          "specifiers": [
+            "createInitialState",
+            "applyDelta"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 52,
+      "hasStructuralAnalysis": true
+    },
+    "demo/tests/runtime-harness.test.mjs": {
+      "filePath": "demo/tests/runtime-harness.test.mjs",
+      "contentHash": "d45edcab1141019577e0a96c84bf5a8f842ac21dacd8d74a5438d9738c0edfe5",
+      "functions": [
+        {
+          "name": "goodTurn",
+          "params": [],
+          "exported": false,
+          "lineCount": 12
+        },
+        {
+          "name": "stateWithEvidence",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:test",
+          "specifiers": [
+            "test"
+          ]
+        },
+        {
+          "source": "node:assert/strict",
+          "specifiers": [
+            "assert"
+          ]
+        },
+        {
+          "source": "../src/harness.mjs",
+          "specifiers": [
+            "parseTurn",
+            "validateTurn",
+            "findClaimSentences",
+            "violationFeedback",
+            "safeTemplate"
+          ]
+        },
+        {
+          "source": "../src/engine.mjs",
+          "specifiers": [
+            "createInitialState",
+            "applyDelta",
+            "stageGateError"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 244,
+      "hasStructuralAnalysis": true
+    },
+    "docs/adr/0001-demo-zero-build-jsdoc-esm.md": {
+      "filePath": "docs/adr/0001-demo-zero-build-jsdoc-esm.md",
+      "contentHash": "a0312d408a99dd2d243dabc2110422cb68bfe0abf46b879ccb6364531417142d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 24,
+      "hasStructuralAnalysis": true
+    },
+    "docs/ARCHITECTURE.md": {
+      "filePath": "docs/ARCHITECTURE.md",
+      "contentHash": "47801aa689582aa2c5a7226d6905afd8f18ff9960dfcc8d87be25b9a46521ca5",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 136,
+      "hasStructuralAnalysis": true
+    },
+    "docs/glossary.json": {
+      "filePath": "docs/glossary.json",
+      "contentHash": "00d377a71a9a5eb1490487ab66c12730b18c0133c6bf3499fa7fc4b12ee4fcc6",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 232,
+      "hasStructuralAnalysis": true
+    },
+    "docs/LAUNCH-COMPLIANCE.md": {
+      "filePath": "docs/LAUNCH-COMPLIANCE.md",
+      "contentHash": "bc754329ea28f8fb868b1b40451053eb5392554083f5186b395976ba10d1b297",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 64,
+      "hasStructuralAnalysis": true
+    },
+    "docs/MODEL-APIS.md": {
+      "filePath": "docs/MODEL-APIS.md",
+      "contentHash": "d931e7cd8f9af1c9a41b1cfba0fa4a5e370fc9278dfc2d32d2f321538c68ea96",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 69,
+      "hasStructuralAnalysis": true
+    },
+    "docs/PRD.md": {
+      "filePath": "docs/PRD.md",
+      "contentHash": "ebed3061b6f7c55ab26df19215d62f60a53a117cc39ea0b579aedd594a88272e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 197,
+      "hasStructuralAnalysis": true
+    },
+    "docs/PRD.zh-CN.md": {
+      "filePath": "docs/PRD.zh-CN.md",
+      "contentHash": "75ceb175312211c686d1894efcef0403eaf5606b5a1ad2dae8d7c34a746aa54b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 197,
+      "hasStructuralAnalysis": true
+    },
+    "HANDOFF.md": {
+      "filePath": "HANDOFF.md",
+      "contentHash": "60c37e821aa397b1d0f0ca362e57f189178d7684f8e9570b29a028781474c550",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 32,
+      "hasStructuralAnalysis": true
+    },
+    "harness/clean-temp.mjs": {
+      "filePath": "harness/clean-temp.mjs",
+      "contentHash": "c76a7d4cc75462c247de9499018448153ec9fe2cc63dfe9f77a928470e9aec35",
+      "functions": [
+        {
+          "name": "measure",
+          "params": [
+            "abs"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "isTracked",
+          "params": [
+            "abs"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "human",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "doApply",
+          "params": [
+            "list"
+          ],
+          "exported": false,
+          "lineCount": 8
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawnSync"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "./lib/util.mjs",
+          "specifiers": [
+            "ROOT",
+            "read",
+            "walk",
+            "parseArgs",
+            "c"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 98,
+      "hasStructuralAnalysis": true
+    },
+    "harness/code-review.mjs": {
+      "filePath": "harness/code-review.mjs",
+      "contentHash": "b1e72f50e860bcf4f9881b2c51cdb047598563b14113de04694d91036a9aa9c7",
+      "functions": [
+        {
+          "name": "walk",
+          "params": [
+            "target"
+          ],
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "add",
+          "params": [
+            "severity",
+            "file",
+            "line",
+            "title",
+            "fix"
+          ],
+          "exported": false,
+          "lineCount": 2
+        },
+        {
+          "name": "stripStrings",
+          "params": [
+            "s"
+          ],
+          "exported": false,
+          "lineCount": 3
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 195,
+      "hasStructuralAnalysis": true
+    },
+    "harness/gate.mjs": {
+      "filePath": "harness/gate.mjs",
+      "contentHash": "d9ec9ecda890b3556234bd4e6999808b662a861d270cbfd728bb60891ea97a7e",
+      "functions": [
+        {
+          "name": "level",
+          "params": [
+            "name"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "threshold",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "H",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "detectPython",
+          "params": [],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "stagedFiles",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "add",
+          "params": [
+            "name",
+            "cmd",
+            "argv"
+          ],
+          "exported": false,
+          "lineCount": 1
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawnSync"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "./lib/util.mjs",
+          "specifiers": [
+            "ROOT",
+            "read",
+            "parseArgs",
+            "c"
+          ]
+        },
+        {
+          "source": "./lib/reminders.mjs",
+          "specifiers": [
+            "computeReminders"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 136,
+      "hasStructuralAnalysis": true
+    },
+    "harness/glossary-check.mjs": {
+      "filePath": "harness/glossary-check.mjs",
+      "contentHash": "ecac9560a8128f777b2455e0382b7ca3dc3e9636a0bdd3fe122b797f343a1e2a",
+      "functions": [
+        {
+          "name": "maskLineFor",
+          "params": [
+            "txt",
+            "variant"
+          ],
+          "exported": false,
+          "lineCount": 8
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "./lib/util.mjs",
+          "specifiers": [
+            "walk",
+            "read",
+            "proseLines",
+            "parseArgs",
+            "loadGlossary",
+            "sevTag",
+            "c"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 104,
+      "hasStructuralAnalysis": true
+    },
+    "harness/harness.config.json": {
+      "filePath": "harness/harness.config.json",
+      "contentHash": "1d99fe8c3f690777c9ff4e125eb4534f9e36d5c438bf3092072e6f161bbad62a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 79,
+      "hasStructuralAnalysis": true
+    },
+    "harness/install-hooks.mjs": {
+      "filePath": "harness/install-hooks.mjs",
+      "contentHash": "398b9db476748cdc3068b66d3f562711ece8173f6c30b7494c5f70086c0ef3c2",
+      "functions": [
+        {
+          "name": "isGitRepo",
+          "params": [],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "main",
+          "params": [],
+          "exported": false,
+          "lineCount": 29
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:process",
+          "specifiers": [
+            "process"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        },
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawnSync"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 60,
+      "hasStructuralAnalysis": true
+    },
+    "harness/judges/design_judge.py": {
+      "filePath": "harness/judges/design_judge.py",
+      "contentHash": "b577de808e5db2e35c7049e87d0305ddeb27c9e2176eac27cad3f5caceeb2c4c",
+      "functions": [
+        {
+          "name": "_looks_binary",
+          "params": [
+            "raw"
+          ],
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "read_text_file",
+          "params": [
+            "path"
+          ],
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "collect_files",
+          "params": [
+            "path"
+          ],
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "line_of",
+          "params": [
+            "text",
+            "idx"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "finding",
+          "params": [
+            "severity",
+            "title",
+            "file",
+            "line",
+            "fix"
+          ],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "clamp",
+          "params": [
+            "score"
+          ],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "band_of",
+          "params": [
+            "overall"
+          ],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "_on_8pt_grid",
+          "params": [
+            "n"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "assess_file",
+          "params": [
+            "path",
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 284
+        },
+        {
+          "name": "judge_path",
+          "params": [
+            "path",
+            "threshold",
+            "strict"
+          ],
+          "exported": true,
+          "lineCount": 47
+        },
+        {
+          "name": "print_report",
+          "params": [
+            "result",
+            "path",
+            "threshold",
+            "strict"
+          ],
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "_fmt",
+          "params": [
+            "n"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "emit_json",
+          "params": [
+            "result"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "self_test",
+          "params": [],
+          "exported": true,
+          "lineCount": 36
+        },
+        {
+          "name": "build_parser",
+          "params": [],
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "main",
+          "params": [
+            "argv"
+          ],
+          "exported": true,
+          "lineCount": 29
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "argparse",
+          "specifiers": [
+            "argparse"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "sys",
+          "specifiers": [
+            "sys"
+          ]
+        }
+      ],
+      "exports": [
+        "_looks_binary",
+        "read_text_file",
+        "collect_files",
+        "line_of",
+        "finding",
+        "clamp",
+        "band_of",
+        "_on_8pt_grid",
+        "assess_file",
+        "judge_path",
+        "print_report",
+        "_fmt",
+        "emit_json",
+        "self_test",
+        "build_parser",
+        "main"
+      ],
+      "totalLines": 651,
+      "hasStructuralAnalysis": true
+    },
+    "harness/judges/wording_judge.py": {
+      "filePath": "harness/judges/wording_judge.py",
+      "contentHash": "2dc5026bcf0e634e29708195ee80b4b965805a7ed77919c1b54afea3478a45b6",
+      "functions": [
+        {
+          "name": "_looks_binary",
+          "params": [
+            "raw"
+          ],
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "read_text_file",
+          "params": [
+            "path"
+          ],
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "collect_files",
+          "params": [
+            "path"
+          ],
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "load_glossary",
+          "params": [
+            "explicit"
+          ],
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "line_of",
+          "params": [
+            "text",
+            "idx"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "finding",
+          "params": [
+            "severity",
+            "title",
+            "file",
+            "line",
+            "fix"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "clamp",
+          "params": [
+            "score"
+          ],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "band_of",
+          "params": [
+            "overall"
+          ],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "strip_code_blocks",
+          "params": [
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "is_cjk_line",
+          "params": [
+            "line"
+          ],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "split_en_sentences",
+          "params": [
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "split_zh_sentences",
+          "params": [
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "count_headings",
+          "params": [
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "assess_file",
+          "params": [
+            "path",
+            "text",
+            "glossary"
+          ],
+          "exported": true,
+          "lineCount": 217
+        },
+        {
+          "name": "judge_path",
+          "params": [
+            "path",
+            "threshold",
+            "strict",
+            "glossary_path"
+          ],
+          "exported": true,
+          "lineCount": 47
+        },
+        {
+          "name": "_fmt",
+          "params": [
+            "n"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "print_report",
+          "params": [
+            "result",
+            "path",
+            "threshold",
+            "strict"
+          ],
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "emit_json",
+          "params": [
+            "result"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "self_test",
+          "params": [],
+          "exported": true,
+          "lineCount": 53
+        },
+        {
+          "name": "build_parser",
+          "params": [],
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "main",
+          "params": [
+            "argv"
+          ],
+          "exported": true,
+          "lineCount": 30
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "argparse",
+          "specifiers": [
+            "argparse"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "sys",
+          "specifiers": [
+            "sys"
+          ]
+        }
+      ],
+      "exports": [
+        "_looks_binary",
+        "read_text_file",
+        "collect_files",
+        "load_glossary",
+        "line_of",
+        "finding",
+        "clamp",
+        "band_of",
+        "strip_code_blocks",
+        "is_cjk_line",
+        "split_en_sentences",
+        "split_zh_sentences",
+        "count_headings",
+        "assess_file",
+        "judge_path",
+        "_fmt",
+        "print_report",
+        "emit_json",
+        "self_test",
+        "build_parser",
+        "main"
+      ],
+      "totalLines": 652,
+      "hasStructuralAnalysis": true
+    },
+    "harness/lib/reminders.mjs": {
+      "filePath": "harness/lib/reminders.mjs",
+      "contentHash": "a14940e2baae204f926d3d35f5e3e9c71b6ab6e7bac7d1d61f063537a96276ea",
+      "functions": [
+        {
+          "name": "norm",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "nonEmpty",
+          "params": [
+            "p"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "computeReminders",
+          "params": [],
+          "exported": true,
+          "lineCount": 33
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        }
+      ],
+      "exports": [
+        "computeReminders"
+      ],
+      "totalLines": 62,
+      "hasStructuralAnalysis": true
+    },
+    "harness/lib/util.mjs": {
+      "filePath": "harness/lib/util.mjs",
+      "contentHash": "737271d1d831be5d1f1e80c4b6d2703a72d789dc4359fff910ce4524ad06a3c5",
+      "functions": [
+        {
+          "name": "walk",
+          "params": [
+            "target",
+            "exts"
+          ],
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "read",
+          "params": [
+            "file"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "proseLines",
+          "params": [
+            "text"
+          ],
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "parseArgs",
+          "params": [
+            "argv"
+          ],
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "loadGlossary",
+          "params": [
+            "file"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "sevTag",
+          "params": [
+            "sev"
+          ],
+          "exported": true,
+          "lineCount": 4
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        }
+      ],
+      "exports": [
+        "ROOT",
+        "walk",
+        "read",
+        "proseLines",
+        "parseArgs",
+        "loadGlossary",
+        "SEV",
+        "c",
+        "sevTag"
+      ],
+      "totalLines": 82,
+      "hasStructuralAnalysis": true
+    },
+    "harness/parity-check.mjs": {
+      "filePath": "harness/parity-check.mjs",
+      "contentHash": "3ff99d7d82c2b7beddf634a4aef9e69b2ab514a5de39014597df4aa6aabdbd3c",
+      "functions": [
+        {
+          "name": "headingProfile",
+          "params": [
+            "file"
+          ],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "stagedFiles",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "norm",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawnSync"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "./lib/util.mjs",
+          "specifiers": [
+            "ROOT",
+            "read",
+            "parseArgs",
+            "sevTag",
+            "c"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 113,
+      "hasStructuralAnalysis": true
+    },
+    "harness/prompt-lint.mjs": {
+      "filePath": "harness/prompt-lint.mjs",
+      "contentHash": "299174ae914e5e9b2262170d7f5b01223e199fe5d8431d6ccee57d7c50cebbb1",
+      "functions": [
+        {
+          "name": "F",
+          "params": [
+            "severity",
+            "file",
+            "msg"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "must",
+          "params": [
+            "file",
+            "text",
+            "needles",
+            "label"
+          ],
+          "exported": false,
+          "lineCount": 5
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "./lib/util.mjs",
+          "specifiers": [
+            "ROOT",
+            "read",
+            "parseArgs",
+            "c",
+            "sevTag"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 84,
+      "hasStructuralAnalysis": true
+    },
+    "harness/schema-check.mjs": {
+      "filePath": "harness/schema-check.mjs",
+      "contentHash": "c6eed18975f3cb35f3c7f21cd2a01818ebb2abd55efecc9103adc968febd71cd",
+      "functions": [
+        {
+          "name": "F",
+          "params": [
+            "severity",
+            "file",
+            "msg"
+          ],
+          "exported": false,
+          "lineCount": 1
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "./lib/util.mjs",
+          "specifiers": [
+            "ROOT",
+            "read",
+            "parseArgs",
+            "c",
+            "sevTag"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 86,
+      "hasStructuralAnalysis": true
+    },
+    "harness/schema/course-state.schema.json": {
+      "filePath": "harness/schema/course-state.schema.json",
+      "contentHash": "d77202e558cdd704161755d7def647aaade32ac1675f63bf633dbdd8bb2f53dc",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 286,
+      "hasStructuralAnalysis": true
+    },
+    "harness/typewriter.mjs": {
+      "filePath": "harness/typewriter.mjs",
+      "contentHash": "76f6ca09b81f738755456c817060b58cbf57cd01896706cae70aa3259db52a65",
+      "functions": [
+        {
+          "name": "generate",
+          "params": [],
+          "exported": false,
+          "lineCount": 17
+        },
+        {
+          "name": "lint",
+          "params": [],
+          "exported": false,
+          "lineCount": 104
+        },
+        {
+          "name": "fixCjkPunct",
+          "params": [
+            "line",
+            "map",
+            "isCJK"
+          ],
+          "exported": false,
+          "lineCount": 18
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "./lib/util.mjs",
+          "specifiers": [
+            "walk",
+            "read",
+            "proseLines",
+            "parseArgs",
+            "sevTag",
+            "c"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 233,
+      "hasStructuralAnalysis": true
+    },
+    "launch-demo.bat": {
+      "filePath": "launch-demo.bat",
+      "contentHash": "0d1aa22da40551e54552e68b58b46b67a2a8a716b16e53b25159df03c5c75d26",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 35,
+      "hasStructuralAnalysis": false
+    },
+    "package.json": {
+      "filePath": "package.json",
+      "contentHash": "4feb30e1bf91390772472ea1b683b1be6cf058235b39d4c88587d41014a4cfac",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 38,
+      "hasStructuralAnalysis": true
+    },
+    "README.md": {
+      "filePath": "README.md",
+      "contentHash": "6a38d951db1036d438b7c53fda99b275eb1e16d37aaa9043779de66756df3665",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 38,
+      "hasStructuralAnalysis": true
+    },
+    "README.zh-CN.md": {
+      "filePath": "README.zh-CN.md",
+      "contentHash": "0869585cba8ef23205dde71d27ffc441357d68b4d967a62ae8993fe681ed203e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 38,
+      "hasStructuralAnalysis": true
+    },
+    "source-docs/【锋改】番禺幼教AI主题探究陪跑智能体_集成工作流V1.3.docx": {
+      "filePath": "source-docs/【锋改】番禺幼教AI主题探究陪跑智能体_集成工作流V1.3.docx",
+      "contentHash": "d05f7160da40887ba9729e22ca1e6567195b312c75e968ae6a6c841a14b7a98f",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 325,
+      "hasStructuralAnalysis": false
+    },
+    "source-docs/workflow-v1.3.zh-CN.md": {
+      "filePath": "source-docs/workflow-v1.3.zh-CN.md",
+      "contentHash": "916990afb76a22b178684160f5948b4067fa5119334ba9c2ffd8f697176a749a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 179,
+      "hasStructuralAnalysis": true
+    },
+    "tests/fixtures/clean.md": {
+      "filePath": "tests/fixtures/clean.md",
+      "contentHash": "0f5c421e501b8066102f2e0d2002fc4c5f5c5c974b446b0bd35c2fb7acb80052",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 12,
+      "hasStructuralAnalysis": true
+    },
+    "tests/fixtures/glossary-bad.md": {
+      "filePath": "tests/fixtures/glossary-bad.md",
+      "contentHash": "4643cebffca8ef42e65c808776aca665ddbca0bc26313a5b8d3b53ebb6cc9926",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 4,
+      "hasStructuralAnalysis": true
+    },
+    "tests/fixtures/glossary-canonical-mask.md": {
+      "filePath": "tests/fixtures/glossary-canonical-mask.md",
+      "contentHash": "c1d57c48a890ec5ef055356a53dcba2a63f3235be120b286d97b8bb245df0598",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 7,
+      "hasStructuralAnalysis": true
+    },
+    "tests/fixtures/sample.html": {
+      "filePath": "tests/fixtures/sample.html",
+      "contentHash": "a5eb6174dee372684f0d6f97c51f5f00213b97cc07115ea3567c75c791e3b6f0",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 32,
+      "hasStructuralAnalysis": false
+    },
+    "tests/fixtures/typewriter-bad.md": {
+      "filePath": "tests/fixtures/typewriter-bad.md",
+      "contentHash": "aa449d8b1aa15d3c213dededb40951505c652500bec332298221dd8fea12e62a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 4,
+      "hasStructuralAnalysis": true
+    },
+    "tests/fixtures/typewriter-clean.md": {
+      "filePath": "tests/fixtures/typewriter-clean.md",
+      "contentHash": "a448f36f0858c92b3c859f521bed84db3357dbd8aec0e7a50b120b43ebcfec00",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 8,
+      "hasStructuralAnalysis": true
+    },
+    "tests/fixtures/wording-sample.md": {
+      "filePath": "tests/fixtures/wording-sample.md",
+      "contentHash": "b5845542e1536e95684da6efde7119e979ddfb3c0f080389dee76d672b80321c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 12,
+      "hasStructuralAnalysis": true
+    },
+    "tests/index.mjs": {
+      "filePath": "tests/index.mjs",
+      "contentHash": "f843fdf9ea63722bd385a3c707e9f5cc15c82a222a3cf51bf20c40c3858e9490",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "./unit/harness.test.mjs",
+          "specifiers": []
+        },
+        {
+          "source": "./unit/judges.test.mjs",
+          "specifiers": []
+        },
+        {
+          "source": "./unit/glossary-data.test.mjs",
+          "specifiers": []
+        },
+        {
+          "source": "./integration/harness-line.test.mjs",
+          "specifiers": []
+        },
+        {
+          "source": "../demo/tests/runtime-harness.test.mjs",
+          "specifiers": []
+        },
+        {
+          "source": "../demo/tests/mock-walkthrough.test.mjs",
+          "specifiers": []
+        }
+      ],
+      "exports": [],
+      "totalLines": 12,
+      "hasStructuralAnalysis": true
+    },
+    "tests/integration/harness-line.test.mjs": {
+      "filePath": "tests/integration/harness-line.test.mjs",
+      "contentHash": "45d509d18f0beb01b21dd0f00a7cfea23e9955938f62ec102880de7162a4e28e",
+      "functions": [
+        {
+          "name": "runNode",
+          "params": [
+            "args"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "runStdin",
+          "params": [
+            "scriptRelPath",
+            "payload"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "detect",
+          "params": [
+            "cmd",
+            "args"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "runPy",
+          "params": [
+            "scriptRelPath",
+            "args"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "mkTmp",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "writePair",
+          "params": [
+            "dir",
+            "enHeadings",
+            "zhHeadings"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "remRoot",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "remOf",
+          "params": [
+            "list",
+            "name"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "abs",
+          "params": [
+            "...p"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "guardDecision",
+          "params": [
+            "r"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "preEdit",
+          "params": [
+            "...seg"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "tmpWithClutter",
+          "params": [],
+          "exported": false,
+          "lineCount": 8
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:test",
+          "specifiers": [
+            "test",
+            "after"
+          ]
+        },
+        {
+          "source": "node:assert/strict",
+          "specifiers": [
+            "assert"
+          ]
+        },
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawnSync"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath",
+            "pathToFileURL"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 444,
+      "hasStructuralAnalysis": true
+    },
+    "tests/package.json": {
+      "filePath": "tests/package.json",
+      "contentHash": "56d785a395284f0832b2b23e41fcb733b97aa9db6ca90ec7003c3a123d22d20b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 7,
+      "hasStructuralAnalysis": true
+    },
+    "tests/unit/glossary-data.test.mjs": {
+      "filePath": "tests/unit/glossary-data.test.mjs",
+      "contentHash": "9f7fd15d68a1d466b4ef5b43a960bba04b9ae473ba02f729cb21a6a3c08fed4a",
+      "functions": [
+        {
+          "name": "loadGlossary",
+          "params": [],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "dupes",
+          "params": [
+            "arr"
+          ],
+          "exported": false,
+          "lineCount": 6
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:test",
+          "specifiers": [
+            "test"
+          ]
+        },
+        {
+          "source": "node:assert/strict",
+          "specifiers": [
+            "assert"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 77,
+      "hasStructuralAnalysis": true
+    },
+    "tests/unit/harness.test.mjs": {
+      "filePath": "tests/unit/harness.test.mjs",
+      "contentHash": "0f582341af09bd45175babb9931b9f5121099df49bf5ede221695a8d2681748d",
+      "functions": [
+        {
+          "name": "runNode",
+          "params": [
+            "args"
+          ],
+          "exported": false,
+          "lineCount": 10
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:test",
+          "specifiers": [
+            "test"
+          ]
+        },
+        {
+          "source": "node:assert/strict",
+          "specifiers": [
+            "assert"
+          ]
+        },
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawnSync"
+          ]
+        },
+        {
+          "source": "node:fs",
+          "specifiers": [
+            "fs"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 139,
+      "hasStructuralAnalysis": true
+    },
+    "tests/unit/judges.test.mjs": {
+      "filePath": "tests/unit/judges.test.mjs",
+      "contentHash": "24488a165543922e178ec2380c538d3093f130afb3896990afeff0ebad2cb24f",
+      "functions": [
+        {
+          "name": "findPython",
+          "params": [],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "runPy",
+          "params": [
+            "args"
+          ],
+          "exported": false,
+          "lineCount": 5
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "node:test",
+          "specifiers": [
+            "test"
+          ]
+        },
+        {
+          "source": "node:assert/strict",
+          "specifiers": [
+            "assert"
+          ]
+        },
+        {
+          "source": "node:child_process",
+          "specifiers": [
+            "spawnSync"
+          ]
+        },
+        {
+          "source": "node:path",
+          "specifiers": [
+            "path"
+          ]
+        },
+        {
+          "source": "node:url",
+          "specifiers": [
+            "fileURLToPath"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 83,
+      "hasStructuralAnalysis": true
+    }
+  }
+}

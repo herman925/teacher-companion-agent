@@ -2,6 +2,14 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-06 — Launcher, model discovery config, compliance path, knowledge graph
+
+- `launch-demo.bat`: double-click launcher (Node check → server → browser; optional port arg).
+- Settings drawer is now full service config: per-provider keys + 「获取模型列表」 live model dropdowns (new `/api/models` proxy endpoint), per-provider model overrides, 自定义端点 (any OpenAI-compatible API). Browser-verified incl. stub endpoint + captured wire bodies.
+- [docs/LAUNCH-COMPLIANCE.md](docs/LAUNCH-COMPLIANCE.md): 备案/登记/PIPL/WeChat tracks; blocked on D1 (legal subject), D2 (domain), D3 (data scope) — Herman's decisions.
+- `.understand-anything/knowledge-graph.json` generated (understand-anything v2.8.1 procedure run manually — plugin wasn't loaded in-session): 174 nodes / 378 edges / 6 layers (上游规范·产品文档·治理与开发护栏·测试·运行时核心·界面) / 11-step zh tour; validation 0 issues; fingerprints baseline written so future runs can be incremental. View via the `/understand-anything` dashboard skill in a session with the plugin loaded.
+- Outer workspace repo: Hualong move committed (`0d3a7b0`, rename-detected); sibling repos gitignored there. NOTE: Hualong's own git hooks are silently off until `hooks:install` is re-run from inside `Hualong Platform/`.
+
 ## 2026-07-05 — Bootstrap: docs, harness, demo core
 
 **What exists now**

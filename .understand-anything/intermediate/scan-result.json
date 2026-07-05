@@ -1,0 +1,600 @@
+{
+ "name": "china-teacher-resources-development-platform",
+ "description": "教师资源发展平台：面向幼儿园教师的AI陪跑智能体网页平台（番禺主题探究工作流V1.3）。包含双语PRD与架构文档、开发护栏（提交门禁/术语/双语对齐/模式与提示词检查）、以及最小闭环网页演示（运行时护栏、确定性状态机、多供应商模型适配层、对话式动态识别界面）。",
+ "languages": [
+  "javascript",
+  "json",
+  "unknown",
+  "markdown",
+  "html",
+  "css",
+  "python",
+  "batch",
+  "docx"
+ ],
+ "frameworks": [
+  "GSAP",
+  "Node.js (zero-dependency)",
+  "SSE"
+ ],
+ "entryPoint": "demo/serve.mjs",
+ "files": [
+  {
+   "path": ".claude/hooks/post-edit-check.mjs",
+   "language": "javascript",
+   "sizeLines": 162,
+   "fileCategory": "code"
+  },
+  {
+   "path": ".claude/hooks/pre-edit-guard.mjs",
+   "language": "javascript",
+   "sizeLines": 106,
+   "fileCategory": "code"
+  },
+  {
+   "path": ".claude/settings.json",
+   "language": "json",
+   "sizeLines": 26,
+   "fileCategory": "config"
+  },
+  {
+   "path": ".gitattributes",
+   "language": "unknown",
+   "sizeLines": 5,
+   "fileCategory": "code"
+  },
+  {
+   "path": ".githooks/commit-msg",
+   "language": "unknown",
+   "sizeLines": 40,
+   "fileCategory": "code"
+  },
+  {
+   "path": ".githooks/pre-commit",
+   "language": "unknown",
+   "sizeLines": 34,
+   "fileCategory": "code"
+  },
+  {
+   "path": ".understand-anything/.understandignore",
+   "language": "unknown",
+   "sizeLines": 52,
+   "fileCategory": "code"
+  },
+  {
+   "path": ".understand-anything/config.json",
+   "language": "json",
+   "sizeLines": 4,
+   "fileCategory": "config"
+  },
+  {
+   "path": "AGENTS.md",
+   "language": "markdown",
+   "sizeLines": 47,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "CLAUDE.md",
+   "language": "markdown",
+   "sizeLines": 12,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "demo/DESIGN.md",
+   "language": "markdown",
+   "sizeLines": 71,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "demo/index.html",
+   "language": "html",
+   "sizeLines": 95,
+   "fileCategory": "markup"
+  },
+  {
+   "path": "demo/serve.mjs",
+   "language": "javascript",
+   "sizeLines": 252,
+   "fileCategory": "code"
+  },
+  {
+   "path": "demo/src/adapter.mjs",
+   "language": "javascript",
+   "sizeLines": 236,
+   "fileCategory": "code"
+  },
+  {
+   "path": "demo/src/engine.mjs",
+   "language": "javascript",
+   "sizeLines": 156,
+   "fileCategory": "code"
+  },
+  {
+   "path": "demo/src/harness.mjs",
+   "language": "javascript",
+   "sizeLines": 180,
+   "fileCategory": "code"
+  },
+  {
+   "path": "demo/src/mock.mjs",
+   "language": "javascript",
+   "sizeLines": 291,
+   "fileCategory": "code"
+  },
+  {
+   "path": "demo/src/prompts/base.zh.md",
+   "language": "markdown",
+   "sizeLines": 40,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "demo/src/prompts/contract.zh.md",
+   "language": "markdown",
+   "sizeLines": 40,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "demo/src/prompts/stage0.zh.md",
+   "language": "markdown",
+   "sizeLines": 43,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "demo/src/prompts/stage1.zh.md",
+   "language": "markdown",
+   "sizeLines": 34,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "demo/src/prompts/stage2.zh.md",
+   "language": "markdown",
+   "sizeLines": 16,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "demo/src/prompts/stage3.zh.md",
+   "language": "markdown",
+   "sizeLines": 49,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "demo/src/prompts/stage5.zh.md",
+   "language": "markdown",
+   "sizeLines": 21,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "demo/src/types.mjs",
+   "language": "javascript",
+   "sizeLines": 65,
+   "fileCategory": "code"
+  },
+  {
+   "path": "demo/src/ui/main.js",
+   "language": "javascript",
+   "sizeLines": 723,
+   "fileCategory": "code"
+  },
+  {
+   "path": "demo/src/ui/motion.js",
+   "language": "javascript",
+   "sizeLines": 117,
+   "fileCategory": "code"
+  },
+  {
+   "path": "demo/src/ui/render.js",
+   "language": "javascript",
+   "sizeLines": 425,
+   "fileCategory": "code"
+  },
+  {
+   "path": "demo/src/ui/styles.css",
+   "language": "css",
+   "sizeLines": 726,
+   "fileCategory": "markup"
+  },
+  {
+   "path": "demo/tests/mock-walkthrough.test.mjs",
+   "language": "javascript",
+   "sizeLines": 51,
+   "fileCategory": "code"
+  },
+  {
+   "path": "demo/tests/runtime-harness.test.mjs",
+   "language": "javascript",
+   "sizeLines": 243,
+   "fileCategory": "code"
+  },
+  {
+   "path": "docs/adr/0001-demo-zero-build-jsdoc-esm.md",
+   "language": "markdown",
+   "sizeLines": 23,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "docs/ARCHITECTURE.md",
+   "language": "markdown",
+   "sizeLines": 135,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "docs/glossary.json",
+   "language": "json",
+   "sizeLines": 231,
+   "fileCategory": "config"
+  },
+  {
+   "path": "docs/LAUNCH-COMPLIANCE.md",
+   "language": "markdown",
+   "sizeLines": 63,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "docs/MODEL-APIS.md",
+   "language": "markdown",
+   "sizeLines": 68,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "docs/PRD.md",
+   "language": "markdown",
+   "sizeLines": 196,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "docs/PRD.zh-CN.md",
+   "language": "markdown",
+   "sizeLines": 196,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "HANDOFF.md",
+   "language": "markdown",
+   "sizeLines": 31,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "harness/clean-temp.mjs",
+   "language": "javascript",
+   "sizeLines": 97,
+   "fileCategory": "code"
+  },
+  {
+   "path": "harness/code-review.mjs",
+   "language": "javascript",
+   "sizeLines": 194,
+   "fileCategory": "code"
+  },
+  {
+   "path": "harness/gate.mjs",
+   "language": "javascript",
+   "sizeLines": 135,
+   "fileCategory": "code"
+  },
+  {
+   "path": "harness/glossary-check.mjs",
+   "language": "javascript",
+   "sizeLines": 103,
+   "fileCategory": "code"
+  },
+  {
+   "path": "harness/harness.config.json",
+   "language": "json",
+   "sizeLines": 78,
+   "fileCategory": "config"
+  },
+  {
+   "path": "harness/install-hooks.mjs",
+   "language": "javascript",
+   "sizeLines": 59,
+   "fileCategory": "code"
+  },
+  {
+   "path": "harness/judges/design_judge.py",
+   "language": "python",
+   "sizeLines": 650,
+   "fileCategory": "code"
+  },
+  {
+   "path": "harness/judges/wording_judge.py",
+   "language": "python",
+   "sizeLines": 651,
+   "fileCategory": "code"
+  },
+  {
+   "path": "harness/lib/reminders.mjs",
+   "language": "javascript",
+   "sizeLines": 61,
+   "fileCategory": "code"
+  },
+  {
+   "path": "harness/lib/util.mjs",
+   "language": "javascript",
+   "sizeLines": 81,
+   "fileCategory": "code"
+  },
+  {
+   "path": "harness/parity-check.mjs",
+   "language": "javascript",
+   "sizeLines": 112,
+   "fileCategory": "code"
+  },
+  {
+   "path": "harness/prompt-lint.mjs",
+   "language": "javascript",
+   "sizeLines": 83,
+   "fileCategory": "code"
+  },
+  {
+   "path": "harness/schema-check.mjs",
+   "language": "javascript",
+   "sizeLines": 85,
+   "fileCategory": "code"
+  },
+  {
+   "path": "harness/schema/course-state.schema.json",
+   "language": "json",
+   "sizeLines": 285,
+   "fileCategory": "config"
+  },
+  {
+   "path": "harness/typewriter.mjs",
+   "language": "javascript",
+   "sizeLines": 232,
+   "fileCategory": "code"
+  },
+  {
+   "path": "launch-demo.bat",
+   "language": "batch",
+   "sizeLines": 34,
+   "fileCategory": "script"
+  },
+  {
+   "path": "package.json",
+   "language": "json",
+   "sizeLines": 37,
+   "fileCategory": "config"
+  },
+  {
+   "path": "README.md",
+   "language": "markdown",
+   "sizeLines": 37,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "README.zh-CN.md",
+   "language": "markdown",
+   "sizeLines": 37,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "source-docs/【锋改】番禺幼教AI主题探究陪跑智能体_集成工作流V1.3.docx",
+   "language": "docx",
+   "sizeLines": 324,
+   "fileCategory": "code"
+  },
+  {
+   "path": "source-docs/workflow-v1.3.zh-CN.md",
+   "language": "markdown",
+   "sizeLines": 178,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "tests/fixtures/clean.md",
+   "language": "markdown",
+   "sizeLines": 11,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "tests/fixtures/glossary-bad.md",
+   "language": "markdown",
+   "sizeLines": 3,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "tests/fixtures/glossary-canonical-mask.md",
+   "language": "markdown",
+   "sizeLines": 6,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "tests/fixtures/sample.html",
+   "language": "html",
+   "sizeLines": 31,
+   "fileCategory": "markup"
+  },
+  {
+   "path": "tests/fixtures/typewriter-bad.md",
+   "language": "markdown",
+   "sizeLines": 3,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "tests/fixtures/typewriter-clean.md",
+   "language": "markdown",
+   "sizeLines": 7,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "tests/fixtures/wording-sample.md",
+   "language": "markdown",
+   "sizeLines": 11,
+   "fileCategory": "docs"
+  },
+  {
+   "path": "tests/index.mjs",
+   "language": "javascript",
+   "sizeLines": 11,
+   "fileCategory": "code"
+  },
+  {
+   "path": "tests/integration/harness-line.test.mjs",
+   "language": "javascript",
+   "sizeLines": 443,
+   "fileCategory": "code"
+  },
+  {
+   "path": "tests/package.json",
+   "language": "json",
+   "sizeLines": 6,
+   "fileCategory": "config"
+  },
+  {
+   "path": "tests/unit/glossary-data.test.mjs",
+   "language": "javascript",
+   "sizeLines": 76,
+   "fileCategory": "code"
+  },
+  {
+   "path": "tests/unit/harness.test.mjs",
+   "language": "javascript",
+   "sizeLines": 138,
+   "fileCategory": "code"
+  },
+  {
+   "path": "tests/unit/judges.test.mjs",
+   "language": "javascript",
+   "sizeLines": 82,
+   "fileCategory": "code"
+  }
+ ],
+ "totalFiles": 73,
+ "filteredByIgnore": 0,
+ "estimatedComplexity": "moderate",
+ "stats": {
+  "filesScanned": 73,
+  "byCategory": {
+   "code": 36,
+   "config": 7,
+   "docs": 26,
+   "markup": 3,
+   "script": 1
+  },
+  "byLanguage": {
+   "javascript": 29,
+   "json": 7,
+   "unknown": 4,
+   "markdown": 26,
+   "html": 2,
+   "css": 1,
+   "python": 2,
+   "batch": 1,
+   "docx": 1
+  }
+ },
+ "importMap": {
+  ".claude/hooks/post-edit-check.mjs": [],
+  ".claude/hooks/pre-edit-guard.mjs": [],
+  ".claude/settings.json": [],
+  ".gitattributes": [],
+  ".githooks/commit-msg": [],
+  ".githooks/pre-commit": [],
+  ".understand-anything/.understandignore": [],
+  ".understand-anything/config.json": [],
+  "AGENTS.md": [],
+  "CLAUDE.md": [],
+  "demo/DESIGN.md": [],
+  "demo/index.html": [],
+  "demo/serve.mjs": [
+   "demo/src/adapter.mjs",
+   "demo/src/engine.mjs",
+   "demo/src/harness.mjs",
+   "demo/src/mock.mjs"
+  ],
+  "demo/src/adapter.mjs": [],
+  "demo/src/engine.mjs": [],
+  "demo/src/harness.mjs": [
+   "demo/src/engine.mjs"
+  ],
+  "demo/src/mock.mjs": [],
+  "demo/src/prompts/base.zh.md": [],
+  "demo/src/prompts/contract.zh.md": [],
+  "demo/src/prompts/stage0.zh.md": [],
+  "demo/src/prompts/stage1.zh.md": [],
+  "demo/src/prompts/stage2.zh.md": [],
+  "demo/src/prompts/stage3.zh.md": [],
+  "demo/src/prompts/stage5.zh.md": [],
+  "demo/src/types.mjs": [],
+  "demo/src/ui/main.js": [
+   "demo/src/engine.mjs",
+   "demo/src/ui/motion.js",
+   "demo/src/ui/render.js"
+  ],
+  "demo/src/ui/motion.js": [],
+  "demo/src/ui/render.js": [],
+  "demo/src/ui/styles.css": [],
+  "demo/tests/mock-walkthrough.test.mjs": [
+   "demo/src/engine.mjs",
+   "demo/src/harness.mjs",
+   "demo/src/mock.mjs"
+  ],
+  "demo/tests/runtime-harness.test.mjs": [
+   "demo/src/engine.mjs",
+   "demo/src/harness.mjs"
+  ],
+  "docs/adr/0001-demo-zero-build-jsdoc-esm.md": [],
+  "docs/ARCHITECTURE.md": [],
+  "docs/glossary.json": [],
+  "docs/LAUNCH-COMPLIANCE.md": [],
+  "docs/MODEL-APIS.md": [],
+  "docs/PRD.md": [],
+  "docs/PRD.zh-CN.md": [],
+  "HANDOFF.md": [],
+  "harness/clean-temp.mjs": [
+   "harness/lib/util.mjs"
+  ],
+  "harness/code-review.mjs": [],
+  "harness/gate.mjs": [
+   "harness/lib/reminders.mjs",
+   "harness/lib/util.mjs"
+  ],
+  "harness/glossary-check.mjs": [
+   "harness/lib/util.mjs"
+  ],
+  "harness/harness.config.json": [],
+  "harness/install-hooks.mjs": [],
+  "harness/judges/design_judge.py": [],
+  "harness/judges/wording_judge.py": [],
+  "harness/lib/reminders.mjs": [],
+  "harness/lib/util.mjs": [],
+  "harness/parity-check.mjs": [
+   "harness/lib/util.mjs"
+  ],
+  "harness/prompt-lint.mjs": [
+   "harness/lib/util.mjs"
+  ],
+  "harness/schema-check.mjs": [
+   "harness/lib/util.mjs"
+  ],
+  "harness/schema/course-state.schema.json": [],
+  "harness/typewriter.mjs": [
+   "harness/lib/util.mjs"
+  ],
+  "launch-demo.bat": [],
+  "package.json": [],
+  "README.md": [],
+  "README.zh-CN.md": [],
+  "source-docs/【锋改】番禺幼教AI主题探究陪跑智能体_集成工作流V1.3.docx": [],
+  "source-docs/workflow-v1.3.zh-CN.md": [],
+  "tests/fixtures/clean.md": [],
+  "tests/fixtures/glossary-bad.md": [],
+  "tests/fixtures/glossary-canonical-mask.md": [],
+  "tests/fixtures/sample.html": [],
+  "tests/fixtures/typewriter-bad.md": [],
+  "tests/fixtures/typewriter-clean.md": [],
+  "tests/fixtures/wording-sample.md": [],
+  "tests/index.mjs": [
+   "demo/tests/mock-walkthrough.test.mjs",
+   "demo/tests/runtime-harness.test.mjs",
+   "tests/integration/harness-line.test.mjs",
+   "tests/unit/glossary-data.test.mjs",
+   "tests/unit/harness.test.mjs",
+   "tests/unit/judges.test.mjs"
+  ],
+  "tests/integration/harness-line.test.mjs": [],
+  "tests/package.json": [],
+  "tests/unit/glossary-data.test.mjs": [],
+  "tests/unit/harness.test.mjs": [],
+  "tests/unit/judges.test.mjs": []
+ }
+}
