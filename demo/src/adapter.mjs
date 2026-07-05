@@ -179,15 +179,47 @@ export async function callProvider(p, apiKey, messages, { timeoutMs = 180000 } =
 }
 
 /**
+ * List models from a provider's OpenAI-compatible /models endpoint.
+ * @returns {Promise<string[]>} model ids, sorted
+ */
+export async function listModels(p, apiKey, { timeoutMs = 20000 } = {}) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(`${p.baseURL}/models`, {
+      headers: { authorization: `Bearer ${apiKey}` },
+      signal: ctl.signal,
+    });
+  } catch (e) {
+    throw new AdapterError('network', `无法连接 ${p.label ?? p.baseURL}：${e.message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new AdapterError('http', `${p.label ?? p.baseURL} 返回 ${res.status}：${text.slice(0, 200)}`, res.status);
+  }
+  const body = await res.json();
+  const ids = (Array.isArray(body?.data) ? body.data : [])
+    .map((m) => m?.id)
+    .filter((id) => typeof id === 'string');
+  return [...new Set(ids)].sort();
+}
+
+/**
  * Call with failover: try `preferred`, then the FAILOVER chain, skipping
  * providers without a key. Returns the first success.
  * @param {Record<string,string>} keys  providerId → apiKey
+ * @param {{ timeoutMs?: number, registry?: Record<string, import('./types.mjs').ProviderConfig> }} opts
+ *   opts.registry lets the caller extend/override PROVIDERS (model override, custom endpoint).
  */
 export async function callWithFailover(preferred, keys, messages, opts = {}) {
+  const registry = opts.registry ?? PROVIDERS;
   const chain = [preferred, ...FAILOVER.filter((id) => id !== preferred)];
   const errors = [];
   for (const id of chain) {
-    const p = PROVIDERS[id];
+    const p = registry[id];
     if (!p || p.enabled === false || !keys[id]) continue;
     try {
       const r = await callProvider(p, keys[id], messages, opts);

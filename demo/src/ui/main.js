@@ -19,6 +19,8 @@ const LS = {
   transcript: 'cst.transcript',
   provider: 'cst.provider',
   keys: 'cst.keys',
+  models: 'cst.models',
+  custom: 'cst.custom',
 };
 
 function load(key, fallback) {
@@ -46,6 +48,10 @@ let courseState = load(LS.state, null) || createInitialState(`course-${Date.now(
 let transcript = load(LS.transcript, []);
 let provider = load(LS.provider, 'mock');
 let apiKeys = load(LS.keys, {});
+/** Chosen model per provider id; absent = use the provider default. */
+let modelChoices = load(LS.models, {});
+/** OpenAI-compatible custom endpoint config. */
+let customCfg = { baseURL: '', model: '', key: '', label: '', ...load(LS.custom, {}) };
 
 let busy = false;
 /** @type {string|null} message to resend on 重试 */
@@ -54,14 +60,26 @@ let pendingMessage = null;
 let lastEvent = null;
 let lastTurnHadQuestion = false;
 
-const PROVIDER_LABELS = {
+/** Local labels for entries /api/health does not describe. */
+const LOCAL_LABELS = {
   mock: '演示模式（无需密钥）',
-  minimax: 'MiniMax-M3',
-  glm: 'GLM-5.2',
-  'glm-flash': 'GLM-4.7-Flash（免费）',
-  kimi: 'Kimi k2.6',
-  qwen: 'Qwen（qwen-plus）',
+  custom: '自定义端点（OpenAI 兼容）',
 };
+
+/** Offline fallback when /api/health is unreachable. */
+const FALLBACK_PROVIDERS = [
+  { id: 'minimax', label: 'MiniMax', defaultModel: '', hasEnvKey: false },
+  { id: 'glm', label: 'GLM', defaultModel: '', hasEnvKey: false },
+  { id: 'glm-flash', label: 'GLM-Flash', defaultModel: '', hasEnvKey: false },
+  { id: 'kimi', label: 'Kimi', defaultModel: '', hasEnvKey: false },
+];
+
+/** @type {Array<{id: string, label: string, defaultModel: string, hasEnvKey: boolean}>} */
+let providerInfos = FALLBACK_PROVIDERS;
+
+function providerInfo(id) {
+  return providerInfos.find((p) => p.id === id) ?? null;
+}
 
 const STARTERS = [
   '我想带中班孩子做醒狮',
@@ -83,7 +101,7 @@ const settingsDrawer = $('#settings-drawer');
 const debugDrawer = $('#debug-drawer');
 const debugBody = $('#debug-body');
 const providerSelect = $('#provider-select');
-const keysBox = $('#keys-box');
+const providerBox = $('#provider-box');
 
 // ---------------------------------------------------------------- helpers
 
@@ -278,6 +296,30 @@ function wireHistory() {
 }
 
 /**
+ * Assemble the /api/chat body: provider + keys, a model override when the
+ * teacher picked one that differs from the provider default, and the custom
+ * endpoint config when provider === 'custom'.
+ * @param {string} text
+ */
+function chatRequestBody(text) {
+  const body = {
+    state: courseState,
+    history: wireHistory(),
+    message: text,
+    provider,
+    keys: { ...apiKeys },
+  };
+  if (provider === 'custom') {
+    body.custom = { baseURL: customCfg.baseURL, model: customCfg.model, label: customCfg.label || undefined };
+    if (customCfg.key) body.keys.custom = customCfg.key;
+  } else {
+    const chosen = modelChoices[provider];
+    if (chosen && chosen !== (providerInfo(provider)?.defaultModel ?? '')) body.model = chosen;
+  }
+  return body;
+}
+
+/**
  * @param {string} message
  * @param {{isRetry?: boolean}} [opts]
  */
@@ -305,13 +347,7 @@ async function send(message, opts = {}) {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        state: courseState,
-        history: wireHistory(),
-        message: text,
-        provider,
-        keys: apiKeys,
-      }),
+      body: JSON.stringify(chatRequestBody(text)),
     });
     if (!res.ok || !res.body) throw new Error(`服务返回 ${res.status}`);
 
@@ -370,10 +406,15 @@ function showError(message) {
 
 // -------------------------------------------------------------- settings
 
-function providerOptions(ids) {
+function saveKeys() { save(LS.keys, apiKeys); }
+function saveModels() { save(LS.models, modelChoices); }
+function saveCustom() { save(LS.custom, customCfg); }
+
+function providerOptions() {
+  const ids = ['mock', ...providerInfos.map((p) => p.id), 'custom'];
   providerSelect.replaceChildren();
   for (const id of ids) {
-    const opt = el('option', '', PROVIDER_LABELS[id] ?? id);
+    const opt = el('option', '', LOCAL_LABELS[id] ?? providerInfo(id)?.label ?? id);
     opt.value = id;
     providerSelect.append(opt);
   }
@@ -381,39 +422,214 @@ function providerOptions(ids) {
   providerSelect.value = provider;
 }
 
-function buildKeyInputs(ids) {
-  keysBox.replaceChildren();
-  for (const id of ids) {
-    if (id === 'mock') continue;
-    const field = el('div', 'settings-field');
-    const label = el('label', 'settings-label', `${PROVIDER_LABELS[id] ?? id} API 密钥`);
+/** Labeled input factory for the settings drawer. */
+function settingsField(labelText, inputId, opts = {}) {
+  const field = el('div', 'settings-field');
+  const label = el('label', 'settings-label', labelText);
+  if (opts.hint) label.append(el('span', 'env-key-hint', opts.hint));
+  const input = el('input', 'settings-input');
+  input.type = opts.type ?? 'text';
+  input.autocomplete = 'off';
+  if (opts.placeholder) input.placeholder = opts.placeholder;
+  input.value = opts.value ?? '';
+  input.addEventListener('input', () => opts.onInput?.(input.value));
+  label.htmlFor = input.id = inputId;
+  field.append(label, input);
+  return { field, input };
+}
+
+/**
+ * The model row: free-text input by default; 「获取模型列表」 swaps in a
+ * <select> of ids fetched via POST /api/models (with a 「手动输入」 escape).
+ * @param {string} id provider id ('custom' included)
+ * @param {{ getModel: () => string, setModel: (m: string) => void,
+ *           defaultModel: string, modelsBody: () => Object }} cfg
+ */
+function modelRow(id, cfg) {
+  const wrap = el('div', 'settings-field');
+  const label = el('label', 'settings-label', '模型');
+  const row = el('div', 'model-row');
+  const errorSlot = el('div', 'inline-error');
+  errorSlot.hidden = true;
+
+  const holder = el('span', 'model-holder');
+  const fetchBtn = el('button', 'text-btn model-fetch', '获取模型列表');
+  fetchBtn.type = 'button';
+  const manualBtn = el('button', 'text-btn model-manual', '手动输入');
+  manualBtn.type = 'button';
+  manualBtn.hidden = true;
+
+  const showError = (message) => {
+    // textContent only — the backend message is model/vendor-derived.
+    errorSlot.textContent = message;
+    errorSlot.hidden = !message;
+  };
+
+  const mountInput = () => {
     const input = el('input', 'settings-input');
-    input.type = 'password';
-    input.placeholder = '留空则使用服务端环境变量（如已配置）';
+    input.type = 'text';
     input.autocomplete = 'off';
-    input.value = apiKeys[id] ?? '';
-    input.addEventListener('input', () => {
-      if (input.value) apiKeys[id] = input.value;
-      else delete apiKeys[id];
-      save(LS.keys, apiKeys);
+    input.placeholder = cfg.defaultModel ? `默认 ${cfg.defaultModel}` : '模型 id';
+    input.value = cfg.getModel();
+    input.id = `model-${id}`;
+    label.htmlFor = input.id;
+    input.addEventListener('input', () => cfg.setModel(input.value.trim()));
+    holder.replaceChildren(input);
+    manualBtn.hidden = true;
+  };
+
+  const mountSelect = (models) => {
+    const select = el('select', 'settings-select');
+    select.id = `model-${id}`;
+    label.htmlFor = select.id;
+    const current = cfg.getModel() || cfg.defaultModel;
+    const ids = models.includes(current) || !current ? models : [current, ...models];
+    for (const m of ids) {
+      const opt = el('option', '', m);
+      opt.value = m;
+      select.append(opt);
+    }
+    if (current) select.value = current;
+    cfg.setModel(select.value);
+    select.addEventListener('change', () => cfg.setModel(select.value));
+    holder.replaceChildren(select);
+    manualBtn.hidden = false;
+  };
+
+  fetchBtn.addEventListener('click', async () => {
+    showError('');
+    fetchBtn.disabled = true;
+    const idle = fetchBtn.textContent;
+    fetchBtn.textContent = '获取中…';
+    try {
+      const res = await fetch('/api/models', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(cfg.modelsBody()),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        showError(data.message || '获取失败');
+      } else if (!data.models?.length) {
+        showError('该服务没有返回可用模型');
+      } else {
+        mountSelect(data.models);
+      }
+    } catch (err) {
+      showError(err?.message || '无法连接本地演示服务');
+    } finally {
+      fetchBtn.disabled = false;
+      fetchBtn.textContent = idle;
+    }
+  });
+
+  manualBtn.addEventListener('click', mountInput);
+
+  mountInput();
+  row.append(holder, fetchBtn, manualBtn);
+  wrap.append(label, row, errorSlot);
+  return wrap;
+}
+
+/** One provider's config: key + model row inside a collapsible section. */
+function providerSection(info) {
+  const details = el('details', 'provider-config');
+  details.dataset.id = info.id;
+  const summary = el('summary', '', info.label);
+  details.append(summary);
+
+  const { field: keyField } = settingsField(
+    'API 密钥',
+    `key-${info.id}`,
+    {
+      type: 'password',
+      hint: info.hasEnvKey ? '服务器已配密钥' : '',
+      placeholder: info.hasEnvKey ? '可留空——使用服务器密钥' : '在这里粘贴密钥',
+      value: apiKeys[info.id] ?? '',
+      onInput: (v) => {
+        if (v) apiKeys[info.id] = v;
+        else delete apiKeys[info.id];
+        saveKeys();
+      },
+    },
+  );
+  details.append(keyField);
+
+  details.append(modelRow(info.id, {
+    defaultModel: info.defaultModel,
+    getModel: () => modelChoices[info.id] ?? info.defaultModel ?? '',
+    setModel: (m) => {
+      if (m && m !== info.defaultModel) modelChoices[info.id] = m;
+      else delete modelChoices[info.id];
+      saveModels();
+    },
+    modelsBody: () => ({ provider: info.id, key: apiKeys[info.id] || undefined }),
+  }));
+
+  return details;
+}
+
+/** The 自定义端点 (OpenAI-compatible) section. */
+function customSection() {
+  const details = el('details', 'provider-config');
+  details.dataset.id = 'custom';
+  details.append(el('summary', '', LOCAL_LABELS.custom));
+
+  const fields = [
+    ['baseURL', '接口地址（baseURL）', 'text', '如 https://api.example.com/v1'],
+    ['key', 'API 密钥', 'password', '在这里粘贴密钥'],
+    ['label', '名称（可选）', 'text', '显示在调试信息里'],
+  ];
+  for (const [prop, labelText, type, placeholder] of fields) {
+    const { field } = settingsField(labelText, `custom-${prop}`, {
+      type,
+      placeholder,
+      value: customCfg[prop] ?? '',
+      onInput: (v) => { customCfg[prop] = v.trim(); saveCustom(); },
     });
-    label.htmlFor = input.id = `key-${id}`;
-    field.append(label, input);
-    keysBox.append(field);
+    details.append(field);
+  }
+
+  details.append(modelRow('custom', {
+    defaultModel: '',
+    getModel: () => customCfg.model ?? '',
+    setModel: (m) => { customCfg.model = m; saveCustom(); },
+    modelsBody: () => ({
+      provider: 'custom',
+      key: customCfg.key || undefined,
+      custom: { baseURL: customCfg.baseURL, model: customCfg.model || 'unknown' },
+    }),
+  }));
+
+  return details;
+}
+
+/** Rebuild the provider config sections; open the selected provider's one. */
+function buildProviderSections() {
+  providerBox.replaceChildren();
+  for (const info of providerInfos) providerBox.append(providerSection(info));
+  providerBox.append(customSection());
+  syncOpenSection();
+}
+
+function syncOpenSection() {
+  for (const d of providerBox.querySelectorAll('.provider-config')) {
+    if (d.dataset.id === provider) d.open = true;
   }
 }
 
 async function initProviders() {
-  let ids = ['mock', 'minimax', 'glm', 'glm-flash', 'kimi'];
   try {
     const res = await fetch('/api/health');
     if (res.ok) {
       const health = await res.json();
-      if (Array.isArray(health.providers)) ids = ['mock', ...health.providers];
+      if (Array.isArray(health.providers) && health.providers.every((p) => p && typeof p === 'object')) {
+        providerInfos = health.providers;
+      }
     }
-  } catch { /* offline from the API is fine — mock list stands */ }
-  providerOptions(ids);
-  buildKeyInputs(ids);
+  } catch { /* offline from the API is fine — the fallback list stands */ }
+  providerOptions();
+  buildProviderSections();
 }
 
 // ------------------------------------------------------------ new course
@@ -486,6 +702,7 @@ function wire() {
   providerSelect.addEventListener('change', () => {
     provider = providerSelect.value;
     save(LS.provider, provider);
+    syncOpenSection();
   });
 }
 

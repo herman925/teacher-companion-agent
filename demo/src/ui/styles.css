@@ -593,6 +593,63 @@ html, body {
 
 .settings-note { color: var(--ink-faded); font-size: 13px; max-width: 30em; }
 
+/* per-provider config sections (key + model row) — warm side, not slate */
+.provider-config {
+  border: 1px solid var(--border-warm);
+  border-radius: 8px;
+  background: #FFFFFF;
+  margin-bottom: calc(var(--sp) * 1.5);
+  padding: 0 calc(var(--sp) * 2);
+}
+
+.provider-config summary {
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 14px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+
+.provider-config summary::before { content: "▸"; color: var(--ink-faded); font-size: 11px; }
+.provider-config[open] summary::before { content: "▾"; }
+.provider-config summary::-webkit-details-marker { display: none; }
+.provider-config summary { list-style: none; }
+.provider-config summary:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; border-radius: 6px; }
+.provider-config[open] { padding-bottom: calc(var(--sp) * 2); }
+.provider-config[open] summary { border-bottom: 1px solid var(--border-warm); margin-bottom: calc(var(--sp) * 1.5); }
+
+.env-key-hint {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--green);
+  background: var(--green-wash);
+  border-radius: 4px;
+  padding: 0 6px;
+}
+
+.model-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp);
+}
+
+.model-row .model-holder { flex: 1 1 160px; min-width: 0; display: flex; }
+.model-row .model-holder > * { flex: 1; min-width: 0; }
+.model-row .text-btn { min-height: 44px; }
+
+.inline-error {
+  color: var(--brick);
+  font-size: 13px;
+  margin-top: 6px;
+  overflow-wrap: break-word;
+}
+
 /* debug: quarantined slate surface (§2, §4) */
 .debug-drawer {
   background: var(--slate);

@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { PROVIDERS, callWithFailover } from './src/adapter.mjs';
+import { PROVIDERS, callWithFailover, listModels } from './src/adapter.mjs';
 import { mockTurn } from './src/mock.mjs';
 import { parseTurn, validateTurn, violationFeedback, safeTemplate } from './src/harness.mjs';
 import { applyDelta, createInitialState, STAGE_NAMES } from './src/engine.mjs';
@@ -58,6 +58,34 @@ function buildSystemPrompt(state) {
   ].join('\n\n---\n\n');
 }
 
+// ---------- provider configuration (per-request overrides) ----------
+
+/**
+ * Build the effective provider registry for one request.
+ * Supported overrides (all optional, from the settings drawer):
+ *   req.model            — model id override for the preferred provider
+ *   req.custom           — { baseURL, model, label? } OpenAI-compatible custom endpoint
+ *                          (json_object_prompt strategy; key under keys.custom)
+ */
+function effectiveRegistry(req) {
+  const registry = { ...PROVIDERS };
+  if (req.custom?.baseURL && req.custom?.model) {
+    registry.custom = {
+      id: 'custom',
+      label: req.custom.label || '自定义端点',
+      baseURL: String(req.custom.baseURL).replace(/\/+$/, ''),
+      model: req.custom.model,
+      jsonStrategy: 'json_object_prompt',
+      enabled: true,
+    };
+  }
+  const preferred = req.provider;
+  if (req.model && registry[preferred] && preferred !== 'custom') {
+    registry[preferred] = { ...registry[preferred], model: req.model };
+  }
+  return registry;
+}
+
 // ---------- turn pipeline ----------
 
 /**
@@ -68,8 +96,9 @@ function buildSystemPrompt(state) {
 async function runTurn(req, emit) {
   const state = req.state && req.state.course_id ? req.state : createInitialState(`course-${Date.now()}`);
   const keys = { ...ENV_KEYS, ...(req.keys || {}) };
+  const registry = effectiveRegistry(req);
   const preferred = req.provider === 'mock' ? 'mock'
-    : req.provider && PROVIDERS[req.provider] ? req.provider : 'minimax';
+    : req.provider && registry[req.provider] ? req.provider : 'minimax';
 
   const messages = [
     { role: 'system', content: buildSystemPrompt(state) },
@@ -91,7 +120,7 @@ async function runTurn(req, emit) {
     // 'mock' provider: scripted walkthrough through the SAME L2/L3/L4 pipeline.
     const result = preferred === 'mock'
       ? { payload: mockTurn(state, req.history || [], req.message), usage: null, provider: 'mock' }
-      : await callWithFailover(preferred, keys, messages);
+      : await callWithFailover(preferred, keys, messages, { registry });
     provider = result.provider;
     usage = result.usage;
 
@@ -128,7 +157,7 @@ async function runTurn(req, emit) {
     state: applied.state,
     gate_report: { ok: !degraded, violations: allViolations, attempt, degraded },
     provider,
-    providerLabel: PROVIDERS[provider]?.label ?? provider,
+    providerLabel: provider === 'mock' ? '演示模式' : `${registry[provider]?.label ?? provider} · ${registry[provider]?.model ?? ''}`,
     usage,
     stageName: STAGE_NAMES[applied.state.stage],
   });
@@ -148,7 +177,32 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/api/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, providers: Object.keys(PROVIDERS).filter((id) => PROVIDERS[id].enabled !== false) }));
+    res.end(JSON.stringify({
+      ok: true,
+      providers: Object.entries(PROVIDERS)
+        .filter(([, p]) => p.enabled !== false)
+        .map(([id, p]) => ({ id, label: p.label, defaultModel: p.model, hasEnvKey: Boolean(ENV_KEYS[id]) })),
+    }));
+    return;
+  }
+
+  // List a provider's available models (proxied — the browser can't reach vendors directly).
+  if (url.pathname === '/api/models' && req.method === 'POST') {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    try {
+      const q = JSON.parse(body);
+      const registry = effectiveRegistry({ ...q, provider: q.provider });
+      const p = registry[q.provider];
+      if (!p) throw new Error(`未知供应商：${q.provider}`);
+      const key = q.key || ENV_KEYS[q.provider] || '';
+      if (!key) throw new Error('缺少 API 密钥——先填密钥再获取模型列表');
+      const models = await listModels(p, key);
+      res.end(JSON.stringify({ ok: true, provider: q.provider, defaultModel: p.model, models }));
+    } catch (e) {
+      res.end(JSON.stringify({ ok: false, message: e.message, status: e.status ?? 0 }));
+    }
     return;
   }
 
