@@ -542,6 +542,10 @@ function modelRow(id, cfg) {
 
   fetchBtn.addEventListener('click', async () => {
     showError('');
+    if (!backendOnline && !apiBase) {
+      showError('没有后端：这是静态托管（如 GitHub Pages），拿不到模型列表。请先在上方「服务器地址」填写已部署的代理地址（见 docs/DEPLOY.md），或直接在下方手动输入模型 id；只想体验流程可选「演示模式」。');
+      return;
+    }
     fetchBtn.disabled = true;
     const idle = fetchBtn.textContent;
     fetchBtn.textContent = '获取中…';
@@ -551,6 +555,11 @@ function modelRow(id, cfg) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(cfg.modelsBody()),
       });
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) {
+        showError('没连到后端（返回的不是 JSON，可能是静态托管的 404 页）。请检查「服务器地址」是否正确，或用「演示模式」。');
+        return;
+      }
       const data = await res.json();
       if (!data.ok) {
         showError(data.message || '获取失败');
