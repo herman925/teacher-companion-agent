@@ -11,6 +11,7 @@ import {
   renderErrorNotice, renderDebug, el,
 } from './render.js';
 import { messageIn, cardIn, chipsIn, closureIn, fadeIn } from './motion.js';
+import { runLocalMockTurn } from './local-turn.mjs';
 
 // ------------------------------------------------------------ persistence
 
@@ -21,6 +22,7 @@ const LS = {
   keys: 'cst.keys',
   models: 'cst.models',
   custom: 'cst.custom',
+  apiBase: 'cst.apiBase',
 };
 
 function load(key, fallback) {
@@ -52,6 +54,12 @@ let apiKeys = load(LS.keys, {});
 let modelChoices = load(LS.models, {});
 /** OpenAI-compatible custom endpoint config. */
 let customCfg = { baseURL: '', model: '', key: '', label: '', ...load(LS.custom, {}) };
+/** Optional proxy base URL (e.g. an Alibaba FC endpoint). Empty = same-origin. */
+let apiBase = (load(LS.apiBase, '') || '').replace(/\/+$/, '');
+/** Whether a proxy answered /api/health (set by initProviders). */
+let backendOnline = false;
+/** Build an API URL against the configured base (empty = same-origin, local dev). */
+const apiUrl = (p) => `${apiBase}${p}`;
 
 let busy = false;
 /** @type {string|null} message to resend on 重试 */
@@ -343,29 +351,57 @@ async function send(message, opts = {}) {
   setStatus('正在联系陪跑智能体…');
   let gotTurn = false;
 
-  try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(chatRequestBody(text)),
-    });
-    if (!res.ok || !res.body) throw new Error(`服务返回 ${res.status}`);
+  const dispatch = (name, data) => {
+    if (name === 'status') setStatus(data.text ?? '…');
+    else if (name === 'turn') { gotTurn = true; handleTurn(text, data); }
+    else if (name === 'error') showError(data.message || '这一轮没有走通。');
+  };
+  const simulate = (label) => {
+    const ev = runLocalMockTurn(courseState, wireHistory(), text);
+    if (label) { ev.providerLabel = label; ev.simulated = true; }
+    dispatch('turn', ev);
+  };
 
-    await readSSE(res, (name, data) => {
-      if (name === 'status') {
-        setStatus(data.text ?? '…');
-      } else if (name === 'turn') {
-        gotTurn = true;
-        handleTurn(text, data);
-      } else if (name === 'error') {
-        showError(data.message || '这一轮没有走通。');
+  const needsBackend = provider !== 'mock';
+  const haveBackend = backendOnline || Boolean(apiBase);
+
+  try {
+    if (!needsBackend) {
+      simulate(null);
+    } else if (!haveBackend) {
+      showSimulatedNotice();
+      simulate(`模拟演示（后端未连接，未实际调用 ${providerInfo(provider)?.label ?? provider}）`);
+    } else {
+      const crossOrigin = Boolean(apiBase);
+      const res = await fetch(apiUrl('/api/chat'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: crossOrigin ? 'application/json' : 'text/event-stream',
+        },
+        body: JSON.stringify(chatRequestBody(text)),
+      });
+      if (!res.ok) throw new Error(`服务返回 ${res.status}`);
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        const payload = await res.json();
+        for (const { event, data } of payload.events || []) dispatch(event, data);
+      } else if (res.body) {
+        await readSSE(res, dispatch);
+      } else {
+        throw new Error('服务没有返回内容');
       }
-    });
-    if (!gotTurn && !messagesEl.querySelector('.error-notice')) {
-      showError('连接中断了，这一轮没有收到回复。');
+      if (!gotTurn && !messagesEl.querySelector('.error-notice')) {
+        showError('连接中断了，这一轮没有收到回复。');
+      }
     }
   } catch (err) {
-    showError(err?.message || '无法连接本地演示服务。');
+    if (needsBackend) {
+      showSimulatedNotice();
+      simulate(`模拟演示（后端连接失败，未实际调用 ${providerInfo(provider)?.label ?? provider}）`);
+    } else {
+      showError(err?.message || '这一轮没有走通。');
+    }
   } finally {
     busy = false;
     sendBtn.disabled = false;
@@ -392,6 +428,14 @@ function handleTurn(userText, ev) {
   updateHeader();
   refreshDebug();
   scrollToEnd();
+}
+
+function showSimulatedNotice() {
+  for (const n of messagesEl.querySelectorAll('.sim-note')) n.remove();
+  const note = el('div', 'awaiting-note sim-note',
+    '后端未连接——这一轮是模拟演示（演示模式脚本，未调用真实模型）。要接真实模型，请在设置里填写服务器地址后重试。');
+  messagesEl.append(note);
+  fadeIn(note);
 }
 
 function showError(message) {
@@ -502,7 +546,7 @@ function modelRow(id, cfg) {
     const idle = fetchBtn.textContent;
     fetchBtn.textContent = '获取中…';
     try {
-      const res = await fetch('/api/models', {
+      const res = await fetch(apiUrl('/api/models'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(cfg.modelsBody()),
@@ -607,6 +651,18 @@ function customSection() {
 /** Rebuild the provider config sections; open the selected provider's one. */
 function buildProviderSections() {
   providerBox.replaceChildren();
+  const { field: apiField } = settingsField(
+    '服务器地址（可选）',
+    'api-base',
+    {
+      type: 'text',
+      hint: backendOnline ? '本地服务在线' : '留空＝本机；填服务器地址可接真实模型',
+      placeholder: '如 https://xxxx.cn-shenzhen.fcapp.run',
+      value: apiBase,
+      onInput: (v) => { apiBase = v.replace(/\/+$/, ''); save(LS.apiBase, apiBase); },
+    },
+  );
+  providerBox.append(apiField);
   for (const info of providerInfos) providerBox.append(providerSection(info));
   providerBox.append(customSection());
   syncOpenSection();
@@ -619,15 +675,17 @@ function syncOpenSection() {
 }
 
 async function initProviders() {
+  backendOnline = false;
   try {
-    const res = await fetch('/api/health');
+    const res = await fetch(apiUrl('/api/health'));
     if (res.ok) {
       const health = await res.json();
       if (Array.isArray(health.providers) && health.providers.every((p) => p && typeof p === 'object')) {
         providerInfos = health.providers;
       }
+      backendOnline = true;
     }
-  } catch { /* offline from the API is fine — the fallback list stands */ }
+  } catch { /* offline from the API is fine — 演示模式 still works client-side */ }
   providerOptions();
   buildProviderSections();
 }

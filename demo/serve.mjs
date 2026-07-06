@@ -20,7 +20,9 @@ import { parseTurn, validateTurn, violationFeedback, safeTemplate } from './src/
 import { applyDelta, createInitialState, STAGE_NAMES } from './src/engine.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.argv[process.argv.indexOf('--port') + 1]) || 8787;
+// Port precedence: FC_SERVER_PORT (Alibaba FC web function) > --port > 8787; FC needs 0.0.0.0.
+const PORT = Number(process.env.FC_SERVER_PORT) || Number(process.argv[process.argv.indexOf('--port') + 1]) || 8787;
+const HOST = process.env.FC_SERVER_PORT ? '0.0.0.0' : (process.env.HOST || '127.0.0.1');
 
 const ENV_KEYS = {
   minimax: process.env.MINIMAX_API_KEY || '',
@@ -175,6 +177,13 @@ const MIME = {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
+  // CORS: the static UI (e.g. GitHub Pages) and this proxy (e.g. Alibaba FC) can be
+  // different origins. Set permissive headers on every response + answer preflight.
+  res.setHeader('access-control-allow-origin', process.env.CORS_ORIGIN || '*');
+  res.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS');
+  res.setHeader('access-control-allow-headers', 'content-type,accept');
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
   if (url.pathname === '/api/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
@@ -209,6 +218,22 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/chat' && req.method === 'POST') {
     let body = '';
     for await (const chunk of req) body += chunk;
+    // Buffered mode (Accept: application/json, no event-stream): collect the SSE events
+    // and return them as one JSON payload. Cross-origin / serverless deploys (e.g. Alibaba
+    // FC) use this when response streaming is constrained; the browser replays the events.
+    const accept = req.headers.accept || '';
+    if (accept.includes('application/json') && !accept.includes('text/event-stream')) {
+      const events = [];
+      const emit = (event, data) => events.push({ event, data });
+      try {
+        await runTurn(JSON.parse(body), emit);
+      } catch (e) {
+        emit('error', { kind: e.kind ?? 'internal', message: e.message, chain: e.chain ?? [] });
+      }
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ events }));
+      return;
+    }
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache',
@@ -244,7 +269,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   const seeded = Object.entries(ENV_KEYS).filter(([, v]) => v).map(([k]) => k);
   console.log(`陪跑智能体 demo → http://localhost:${PORT}`);
   console.log(seeded.length ? `env keys detected: ${seeded.join(', ')}` : 'no env keys — enter one in the UI settings drawer');

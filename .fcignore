@@ -1,0 +1,11 @@
+.git
+.github
+.githooks
+node_modules
+tests
+source-docs
+.understand-anything
+.scratch
+tmp
+*.docx
+*.log

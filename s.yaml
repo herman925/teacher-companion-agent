@@ -1,0 +1,49 @@
+# Serverless Devs (s CLI) config — deploy the 陪跑智能体 proxy to Alibaba Function Compute (FC 3.0).
+# The proxy is demo/serve.mjs: it hosts the runtime harness + model adapter + state engine,
+# and serves the demo UI. See DEPLOY.md for the full walkthrough.
+#
+# Deploy:  s deploy         (after `s config add` sets your AK/SK under access "default")
+# Info:    s info           Remove: s remove
+edition: 3.0.0
+name: teacher-companion-agent
+access: default
+
+vars:
+  region: cn-shenzhen   # any mainland region near your teachers + the vendor APIs
+
+resources:
+  proxy:
+    component: fc3
+    props:
+      region: ${vars.region}
+      functionName: teacher-companion-proxy
+      description: 陪跑智能体 proxy — runtime harness + model adapter + demo UI
+      runtime: custom.debian10
+      # The whole repo is uploaded (see .fcignore); serve.mjs needs demo/src + harness/schema.
+      code: ./
+      cpu: 0.35
+      memorySize: 512
+      diskSize: 512
+      timeout: 120                 # LLM turns can be slow; keep generous
+      instanceConcurrency: 5
+      customRuntimeConfig:
+        command:
+          - node
+          - demo/serve.mjs
+        port: 9000                 # must match FC_SERVER_PORT below
+      environmentVariables:
+        FC_SERVER_PORT: '9000'
+        CORS_ORIGIN: '*'           # tighten to your Pages origin in production
+        # Optional server-seeded keys. Prefer leaving unset — the UI sends the key per request.
+        # MINIMAX_API_KEY: ''
+        # GLM_API_KEY: ''
+        # KIMI_API_KEY: ''
+      triggers:
+        - triggerName: httpTrigger
+          triggerType: http
+          triggerConfig:
+            authType: anonymous
+            methods:
+              - GET
+              - POST
+              - OPTIONS
