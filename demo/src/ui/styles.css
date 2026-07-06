@@ -786,3 +786,13 @@ html, body {
 
 .wf-map-node { color: #6E7681; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wf-map-node.done { color: var(--slate-text); }
+
+/* debug drawer: dev-mode prompt visibility (提示词（本轮）) */
+.prompt-meta { margin-bottom: 4px; }
+
+.prompt-note { color: #E3B341; font-size: 11px; margin-bottom: 4px; }
+
+.debug-drawer pre.prompt-pre {
+  max-height: 320px;
+  overflow-y: auto;
+}

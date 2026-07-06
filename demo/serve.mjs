@@ -18,6 +18,7 @@ import { PROVIDERS, callWithFailover, listModels } from './src/adapter.mjs';
 import { mockTurn } from './src/mock.mjs';
 import { parseTurn, validateTurn, violationFeedback, safeTemplate } from './src/harness.mjs';
 import { applyDelta, createInitialState, STAGE_NAMES } from './src/engine.mjs';
+import { buildSystemPrompt, stageModuleName, profileSectionText } from './src/prompt-builder.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 // Port precedence: FC_SERVER_PORT (Alibaba FC web function) > --port > 8787; FC needs 0.0.0.0.
@@ -41,23 +42,6 @@ function loadPrompt(name) {
     promptCache.set(name, readFileSync(path.join(PROMPT_DIR, `${name}.zh.md`), 'utf8'));
   }
   return promptCache.get(name);
-}
-
-const STAGE_MODULE = { 0: 'stage0', 1: 'stage1', 2: 'stage2', 3: 'stage3', 4: 'stage3', 5: 'stage5' };
-
-/** Build the system prompt: base + contract + stage module + live state snapshot. */
-function buildSystemPrompt(state) {
-  const stageDoc = loadPrompt(STAGE_MODULE[state.stage] ?? 'stage0');
-  const snapshot = JSON.stringify(state, null, 1);
-  const pacing = state.awaiting_feedback
-    ? '当前 awaiting_feedback 为 true：上一轮已收尾，教师尚未回传现场反馈。若这条消息就是回传，先提取证据；若只是追问或要素材，就地支持，不虚构课堂进展。'
-    : '';
-  return [
-    loadPrompt('base'),
-    loadPrompt('contract'),
-    stageDoc,
-    `# 当前 course_state（只读快照）\n\n\`\`\`json\n${snapshot}\n\`\`\`\n\n${pacing}`,
-  ].join('\n\n---\n\n');
 }
 
 // ---------- provider configuration (per-request overrides) ----------
@@ -102,9 +86,13 @@ async function runTurn(req, emit) {
   const preferred = req.provider === 'mock' ? 'mock'
     : req.provider && registry[req.provider] ? req.provider : 'minimax';
 
+  // Prompt assembly is shared with the demo UI (prompt-builder.mjs); the
+  // optional 教师档案 travels as read-only context, never through state_delta.
+  const systemPrompt = await buildSystemPrompt(state, loadPrompt, { profile: req.profile });
+  const keptHistory = (req.history || []).slice(-24);
   const messages = [
-    { role: 'system', content: buildSystemPrompt(state) },
-    ...(req.history || []).slice(-24),
+    { role: 'system', content: systemPrompt },
+    ...keptHistory,
     { role: 'user', content: req.message },
   ];
 
@@ -121,7 +109,7 @@ async function runTurn(req, emit) {
     emit('status', { text: attempt === 1 ? '正在思考这一轮…' : '第一稿被护栏拦下，正在重写…' });
     // 'mock' provider: scripted walkthrough through the SAME L2/L3/L4 pipeline.
     const result = preferred === 'mock'
-      ? { payload: mockTurn(state, req.history || [], req.message), usage: null, provider: 'mock' }
+      ? { payload: mockTurn(state, req.history || [], req.message, { profile: req.profile }), usage: null, provider: 'mock' }
       : await callWithFailover(preferred, keys, messages, { registry });
     provider = result.provider;
     usage = result.usage;
@@ -157,6 +145,16 @@ async function runTurn(req, emit) {
   emit('turn', {
     turn,
     state: applied.state,
+    // Dev-mode prompt visibility: full system prompt, only on request.
+    ...(req.debug === true ? {
+      prompt_debug: {
+        system: systemPrompt,
+        stage_module: stageModuleName(state),
+        history_count: keptHistory.length,
+        profile_injected: Boolean(profileSectionText(req.profile)),
+        source: 'server',
+      },
+    } : {}),
     gate_report: { ok: !degraded, violations: allViolations, attempt, degraded },
     provider,
     providerLabel: provider === 'mock' ? '演示模式' : `${registry[provider]?.label ?? provider} · ${registry[provider]?.model ?? ''}`,

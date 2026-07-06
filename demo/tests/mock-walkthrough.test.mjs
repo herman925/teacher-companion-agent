@@ -222,3 +222,102 @@ test('wf_trace passes through parseTurn untouched; absent stays null', () => {
   const withoutTrace = parseTurn({ reply_markdown: '好的。' });
   assert.equal(withoutTrace.turn.wf_trace, null);
 });
+
+// --------------------------------- awaiting-phase liveliness (from_zero fixes)
+
+/** One pipeline step (parse → validate → apply) with history bookkeeping. */
+function step(state, history, message) {
+  const raw = mockTurn(state, history, message);
+  const { turn } = parseTurn(raw);
+  assert.ok(turn, 'turn parses');
+  const blocking = validateTurn(turn, state).filter((v) => v.action === 'block');
+  assert.deepEqual(blocking, [], `no blocking violations: ${JSON.stringify(blocking)}`);
+  const applied = applyDelta(state, turn.state_delta, { roundComplete: turn.round_complete, teacherTurn: true });
+  history.push({ role: 'user', content: message }, { role: 'assistant', content: turn.reply_markdown });
+  return { turn, state: applied.state, violations: applied.violations };
+}
+
+test('from_zero turn 2 (切口卡) is fully clean — zero violations of ANY level', () => {
+  let state = createInitialState('clean-entry');
+  const history = [];
+  ({ state } = step(state, history, '我想带中班孩子做醒狮'));
+  const raw = mockTurn(state, history, '园附近每年都有醒狮活动，孩子们其实见过，但只是看热闹');
+  const { turn } = parseTurn(raw);
+  const validateV = validateTurn(turn, state);
+  assert.deepEqual(validateV, [], `validateTurn totally silent: ${JSON.stringify(validateV)}`);
+  const applied = applyDelta(state, turn.state_delta, { roundComplete: turn.round_complete, teacherTurn: true });
+  assert.deepEqual(applied.violations, [], `applyDelta totally silent: ${JSON.stringify(applied.violations)}`);
+  assert.equal(applied.state.stage, 1, 'stage legally advances in the self-satisfying delta');
+});
+
+test('awaiting phase: entry choice is acknowledged and written into the entry card', () => {
+  let state = createInitialState('choice');
+  const history = [];
+  ({ state } = step(state, history, '我想带中班孩子做醒狮'));
+  ({ state } = step(state, history, '园附近每年都有醒狮活动，孩子们其实见过，但只是看热闹'));
+  const r = step(state, history, '狮头入口——班里孩子对面具类的东西一直很着迷');
+  state = r.state;
+  assert.ok(r.turn.reply_markdown.includes('狮头'), 'acknowledges the chosen entry specifically');
+  assert.ok(!r.turn.reply_markdown.includes('我先在这里等'), 'not a generic awaiting reply');
+  assert.equal(state.resource_entry_card.chosen_entry, '狮头入口', 'choice written into resource_entry_card');
+  assert.equal(state.resource_entry_card.original_theme, '醒狮', 'existing card fields carried forward');
+  assert.ok(r.turn.wf_trace.nodes.some((n) => n.id === 'WF09'), 'WF09 战术性环境支持 in trace');
+  assert.deepEqual(r.violations, [], 'choice turn applies clean');
+});
+
+test('awaiting phase: nudges never repeat verbatim and explain empty deltas', () => {
+  let state = createInitialState('nudge');
+  const history = [];
+  ({ state } = step(state, history, '我想带中班孩子做醒狮'));
+  ({ state } = step(state, history, '园附近每年都有醒狮活动，孩子们其实见过，但只是看热闹'));
+  const n1 = step(state, history, '還有呢？');
+  state = n1.state;
+  const n2 = step(state, history, '還有呢？');
+  state = n2.state;
+  assert.notEqual(n1.turn.reply_markdown, n2.turn.reply_markdown, 'second nudge varies');
+  for (const t of [n1.turn, n2.turn]) {
+    assert.ok(t.wf_trace && t.wf_trace.nodes.length > 0, 'trace present on nudge turns');
+    assert.ok(t.wf_trace.state_notes.includes('无状态写入'), 'empty delta explained in state_notes');
+  }
+  // Real field feedback still lands after the detour.
+  const f = step(state, history, '我们去看了训练。孩子们问狮子的眼睛为什么会眨，好几个孩子自发模仿马步，在狮头架前停留很久。');
+  assert.ok(f.state.children_evidence.length >= 5, 'field feedback still ingests after nudges');
+});
+
+test('awaiting phase: in-place support (家长素材) answers without fabricating progress', () => {
+  let state = createInitialState('support');
+  const history = [];
+  ({ state } = step(state, history, '我想带中班孩子做醒狮'));
+  ({ state } = step(state, history, '园附近每年都有醒狮活动，孩子们其实见过，但只是看热闹'));
+  const r = step(state, history, '能不能先来一段给家长的话，解释我们为什么要去看训练');
+  assert.ok(r.turn.reply_markdown.includes('家长'), 'delivers the parent-facing scaffold');
+  assert.equal(r.state.children_evidence.length, 0, 'no fabricated classroom progress');
+  assert.equal(r.state.stage, 1, 'stage untouched');
+  assert.ok(r.turn.wf_trace.nodes.some((n) => n.id === 'WF22'), 'WF22 in trace');
+});
+
+test('other flows: awaiting nudges vary instead of fabricating or repeating', () => {
+  // story_export: a 记不全 answer must NOT fabricate 原话 and must vary on repeat.
+  let state = createInitialState('story-wait');
+  const history = [];
+  ({ state } = step(state, history, '我有一堆照片想整理成课程故事'));
+  ({ state } = step(state, history, '主要是活动过程照片，还有孩子的作品和涂鸦，以及几段采访视频'));
+  const w1 = step(state, history, '记不全了，我再想想');
+  state = w1.state;
+  assert.equal(state.stage, 0, 'no stage 5 jump without 原话');
+  assert.equal(state.children_evidence.filter((e) => e.kind === 'child_words').length, 0, 'no fabricated 原话');
+  const w2 = step(state, history, '還有呢？');
+  assert.notEqual(w1.turn.reply_markdown, w2.turn.reply_markdown, 'story wait varies');
+
+  // material_support: repeated nudges cycle variants, never verbatim-adjacent.
+  let ms = createInitialState('mat-wait');
+  const mh = [];
+  ({ state: ms } = step(ms, mh, '我想要一份趁墟的亲子调查素材'));
+  const d1 = step(ms, mh, '给家长的调查表');
+  ms = d1.state;
+  const d2 = step(ms, mh, '還有呢？');
+  ms = d2.state;
+  const d3 = step(ms, mh, '再来');
+  assert.notEqual(d1.turn.reply_markdown, d2.turn.reply_markdown, 'material nudge varies (1→2)');
+  assert.notEqual(d2.turn.reply_markdown, d3.turn.reply_markdown, 'material nudge varies (2→3)');
+});

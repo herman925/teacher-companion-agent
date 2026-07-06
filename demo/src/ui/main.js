@@ -12,6 +12,7 @@ import {
 } from './render.js';
 import { messageIn, cardIn, chipsIn, closureIn, fadeIn } from './motion.js';
 import { runLocalMockTurn } from './local-turn.mjs';
+import { buildSystemPrompt, stageModuleName, profileSectionText } from '../prompt-builder.mjs';
 
 // ------------------------------------------------------------ persistence
 
@@ -24,6 +25,7 @@ const LS = {
   custom: 'cst.custom',
   apiBase: 'cst.apiBase',
   devmode: 'cst.devmode',
+  profile: 'cst.profile',
 };
 
 function load(key, fallback) {
@@ -57,6 +59,42 @@ let modelChoices = load(LS.models, {});
 let customCfg = { baseURL: '', model: '', key: '', label: '', ...load(LS.custom, {}) };
 /** 开发者模式: show wf_trace annotations + workflow map details. */
 let devMode = Boolean(load(LS.devmode, false));
+
+/** 教师档案 (PRD §7.4 v1, local-only): read-only context, never model-writable. */
+let profile = { region: '', ageBand: '', classSize: '', stylePref: '', ...load(LS.profile, {}) };
+function saveProfile() { save(LS.profile, profile); }
+function profileIsEmpty() {
+  return !(String(profile.region || '').trim() || String(profile.ageBand || '').trim()
+    || String(profile.classSize || '').trim() || String(profile.stylePref || '').trim());
+}
+/** The profile as sent with requests (undefined when empty). */
+function profileForRequest() { return profileIsEmpty() ? undefined : { ...profile }; }
+
+// Dev-mode prompt reconstruction (演示模式): fetch-backed cached prompt loader.
+// The prompt files are static-served both locally and on GitHub Pages.
+const promptFetchCache = new Map();
+async function fetchPrompt(name) {
+  if (!promptFetchCache.has(name)) {
+    const res = await fetch(`src/prompts/${name}.zh.md`);
+    if (!res.ok) throw new Error(`prompt ${name} 加载失败`);
+    promptFetchCache.set(name, await res.text());
+  }
+  return promptFetchCache.get(name);
+}
+
+/** Rebuild the system prompt client-side for the debug drawer (mock path). */
+async function buildMockPromptDebug(state, historyCount) {
+  const prof = profileForRequest();
+  const system = await buildSystemPrompt(state, fetchPrompt, { profile: prof });
+  return {
+    system,
+    stage_module: stageModuleName(state),
+    history_count: historyCount,
+    profile_injected: Boolean(profileSectionText(prof)),
+    source: 'mock-reconstructed',
+    note: '该提示词为演示模式下的还原，未真实发送',
+  };
+}
 /** Optional proxy base URL (e.g. an Alibaba FC endpoint). Empty = same-origin. */
 let apiBase = (load(LS.apiBase, '') || '').replace(/\/+$/, '');
 /** Whether a proxy answered /api/health (set by initProviders). */
@@ -324,6 +362,9 @@ function chatRequestBody(text) {
     provider,
     keys: { ...apiKeys },
   };
+  const prof = profileForRequest();
+  if (prof) body.profile = prof;
+  if (devMode) body.debug = true;
   if (provider === 'custom') {
     body.custom = { baseURL: customCfg.baseURL, model: customCfg.model, label: customCfg.label || undefined };
     if (customCfg.key) body.keys.custom = customCfg.key;
@@ -363,9 +404,15 @@ async function send(message, opts = {}) {
     else if (name === 'turn') { gotTurn = true; handleTurn(text, data); }
     else if (name === 'error') showError(data.message || '这一轮没有走通。');
   };
-  const simulate = (label) => {
-    const ev = runLocalMockTurn(courseState, wireHistory(), text);
+  const simulate = async (label) => {
+    const stateBefore = courseState;
+    const wired = wireHistory();
+    const ev = runLocalMockTurn(stateBefore, wired, text, { profile: profileForRequest() });
     if (label) { ev.providerLabel = label; ev.simulated = true; }
+    if (devMode) {
+      // Attach BEFORE dispatch so the reconstructed prompt persists on the event.
+      try { ev.prompt_debug = await buildMockPromptDebug(stateBefore, Math.min(wired.length, 24)); } catch { /* prompts unreachable — skip the annotation */ }
+    }
     dispatch('turn', ev);
   };
 
@@ -374,10 +421,10 @@ async function send(message, opts = {}) {
 
   try {
     if (!needsBackend) {
-      simulate(null);
+      await simulate(null);
     } else if (!haveBackend) {
       showSimulatedNotice();
-      simulate(`模拟演示（后端未连接，未实际调用 ${providerInfo(provider)?.label ?? provider}）`);
+      await simulate(`模拟演示（后端未连接，未实际调用 ${providerInfo(provider)?.label ?? provider}）`);
     } else {
       const crossOrigin = Boolean(apiBase);
       const res = await fetch(apiUrl('/api/chat'), {
@@ -405,7 +452,7 @@ async function send(message, opts = {}) {
   } catch (err) {
     if (needsBackend) {
       showSimulatedNotice();
-      simulate(`模拟演示（后端连接失败，未实际调用 ${providerInfo(provider)?.label ?? provider}）`);
+      await simulate(`模拟演示（后端连接失败，未实际调用 ${providerInfo(provider)?.label ?? provider}）`);
     } else {
       showError(err?.message || '这一轮没有走通。');
     }
@@ -683,10 +730,58 @@ function devModeField() {
   return field;
 }
 
+/** 教师档案 section — optional, local-only (PRD §7.4 v1 personalization). */
+function profileSection() {
+  const details = el('details', 'provider-config');
+  details.dataset.id = 'profile';
+  details.append(el('summary', '', '教师档案（可选，只存本机）'));
+
+  const { field: regionField } = settingsField('地区', 'profile-region', {
+    placeholder: '如 广州市番禺区',
+    value: profile.region ?? '',
+    onInput: (v) => { profile.region = v.trim(); saveProfile(); },
+  });
+  details.append(regionField);
+
+  const ageField = el('div', 'settings-field');
+  const ageLabel = el('label', 'settings-label', '年段');
+  const ageSelect = el('select', 'settings-select');
+  ageSelect.id = 'profile-ageband';
+  ageLabel.htmlFor = ageSelect.id;
+  for (const band of ['', '小班', '中班', '大班', '混龄']) {
+    const opt = el('option', '', band || '未选择');
+    opt.value = band;
+    ageSelect.append(opt);
+  }
+  ageSelect.value = profile.ageBand ?? '';
+  ageSelect.addEventListener('change', () => { profile.ageBand = ageSelect.value; saveProfile(); });
+  ageField.append(ageLabel, ageSelect);
+  details.append(ageField);
+
+  const { field: sizeField } = settingsField('班额', 'profile-classsize', {
+    type: 'number',
+    placeholder: '如 30',
+    value: profile.classSize ?? '',
+    onInput: (v) => { profile.classSize = v.trim(); saveProfile(); },
+  });
+  details.append(sizeField);
+
+  const { field: styleField } = settingsField('风格偏好', 'profile-style', {
+    placeholder: '如 喜欢户外和动手类活动',
+    value: profile.stylePref ?? '',
+    onInput: (v) => { profile.stylePref = v.trim(); saveProfile(); },
+  });
+  details.append(styleField);
+
+  details.append(el('p', 'settings-note', '档案只保存在这台设备；只有在填写了服务器地址后才会随请求发送；不会写入课程状态。'));
+  return details;
+}
+
 /** Rebuild the provider config sections; open the selected provider's one. */
 function buildProviderSections() {
   providerBox.replaceChildren();
   providerBox.append(devModeField());
+  providerBox.append(profileSection());
   const { field: apiField } = settingsField(
     '服务器地址（可选）',
     'api-base',

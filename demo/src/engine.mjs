@@ -2,6 +2,8 @@
 // Transition gates encode spec §2 流转规则 (source-docs/workflow-v1.3.zh-CN.md).
 // Runs in both the demo server (validation) and the browser (localStorage store).
 
+import { NODE_PREREQS, WF_NODES } from './wf-nodes.mjs';
+
 const SCHEMA_VERSION = '0.1.0';
 
 /** Stage names for logs/debug drawer. */
@@ -81,6 +83,13 @@ const WRITABLE = new Set([
   'completed_nodes', 'stage', // stage is a *proposal*; gated below
 ]);
 
+let NODE_NAME_CACHE = null;
+/** Lazy id→name lookup (lazy keeps the wf-nodes ↔ engine module cycle safe). */
+function nodeName(id) {
+  if (!NODE_NAME_CACHE) NODE_NAME_CACHE = Object.fromEntries(WF_NODES.map((n) => [n.id, n.name]));
+  return NODE_NAME_CACHE[id] ?? id;
+}
+
 // Array fields that append (with dedupe key) instead of replacing.
 const APPEND_KEYS = {
   children_evidence: (e) => e.id,
@@ -103,6 +112,7 @@ export function applyDelta(state, delta, ctx = {}) {
   const violations = [];
   const next = structuredClone(state);
   const applied = [];
+  let stageProposal = null; // deferred — gated against the fully merged candidate below
 
   for (const [key, value] of Object.entries(delta || {})) {
     if (!WRITABLE.has(key)) {
@@ -110,20 +120,31 @@ export function applyDelta(state, delta, ctx = {}) {
       continue;
     }
     if (key === 'stage') {
-      const err = stageGateError(next, value);
-      if (err) {
-        violations.push({ kind: 'illegal_stage_jump', detail: err, action: 'strip' });
-      } else {
-        next.stage = value;
-        applied.push('stage');
-      }
+      stageProposal = value;
       continue;
     }
     if (key in APPEND_KEYS && Array.isArray(value)) {
       const keyFn = APPEND_KEYS[key];
+      // Node dependency check (NODE_PREREQS partial order), delta-aware: a
+      // prerequisite counts if already in state OR anywhere in this same
+      // delta's array (set semantics). Unmet → strip that id, non-fatal.
+      let incoming = value;
+      if (key === 'completed_nodes') {
+        const provided = new Set([...(Array.isArray(next.completed_nodes) ? next.completed_nodes : []), ...value]);
+        incoming = value.filter((id) => {
+          const missing = (NODE_PREREQS[id] || []).filter((pre) => !provided.has(pre));
+          if (!missing.length) return true;
+          violations.push({
+            kind: 'node_prerequisite',
+            detail: `${id} 需要先完成 ${missing[0]}（${nodeName(missing[0])}）`,
+            action: 'strip',
+          });
+          return false;
+        });
+      }
       const existing = Array.isArray(next[key]) ? next[key] : [];
       const seen = new Set(existing.map(keyFn));
-      for (const item of value) {
+      for (const item of incoming) {
         const k = keyFn(item);
         if (seen.has(k)) {
           // Same key = update in place (teacher corrections legitimately revise entries).
@@ -140,6 +161,21 @@ export function applyDelta(state, delta, ctx = {}) {
     }
     next[key] = value; // object/scalar fields replace
     applied.push(key);
+  }
+
+  // Stage is a gated PROPOSAL, checked delta-aware against the merged
+  // candidate state: a delta that supplies the prerequisites AND the stage
+  // move in the same turn is legal regardless of key order (mirrors the
+  // harness rule that evidence_refs may resolve against evidence newly
+  // provided in this delta).
+  if (stageProposal !== null) {
+    const err = stageGateError(next, stageProposal);
+    if (err) {
+      violations.push({ kind: 'illegal_stage_jump', detail: err, action: 'strip' });
+    } else {
+      next.stage = stageProposal;
+      applied.push('stage');
+    }
   }
 
   // Platform-controlled pacing: a completed round waits for the classroom;

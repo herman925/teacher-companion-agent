@@ -26,15 +26,15 @@ function trace(mode, stage, nodes, principles, stateNotes) {
  * @param {string} message the teacher's message
  * @returns {Object} a turn-contract object (see contract.zh.md)
  */
-export function mockTurn(state, history, message) {
+export function mockTurn(state, history, message, opts = {}) {
   // WF01 has not run yet → entry recognition on first contact (状态机优先).
-  if (!(state.completed_nodes || []).includes('WF01')) return turnEntry(message);
+  if (!(state.completed_nodes || []).includes('WF01')) return turnEntry(message, opts);
   switch (state.teacher_mode) {
-    case 'optimize_existing': return optimizeFlow(state);
-    case 'story_export': return storyFlow(state);
-    case 'mid_course': return midCourseFlow(state);
-    case 'material_support': return materialFlow(state);
-    default: return fromZeroFlow(state, message);
+    case 'optimize_existing': return optimizeFlow(state, history, message);
+    case 'story_export': return storyFlow(state, history, message);
+    case 'mid_course': return midCourseFlow(state, history, message);
+    case 'material_support': return materialFlow(state, history);
+    default: return fromZeroFlow(state, history, message);
   }
 }
 
@@ -48,13 +48,13 @@ function classifyEntry(message) {
   return 'from_zero';
 }
 
-function turnEntry(message) {
+function turnEntry(message, opts = {}) {
   switch (classifyEntry(message)) {
     case 'story_export': return turnStoryEntry();
     case 'optimize_existing': return turnOptimizeEntry();
     case 'mid_course': return turnMidCourseEntry();
     case 'material_support': return turnMaterialEntry(message);
-    default: return turnIntentQuestion(message);
+    default: return turnIntentQuestion(message, opts);
   }
 }
 
@@ -62,22 +62,47 @@ function detectResource(message) {
   return /龙舟/.test(message) ? '龙舟' : /趁墟/.test(message) ? '趁墟' : /祠堂/.test(message) ? '祠堂' : '醒狮';
 }
 
+// ---------------------------------------------- awaiting-phase discrimination
+
+/** Strong field-feedback signal; hard evidence markers bypass the length check. */
+function hasFieldFeedback(message) {
+  if (/「|」|原话/.test(message)) return true;
+  return /(说|问|画|拍|停留|围|模仿|盯着|照片|卡住)/.test(message) && message.length > 20;
+}
+
+/** In-place support request while a round is out in the field (WF22). */
+function wantsInPlaceSupport(message) {
+  return /素材|预案|铺垫|家长|打印/.test(message);
+}
+
+/**
+ * Deterministic reply-variant picker: counts prior assistant turns matching
+ * markerRe and cycles through count variants — consecutive nudges never
+ * repeat verbatim, and no hidden state is needed (derived from history alone).
+ */
+function replyVariant(history, markerRe, count) {
+  const n = (history || []).filter((m) => m && m.role === 'assistant' && markerRe.test(String(m.content || ''))).length;
+  return n % count;
+}
+
 // ======================================================== 从零陪跑 from_zero
 
-function fromZeroFlow(state, message) {
+function fromZeroFlow(state, history, message) {
   if (!state.resource_entry_card) return turnEntryCard();
-  if (!(state.children_evidence || []).length) return turnAwaitOrIngest(state, message);
+  if (!(state.children_evidence || []).length) return turnAwaitOrIngest(state, history, message);
   if (!(state.cycle_history || []).length) return turnCycleTask();
   return turnStoryFragment(state);
 }
 
-function turnIntentQuestion(message) {
+function turnIntentQuestion(message, opts = {}) {
   const resource = detectResource(message);
+  // 教师档案 light touch: address the actual 年段 when the teacher shared one.
+  const kid = opts.profile && String(opts.profile.ageBand || '').trim() ? String(opts.profile.ageBand).trim() + '孩子' : '孩子';
   return {
     reply_markdown:
       `听起来你已经带着「${resource}」的初步想法来了——这个资源本身就有很强的现场感，我们不急着写方案，先把它变成孩子能真实进入的入口。\n\n我先问一个最要紧的问题（后面两问会更快）。`,
     question: {
-      text: `为什么想带孩子做${resource}？你希望孩子接触它之后，多感受到一点什么？`,
+      text: `为什么想带${kid}做${resource}？你希望${kid}接触它之后，多感受到一点什么？`,
       why: '先听懂你的资源意图，切口卡才不会泛泛而谈',
       examples: [
         `园附近每年都有${resource}活动，孩子们其实见过，但只是看热闹`,
@@ -189,24 +214,18 @@ function turnEntryCard() {
   };
 }
 
-function turnAwaitOrIngest(state, message) {
-  // If the teacher message reads like field feedback, ingest it as evidence.
-  const hasFeedback = /(说|问|画|拍|停留|围|模仿|盯着)/.test(message) && message.length > 20;
-  if (!hasFeedback) {
-    return {
-      reply_markdown:
-        '我先在这里等你带孩子去现场，不急。如果你在准备中遇到问题（联系不上醒狮队、家长有顾虑、想先做点铺垫），随时告诉我，我可以帮你出预案或素材。\n\n回来时不用写总结——几句孩子原话、两个停留点、几张照片就够。',
-      question: null,
-      artifacts: [],
-      closure_loop: null,
-      state_delta: {},
-      evidence_refs: [],
-      round_complete: false,
-      wf_trace: trace('from_zero', 1, [
-        { id: 'WF05', name: '高频情境浸润', apply: '体验尚未发生——等待现场，不催促也不虚构' },
-      ], ['证据优先', '儿童真实反应驱动调整'], '本轮不写入任何状态字段；awaiting_feedback 由平台控制'),
-    };
-  }
+function turnAwaitOrIngest(state, history, message) {
+  // Discrimination order: explicit entry-choice answers win over the feedback
+  // heuristic (choice chips contain words like 围/说), but hard evidence
+  // markers (「」/原话/照片) always route to ingest — never swallow the field.
+  const choice = matchEntryChoice(message);
+  if (choice && message.length <= 40 && !/「|」|原话|照片/.test(message)) return turnEntryChoice(state, choice);
+  if (hasFieldFeedback(message)) return turnIngestFeedback();
+  if (wantsInPlaceSupport(message)) return turnInPlaceSupport();
+  return turnAwaitNudge(history);
+}
+
+function turnIngestFeedback() {
   return {
     reply_markdown:
       '这轮反馈非常有料——尤其是你注意到孩子们**自己开始模仿马步**，这比任何提问都真实。我把这些都记进证据里了。\n\n从证据看，孩子现在的问题主要围着「狮头这个物件」和「里面的人」转，这正是好的探究起点。下面是我整理的问题池，你确认一下哪些是孩子真实说过的。',
@@ -365,9 +384,13 @@ function turnStoryFragment(state) {
 
 // ================================================ 已有主题优化 optimize_existing
 
-function optimizeFlow(state) {
+function optimizeFlow(state, history, message) {
   if (!state.resource_entry_card) return turnOptimizeBackfill();
-  if (!(state.children_evidence || []).length) return turnOptimizeEvidence();
+  if (!(state.children_evidence || []).length) {
+    // 证据优先: only ingest when the message plausibly carries 原话.
+    if (/说|问|「|原话/.test(message) && message.length > 10) return turnOptimizeEvidence();
+    return turnOptimizeWait(history);
+  }
   return turnOptimizeNext();
 }
 
@@ -543,9 +566,13 @@ function turnOptimizeNext() {
 
 // ================================================== 课程故事整理 story_export
 
-function storyFlow(state) {
+function storyFlow(state, history, message) {
   if (!state.story_materials) return turnStoryMaterials();
-  if (state.stage < 5) return turnStorySpine();
+  if (state.stage < 5) {
+    // The spine needs real 原话 — a nudge or 记不全 answer must not fabricate.
+    if (/说|「|原话/.test(message)) return turnStorySpine();
+    return turnStoryWait(history);
+  }
   return turnStoryVersion();
 }
 
@@ -675,8 +702,11 @@ function turnStoryVersion() {
 
 // ==================================================== 过程中续聊 mid_course
 
-function midCourseFlow(state) {
-  if (!(state.children_evidence || []).length) return turnMidCourseReview();
+function midCourseFlow(state, history, message) {
+  if (!(state.children_evidence || []).length) {
+    if (/卡|试|做|说|问|指挥|活跃/.test(message) && message.length > 15) return turnMidCourseReview();
+    return turnMidCourseWait(history);
+  }
   return turnMidCourseNext();
 }
 
@@ -774,7 +804,10 @@ function turnMidCourseNext() {
 
 // ================================================= 素材支持 material_support
 
-function materialFlow(state) {
+function materialFlow(state, history) {
+  const v = replyVariant(history, /定稿要点|可选加项|随时把两三件/, 3);
+  if (v === 1) return turnMaterialVariantB(state);
+  if (v === 2) return turnMaterialVariantC(state);
   return turnMaterialDeliver(state);
 }
 
@@ -819,5 +852,204 @@ function turnMaterialDeliver(state) {
       { id: 'WF22', name: '素材与资源支持', apply: '按教师选定的场景定稿文字素材' },
       { id: 'WF07', name: '儿童问题池整理', apply: '预备：孩子带回的问题可入儿童问题池' },
     ], ['文化可能性后台提示', '输出闭环固定'], '素材支持不写课程阶段；输出闭环固定照常收尾'),
+  };
+}
+
+// ===================================== awaiting-phase turns (等待期不装死)
+// Function declarations hoist, so these can live after the flows that call
+// them. Every turn here carries a wf_trace whose state_notes explains an
+// empty delta — the state machine must never LOOK dead in the debug drawer.
+
+/** Map an awaiting-phase message onto one of the entry-card choices (WF03b). */
+function matchEntryChoice(message) {
+  const explicit = /入口|拿不准|按你推荐|你推荐|推荐的来/.test(message);
+  const shortHint = message.length <= 15 && /狮头|面具|声音|鼓/.test(message);
+  if (!explicit && !shortHint) return null;
+  if (/狮头|面具/.test(message)) return '狮头入口';
+  if (/声音|鼓/.test(message)) return '声音入口';
+  if (/师傅|醒狮队|里面的人/.test(message)) return '真实人物入口';
+  return '推荐入口';
+}
+
+/** Entry-specific adaptation of the first experience (WF09 战术性环境支持). */
+const ENTRY_ADAPT = {
+  '狮头入口': {
+    chosen: '狮头入口',
+    ack: '好，就从狮头入口进——面具类的东西孩子能直接看、摸、掂，这个入口很扎实。第一轮体验安排不变（还是去看真实训练），观察重点按狮头调整：',
+    focus: ['孩子最先凑近狮头的哪个部位', '有没有人想摸、想掂重量、想戴', '孩子对眼睛机关说了什么（记原话）'],
+    tail: '访谈卡建议让孩子优先问狮头的问题：眼睛为什么会眨、毛是什么做的、狮头重不重。',
+  },
+  '声音入口': {
+    chosen: '声音入口',
+    ack: '好，就从声音入口进——鼓点是全场都能参与的入口，门槛最低。第一轮体验安排不变（还是去看真实训练），观察重点按声音调整：',
+    focus: ['听到鼓声孩子是捂耳朵还是凑近', '谁开始跟着拍、跺脚、点头', '孩子问了什么关于声音的问题（记原话）'],
+    tail: '访谈卡建议让孩子优先问鼓的问题：鼓为什么有快有慢、打错了狮子会怎么样。',
+  },
+  '真实人物入口': {
+    chosen: '真实人物入口',
+    ack: '好，就从「醒狮队的人」这个入口进——真实人物最能引出真问题。第一轮体验安排不变（还是去看真实训练），观察重点按人调整：',
+    focus: ['孩子盯着谁看得最久', '孩子敢不敢靠近、敢不敢开口问', '孩子对师傅说了什么（记原话）'],
+    tail: '访谈卡整卡可用，建议孩子先问「你在狮子里面看得见路吗」。',
+  },
+  '推荐入口': {
+    chosen: '声音入口（按推荐）',
+    ack: '拿不准很正常，那按我的推荐先走声音入口——门槛最低、全场都能参与，现场再看孩子的反应换挡。观察重点：',
+    focus: ['听到鼓声孩子是捂耳朵还是凑近', '谁开始跟着拍、跺脚、点头', '停留最久的点在哪里'],
+    tail: '访谈卡先带着备用；如果孩子被狮头吸走了，就顺势换入口——跟着孩子走。',
+  },
+};
+
+/** WF03b confirmation: the chosen entry is acknowledged AND written to state. */
+function turnEntryChoice(state, choice) {
+  const adapt = ENTRY_ADAPT[choice];
+  return {
+    reply_markdown:
+      `${adapt.ack}\n\n- ${adapt.focus.join('\n- ')}\n\n${adapt.tail}\n\n这个选择我已经记进切口卡。其他安排不变——等你从现场回来。`,
+    question: null,
+    artifacts: [],
+    closure_loop: null,
+    state_delta: {
+      resource_entry_card: { ...(state.resource_entry_card || {}), chosen_entry: adapt.chosen, entry_observation_focus: adapt.focus },
+      completed_nodes: ['WF09'],
+    },
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace('from_zero', state.stage ?? 1, [
+      { id: 'WF03b', name: '资源意图确认与课程可能性启发', apply: `教师选定儿童入口：${adapt.chosen}` },
+      { id: 'WF09', name: '战术性环境支持', apply: '按所选入口调整观察重点与访谈优先级' },
+    ], ['教师资源意图优先'], `写入 resource_entry_card.chosen_entry=${adapt.chosen}；其余照旧等待现场回传`),
+  };
+}
+
+/** WF22 就地支持 while the round is out in the field — no fabricated progress. */
+function turnInPlaceSupport() {
+  return {
+    reply_markdown:
+      '就地支持，马上给——这些不需要等现场。\n\n**给家长的知会话术（可直接发班级群）**\n「本周我们计划带孩子去看一次醒狮队的日常训练（不是表演）。孩子只观察、不上场，全程有老师看护；对声音敏感的孩子可以捂耳朵或站远一点。回来后我们会请孩子画下看到的东西。」\n\n**访谈卡使用说明**\n- 出发前把「孩子可以问」的三个问题念给孩子听一遍就好，不要求背；\n- 现场谁想问谁问，问不出也不勉强——把没问出口的问题带回问题墙。\n\n课堂进展我不催也不编，等你带回孩子的真实反应。',
+    question: null,
+    artifacts: [],
+    closure_loop: null,
+    state_delta: { completed_nodes: ['WF22'] },
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace('from_zero', 1, [
+      { id: 'WF22', name: '素材与资源支持', apply: '等待期就地支持：家长知会话术＋访谈卡使用说明' },
+    ], ['输出闭环固定', '教师资源意图优先'], '本轮仅追加 WF22 节点记录，无课程状态写入（等待现场回传，就地支持）'),
+  };
+}
+
+const NUDGE_MARKER = /把进度摊开|我还在这里/;
+
+/** Status-report nudge: never repeats verbatim, never plays dead. */
+function turnAwaitNudge(history) {
+  const v = replyVariant(history, NUDGE_MARKER, 2);
+  const reply = v === 0
+    ? '不急，我先把进度摊开给你看。\n\n**已完成**：入口识别、资源课程化切口卡、适配性筛查、第一轮体验计划、访谈卡。\n**等你带回**：孩子的两三句原话、停留最久的点、几张照片。\n\n等待期间我也能就地帮忙：要不要一段给家长的知会话术？要不要把访谈卡改成孩子能看的图文版说明？说一声就给。'
+    : '我还在这里，随时接得住。如果是卡在准备环节——比如还没约到醒狮队、家长有顾虑、想先在班里做点铺垫——直接说，我出预案。如果已经去过现场了，哪怕只记得一句孩子的原话，也先发我这一句。';
+  return {
+    reply_markdown: reply,
+    question: null,
+    artifacts: [],
+    closure_loop: null,
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace('from_zero', 1, [
+      { id: 'WF05', name: '高频情境浸润', apply: v === 0 ? '状态机进度汇报＋两个就地支持选项' : '换一种问法接住教师，不重复上一轮' },
+    ], ['状态机优先', '输出闭环固定'], '本轮无状态写入（等待现场回传，就地支持）'),
+  };
+}
+
+/** optimize_existing wait: evidence-first, no fabricated 原话. */
+function turnOptimizeWait(history) {
+  const v = replyVariant(history, /先把档案的账摊开|行为线索入手/, 2);
+  const reply = v === 0
+    ? '不急，先把档案的账摊开：切口卡（已有主题回填）和适配性筛查都已入档，现在缺的只有一样——孩子的两三句原话。翻活动记录、问搭班老师、看活动照片旁的备注都可以。等待期间想先要问题墙卡片模板的文字稿，说一声就给。'
+    : '我还在这里。原话一时找不齐的话，也可以从行为线索入手：告诉我这两周孩子最常聚在哪个角落、反复摆弄什么材料，我们先用行为证据把方向粗对一下，原话之后再补。';
+  return {
+    reply_markdown: reply,
+    question: null,
+    artifacts: [],
+    closure_loop: null,
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace('optimize_existing', 1, [
+      { id: 'WF06', name: '显性化表征已有经验', apply: '等待儿童原话回收，不虚构证据' },
+    ], ['证据优先', '状态机优先'], '本轮无状态写入（等待儿童原话回传，就地支持）'),
+  };
+}
+
+/** story_export wait: gaps stay honest, point to where 原话 can be found. */
+function turnStoryWait(history) {
+  const v = replyVariant(history, /想不全很正常|视频里往往就有/, 2);
+  const reply = v === 0
+    ? '想不全很正常，不用硬凑。已入账的材料不会丢：过程照片、作品涂鸦、采访视频，缺口清单也都在。原话可以慢慢找——问搭班老师、问家长，或者翻一翻采访视频，孩子对着镜头讲的话就是最好的原话。'
+    : '再给你一条捷径：采访视频里往往就有现成的原话。挑一段视频听一遍，把孩子讲的一两句敲给我就行——有这一两句，叙事主线就能立起来。';
+  return {
+    reply_markdown: reply,
+    question: null,
+    artifacts: [],
+    closure_loop: null,
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace('story_export', 0, [
+      { id: 'WF28', name: '材料完整性检查', apply: '缺口保持如实——不虚构原话，指路去找' },
+    ], ['证据优先', '状态机优先'], '本轮无状态写入（等待儿童原话回传，就地支持）'),
+  };
+}
+
+/** mid_course wait: the 三句聚焦反馈 can arrive one sentence at a time. */
+function turnMidCourseWait(history) {
+  const v = replyVariant(history, /三句话随时补|先回我一句/, 2);
+  const reply = v === 0
+    ? '不着急，三句话随时补，不用一次说全：孩子们做了什么、谁的表现最让你在意、你现在最想判断什么。哪怕只发第一句，我也能先接住。'
+    : '我还在这里。现场太忙的话，先回我一句就行：昨天具体卡在哪一步？有了这一句，卡壳复盘就能开工。';
+  return {
+    reply_markdown: reply,
+    question: null,
+    artifacts: [],
+    closure_loop: null,
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace('mid_course', 0, [
+      { id: 'WF20', name: '卡壳复盘', apply: '等待三句聚焦反馈，先不下判断' },
+    ], ['证据优先', '状态机优先'], '本轮无状态写入（等待三句聚焦反馈，就地支持）'),
+  };
+}
+
+/** material_support second-nudge variant: optional add-ons, no repetition. */
+function turnMaterialVariantB(state) {
+  return {
+    reply_markdown:
+      '这版内容不动，再给你两个可选加项：\n\n一、**问题墙版**——把三个问题放大成墙面标题，下面留白让孩子把带回的答案画上去；\n二、**店主访谈提纲版**——三个问题换成孩子当面问摊主的口吻，配一句给带队老师的提醒。\n\n要哪一版说一声，文字稿马上给。',
+    question: null,
+    artifacts: [],
+    closure_loop: null,
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace('material_support', state.stage ?? 0, [
+      { id: 'WF22', name: '素材与资源支持', apply: '追加两个可选加项，不重复上一轮定稿' },
+    ], ['文化可能性后台提示', '输出闭环固定'], '本轮无状态写入（素材支持不动课程状态）'),
+  };
+}
+
+/** material_support third-nudge variant: hand back the initiative briefly. */
+function turnMaterialVariantC(state) {
+  return {
+    reply_markdown:
+      '收到。这份素材随时可以继续调整——直接说要改哪里（口吻、问题数量、加访谈提纲版）就行。孩子把东西带回来之后，也随时把两三件发我看看，我们把它们接进儿童问题池。',
+    question: null,
+    artifacts: [],
+    closure_loop: null,
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace('material_support', state.stage ?? 0, [
+      { id: 'WF22', name: '素材与资源支持', apply: '保持素材可调整，等待孩子带回的真实反应' },
+    ], ['文化可能性后台提示', '输出闭环固定'], '本轮无状态写入（素材支持不动课程状态）'),
   };
 }

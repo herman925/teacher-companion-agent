@@ -13,9 +13,9 @@ import { applyDelta, createInitialState, STAGE_NAMES } from '../engine.mjs';
  * @param {string} message the teacher's message
  * @returns {Object} the same "turn" event shape serve.mjs emits
  */
-export function runLocalMockTurn(state, history, message) {
+export function runLocalMockTurn(state, history, message, opts = {}) {
   const cur = state && state.course_id ? state : createInitialState(`course-${Date.now()}`);
-  const payload = mockTurn(cur, history || [], message);
+  const payload = mockTurn(cur, history || [], message, opts);
   const parsed = parseTurn(payload);
   const violations = parsed.turn ? validateTurn(parsed.turn, cur) : parsed.violations;
   const blocking = violations.filter((v) => v.action === 'block');

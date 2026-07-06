@@ -39,7 +39,7 @@
 
 /**
  * @typedef {Object} Violation
- * @property {"closure_missing"|"closure_incomplete"|"multi_question"|"question_no_examples"|"fabrication"|"adult_slogan"|"illegal_stage_jump"|"bad_delta"|"contract_parse"} kind
+ * @property {"closure_missing"|"closure_incomplete"|"multi_question"|"question_no_examples"|"fabrication"|"adult_slogan"|"illegal_stage_jump"|"node_prerequisite"|"bad_delta"|"contract_parse"} kind
  * @property {string} detail
  * @property {"block"|"strip"} action  block → regenerate (L4); strip → auto-repair + log.
  */

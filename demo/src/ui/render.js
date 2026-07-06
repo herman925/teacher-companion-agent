@@ -5,7 +5,7 @@
 // JSDoc-typed ESM, no build step (ADR-0001). Typedefs: demo/src/types.mjs.
 
 import { STAGE_NAMES } from '../engine.mjs';
-import { WF_NODES } from '../wf-nodes.mjs';
+import { WF_NODES, NODE_PREREQS } from '../wf-nodes.mjs';
 
 // ---------------------------------------------------------------- sanitizer
 
@@ -456,11 +456,35 @@ export function renderDebug(container, info) {
       stageBox.append(el('div', 'wf-map-stage-title', STAGE_NAMES[stage]));
       for (const node of WF_NODES.filter((n) => n.stage === stage)) {
         const isDone = done.has(node.id);
-        stageBox.append(el('div', 'wf-map-node' + (isDone ? ' done' : ''), `${isDone ? '✓' : '·'} ${node.id} ${node.name}`));
+        const prereqs = NODE_PREREQS[node.id] || [];
+        const hint = !isDone && prereqs.length ? ` ←${prereqs.join(' ')}` : '';
+        stageBox.append(el('div', 'wf-map-node' + (isDone ? ' done' : ''), `${isDone ? '✓' : '·'} ${node.id} ${node.name}${hint}`));
       }
       map.append(stageBox);
     }
     container.append(debugSection('工作流地图', map));
+  }
+
+  // Dev-mode prompt visibility: full system prompt for this turn (if captured).
+  if (ev?.prompt_debug) {
+    const pd = ev.prompt_debug;
+    const box = el('div');
+    const meta = [
+      '模块 ' + (pd.stage_module ?? '—'),
+      String((pd.system ?? '').length) + ' 字符',
+      'history ' + (pd.history_count ?? 0),
+      '档案注入 ' + (pd.profile_injected ? '是' : '否'),
+      pd.source ?? '',
+    ].filter(Boolean).join(' · ');
+    box.append(el('div', 'prompt-meta', meta));
+    if (pd.note) box.append(el('div', 'prompt-note', pd.note));
+    const promptDetails = el('details');
+    promptDetails.append(el('summary', '', '完整 system 提示词（展开）'));
+    const promptPre = pre(pd.system ?? '');
+    promptPre.classList.add('prompt-pre');
+    promptDetails.append(promptPre);
+    box.append(promptDetails);
+    container.append(debugSection('提示词（本轮）', box));
   }
 
   if (ev) {

@@ -66,3 +66,32 @@ export const PRINCIPLES = [
   '文化可能性后台提示',
   '输出闭环固定',
 ];
+
+/**
+ * Conservative node dependency table (partial order), enforced delta-aware in
+ * engine.applyDelta: marking a node completed requires its prerequisites in
+ * state.completed_nodes OR in the same delta (set semantics — array order
+ * inside one delta does not matter). Only orderings clearly required by the
+ * V1.3 spec are listed: a false block is worse than a gap.
+ * NOTE: WF20 卡壳复盘 deliberately has NO WF19 prerequisite — 过程中续聊 enters
+ * mid-stream with an empty archive: the stuck attempt happened offline and
+ * was never recorded, and 卡壳复盘 must still be able to run.
+ * @type {Record<string, string[]>}
+ */
+export const NODE_PREREQS = {
+  WF03b: ['WF01'],
+  WF07: ['WF06'],
+  WF07b: ['WF07'],
+  WF08: ['WF07'],
+  WF10: ['WF08'],
+  WF15: ['WF10'],
+  WF19: ['WF18'],
+  WF20b: ['WF20'],
+  WF21: ['WF20'],
+  WF24: ['WF15'],
+  WF29: ['WF28'],
+  WF30: ['WF29'],
+  WF31: ['WF29'],
+  WF31b: ['WF29'],
+  WF32: ['WF29'],
+};

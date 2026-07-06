@@ -241,3 +241,70 @@ test('findClaimSentences: catches realized claims, skips hedged ones', () => {
   assert.equal(claims.length, 1);
   assert.ok(claims[0].includes('爱上'));
 });
+
+// ---------- engine: delta-aware stage gates (both directions) ----------
+
+test('applyDelta: stage advances when the SAME delta supplies the prerequisites (any key order)', () => {
+  const s = createInitialState('c1');
+  const { state, violations } = applyDelta(s, {
+    stage: 1, // stage listed FIRST on purpose — gate must see the merged candidate
+    resource_entry_card: { original_theme: '龙舟' },
+    theme_fit_level: 'theme_inquiry',
+  });
+  assert.equal(state.stage, 1);
+  assert.equal(violations.length, 0, `no violations: ${JSON.stringify(violations)}`);
+});
+
+test('applyDelta: stage 1→2 legal when evidence + driving question arrive in the same delta', () => {
+  const s = createInitialState('c1');
+  s.stage = 1;
+  s.resource_entry_card = { original_theme: '龙舟' };
+  s.theme_fit_level = 'theme_inquiry';
+  const { state, violations } = applyDelta(s, {
+    children_evidence: [{ id: 'ev-n1', kind: 'child_words', content: '为什么要有鼓？', recorded_at: 'r1' }],
+    driving_question: { candidates: ['我们怎样做一条会浮的小龙舟？'] },
+    stage: 2,
+  });
+  assert.equal(state.stage, 2);
+  assert.equal(violations.filter((v) => v.kind === 'illegal_stage_jump').length, 0);
+});
+
+test('applyDelta: stage still stripped when prerequisites are missing from state AND delta', () => {
+  const s = createInitialState('c1');
+  const { state, violations } = applyDelta(s, { stage: 1 });
+  assert.equal(state.stage, 0);
+  assert.ok(violations.some((v) => v.kind === 'illegal_stage_jump'));
+});
+
+test('validateTurn: stage advisory is delta-aware both ways', () => {
+  const clean = goodTurn({ state_delta: { resource_entry_card: { original_theme: '龙舟' }, theme_fit_level: 'theme_inquiry', stage: 1 } });
+  assert.equal(validateTurn(clean, createInitialState('c1')).filter((v) => v.kind === 'illegal_stage_jump').length, 0);
+  const bad = goodTurn({ state_delta: { stage: 1 } });
+  assert.ok(validateTurn(bad, createInitialState('c1')).some((v) => v.kind === 'illegal_stage_jump'));
+});
+
+// ---------- engine: node prerequisite check (partial order, both directions) ----------
+
+test('node prereq: fires when WF08 is marked without WF07 in state or delta', () => {
+  const s = createInitialState('c1');
+  const { state, violations } = applyDelta(s, { completed_nodes: ['WF08'], theme_fit_level: 'short_activity' });
+  assert.ok(!state.completed_nodes.includes('WF08'), 'WF08 stripped');
+  assert.equal(state.theme_fit_level, 'short_activity', 'rest of the delta still applies');
+  assert.ok(violations.some((v) => v.kind === 'node_prerequisite' && v.action === 'strip' && v.detail.includes('WF07')));
+});
+
+test('node prereq: silent when the prerequisite arrives in the SAME delta (set semantics, any array order)', () => {
+  const s = createInitialState('c1');
+  s.completed_nodes = ['WF06'];
+  const { state, violations } = applyDelta(s, { completed_nodes: ['WF08', 'WF07'] });
+  assert.ok(state.completed_nodes.includes('WF07') && state.completed_nodes.includes('WF08'));
+  assert.equal(violations.filter((v) => v.kind === 'node_prerequisite').length, 0);
+});
+
+test('node prereq: satisfied by completed_nodes recorded in earlier turns', () => {
+  const s = createInitialState('c1');
+  s.completed_nodes = ['WF28'];
+  const { state, violations } = applyDelta(s, { completed_nodes: ['WF29', 'WF31'] });
+  assert.ok(state.completed_nodes.includes('WF29') && state.completed_nodes.includes('WF31'));
+  assert.equal(violations.filter((v) => v.kind === 'node_prerequisite').length, 0);
+});

@@ -126,9 +126,16 @@ export function validateTurn(turn, state) {
     }
   }
 
-  // 5. Stage-gate legality (advisory here; engine strips on apply).
+  // 5. Stage-gate legality (advisory here; engine strips on apply). Delta-aware:
+  // prerequisites supplied by this SAME delta count toward the gate, mirroring
+  // the engine's merged-candidate check (and rule 3's newly-provided evidence).
   if (typeof turn.state_delta?.stage === 'number') {
-    const err = stageGateError(state, turn.state_delta.stage);
+    const preview = { ...state };
+    for (const [key, value] of Object.entries(turn.state_delta)) {
+      if (key === 'stage') continue;
+      preview[key] = Array.isArray(value) && Array.isArray(preview[key]) ? [...preview[key], ...value] : value;
+    }
+    const err = stageGateError(preview, turn.state_delta.stage);
     if (err) violations.push({ kind: 'illegal_stage_jump', detail: err, action: 'strip' });
   }
 
