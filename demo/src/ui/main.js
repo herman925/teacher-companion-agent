@@ -8,7 +8,7 @@ import { createInitialState, STAGE_NAMES } from '../engine.mjs';
 import {
   renderTeacherMessage, renderAgentMessage, renderArtifactCard,
   renderQuestionBlock, renderClosureCard, renderAwaitingNote,
-  renderErrorNotice, renderDebug, el,
+  renderErrorNotice, renderDebug, renderWfTrace, el,
 } from './render.js';
 import { messageIn, cardIn, chipsIn, closureIn, fadeIn } from './motion.js';
 import { runLocalMockTurn } from './local-turn.mjs';
@@ -23,6 +23,7 @@ const LS = {
   models: 'cst.models',
   custom: 'cst.custom',
   apiBase: 'cst.apiBase',
+  devmode: 'cst.devmode',
 };
 
 function load(key, fallback) {
@@ -54,6 +55,8 @@ let apiKeys = load(LS.keys, {});
 let modelChoices = load(LS.models, {});
 /** OpenAI-compatible custom endpoint config. */
 let customCfg = { baseURL: '', model: '', key: '', label: '', ...load(LS.custom, {}) };
+/** 开发者模式: show wf_trace annotations + workflow map details. */
+let devMode = Boolean(load(LS.devmode, false));
 /** Optional proxy base URL (e.g. an Alibaba FC endpoint). Empty = same-origin. */
 let apiBase = (load(LS.apiBase, '') || '').replace(/\/+$/, '');
 /** Whether a proxy answered /api/health (set by initProviders). */
@@ -92,7 +95,9 @@ function providerInfo(id) {
 const STARTERS = [
   '我想带中班孩子做醒狮',
   '我们班在做龙舟主题，想优化',
+  '昨天孩子们做狮头卡住了，想聊聊下一步',
   '我有一堆照片想整理成课程故事',
+  '我想要一份趁墟的亲子调查素材',
 ];
 
 // ------------------------------------------------------------ dom handles
@@ -200,6 +205,8 @@ function renderTurnGroup(ev, opts = {}) {
     onBadgeClick: () => { refreshDebug(); openDrawer(debugDrawer); },
   });
   group.append(msg);
+
+  if (devMode && turn.wf_trace) group.append(renderWfTrace(turn.wf_trace));
 
   const cards = [];
   if (turn.artifacts?.length) {
@@ -657,9 +664,29 @@ function customSection() {
   return details;
 }
 
+/** 开发者模式 toggle: persists + replays the transcript so annotations (dis)appear. */
+function devModeField() {
+  const field = el('div', 'settings-field');
+  const label = el('label', 'settings-label devmode-label');
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.id = 'devmode-toggle';
+  box.checked = devMode;
+  box.addEventListener('change', () => {
+    devMode = box.checked;
+    save(LS.devmode, devMode);
+    replayTranscript();
+  });
+  label.htmlFor = box.id;
+  label.append(box, document.createTextNode('开发者模式（显示工作流节点与状态机信息）'));
+  field.append(label);
+  return field;
+}
+
 /** Rebuild the provider config sections; open the selected provider's one. */
 function buildProviderSections() {
   providerBox.replaceChildren();
+  providerBox.append(devModeField());
   const { field: apiField } = settingsField(
     '服务器地址（可选）',
     'api-base',

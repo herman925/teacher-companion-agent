@@ -4,6 +4,9 @@
 // subset (bold/italic/headings/lists/breaks) is applied. No raw HTML passthrough.
 // JSDoc-typed ESM, no build step (ADR-0001). Typedefs: demo/src/types.mjs.
 
+import { STAGE_NAMES } from '../engine.mjs';
+import { WF_NODES } from '../wf-nodes.mjs';
+
 // ---------------------------------------------------------------- sanitizer
 
 const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -194,6 +197,11 @@ const FIELD_LABELS = {
   text: '问题',
   recommended: '推荐',
   why: '理由',
+  chapters: '章节骨架',
+  chapter: '章节',
+  content: '内容',
+  available: '已有材料',
+  narrative_spine: '叙事主线',
 };
 
 /** Strings carrying these markers render as provisional (待现场确认, §4). */
@@ -360,6 +368,32 @@ export function renderErrorNotice(message, onRetry) {
   return box;
 }
 
+// ------------------------------------------------- developer mode: wf_trace
+
+/**
+ * Dev-facing workflow annotation under an agent message (开发者模式 only).
+ * Text-only rendering — all values pass through textContent, no innerHTML.
+ * @param {{mode?: string, stage?: number, nodes?: Array<{id: string, name?: string, apply?: string}>, principles?: string[], state_notes?: string}} wfTrace
+ */
+export function renderWfTrace(wfTrace) {
+  const details = el('details', 'wf-trace');
+  const ids = (wfTrace.nodes ?? []).map((n) => n?.id).filter(Boolean).join(' ');
+  details.append(el('summary', '', `阶段${wfTrace.stage ?? '—'} · ${ids || '（无节点）'}`));
+  const body = el('div', 'wf-trace-body');
+  if (wfTrace.mode) body.append(el('div', 'wf-trace-line', `模式：${wfTrace.mode}`));
+  for (const node of wfTrace.nodes ?? []) {
+    if (!node) continue;
+    const line = el('div', 'wf-trace-node');
+    line.append(el('span', 'wf-trace-id', `${node.id ?? ''} ${node.name ?? ''}`.trim()));
+    if (node.apply) line.append(document.createTextNode(` — ${node.apply}`));
+    body.append(line);
+  }
+  if (wfTrace.principles?.length) body.append(el('div', 'wf-trace-line', `原则：${wfTrace.principles.join('、')}`));
+  if (wfTrace.state_notes) body.append(el('div', 'wf-trace-line', `状态：${wfTrace.state_notes}`));
+  details.append(body);
+  return details;
+}
+
 // -------------------------------------------------------------- debug drawer
 
 function debugSection(heading, node) {
@@ -414,6 +448,19 @@ export function renderDebug(container, info) {
     details.append(el('summary', '', 'course_state（展开）'));
     details.append(pre(info.state));
     container.append(debugSection('course_state', details));
+
+    const map = el('div', 'wf-map');
+    const done = new Set(info.state.completed_nodes || []);
+    for (let stage = 0; stage <= 5; stage += 1) {
+      const stageBox = el('div', 'wf-map-stage' + (info.state.stage === stage ? ' current' : ''));
+      stageBox.append(el('div', 'wf-map-stage-title', STAGE_NAMES[stage]));
+      for (const node of WF_NODES.filter((n) => n.stage === stage)) {
+        const isDone = done.has(node.id);
+        stageBox.append(el('div', 'wf-map-node' + (isDone ? ' done' : ''), `${isDone ? '✓' : '·'} ${node.id} ${node.name}`));
+      }
+      map.append(stageBox);
+    }
+    container.append(debugSection('工作流地图', map));
   }
 
   if (ev) {

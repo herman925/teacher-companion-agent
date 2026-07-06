@@ -2,6 +2,13 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-06 (later) — Branching mock, 开发者模式, hosting
+
+- Mock redesigned as a state-machine with **five entry flows** (WF01 entry recognition → 从零陪跑 / 已有主题优化 / 过程中续聊 / 课程故事整理 / 素材支持), each walking different V1.3 nodes; every turn passes the runtime harness; story flow reaches stage 5 only after real evidence; mid-course honestly stays at stage 0 (0→3 jump is illegal) and says so.
+- **开发者模式** toggle (settings): per-turn `wf_trace` annotation (nodes + principles + state notes) + a stage 0-5 工作流地图 in the debug drawer with ✓ on `completed_nodes`. New `demo/src/wf-nodes.mjs` catalog (42 nodes).
+- Demo runs fully client-side in 演示模式 (`demo/src/ui/local-turn.mjs`) → live on GitHub Pages (Chao0s/teacher-companion-agent, Actions deploy of `demo/`). Real providers need the proxy: `s.yaml` + [docs/DEPLOY.md](docs/DEPLOY.md) (Alibaba FC Options A/B; Tencent CloudBase Run Option C — aligns with the WeChat-mini-app direction). UI has a 服务器地址 field; no-backend real-model turns degrade to labelled 模拟演示.
+- Repo published: `github.com/Chao0s/teacher-companion-agent` (public) + real fork `herman925/teacher-companion-agent`. A 12-page wiki is drafted (pending first-page init on GitHub, then push).
+
 ## 2026-07-06 — Launcher, model discovery config, compliance path, knowledge graph
 
 - `launch-demo.bat`: double-click launcher (Node check → server → browser; optional port arg).

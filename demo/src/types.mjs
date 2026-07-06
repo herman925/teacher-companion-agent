@@ -34,6 +34,7 @@
  * @property {Object} state_delta        Partial course_state patch (engine validates/applies).
  * @property {string[]} evidence_refs    Ids into course_state.children_evidence.
  * @property {boolean} round_complete
+ * @property {Object|null} [wf_trace]  Dev-facing workflow trace (passed through unvalidated; 开发者模式 UI).
  */
 
 /**

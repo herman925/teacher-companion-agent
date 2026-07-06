@@ -26,7 +26,7 @@ npm run gate       # run the full dev-harness gate
 npm test           # harness-line tests
 ```
 
-Demo (once built): `node demo/serve.mjs`, open the printed URL, paste a MiniMax/GLM/Kimi API key in the settings drawer.
+Demo: `node demo/serve.mjs`, open the printed URL. 演示模式 runs fully offline (five entry flows — from-zero, optimize-existing, mid-course, course-story, material support — each walking different workflow nodes). For real models, deploy the proxy ([docs/DEPLOY.md](docs/DEPLOY.md)), set 服务器地址 in settings, and paste a MiniMax/GLM/Kimi API key. A 开发者模式 toggle annotates every turn with the V1.3 nodes and principles it applies, plus a stage 0-5 workflow map in the debug drawer.
 
 ## Status
 

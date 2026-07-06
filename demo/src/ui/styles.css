@@ -724,3 +724,65 @@ html, body {
   .drawer { transition: none; }
   .status-caret { animation: none; opacity: 0.6; }
 }
+
+/* ------------------------------------------- developer mode: wf_trace notes */
+/* Dev-facing workflow annotations under agent messages — subdued, text-only. */
+
+.wf-trace {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-faded);
+  border-left: 2px solid var(--border-warm);
+  padding: 4px 0 4px calc(var(--sp) * 1.5);
+  margin-top: var(--sp);
+}
+
+.wf-trace summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-faded);
+}
+
+.wf-trace summary::-webkit-details-marker { display: none; }
+.wf-trace summary::before { content: "▸ "; }
+.wf-trace[open] summary::before { content: "▾ "; }
+.wf-trace[open] summary { margin-bottom: 4px; }
+
+.wf-trace-node { margin: 2px 0; }
+.wf-trace-id { font-family: var(--font-mono); color: var(--green); }
+.wf-trace-line { margin-top: 4px; }
+
+/* settings drawer: developer-mode toggle */
+.devmode-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.devmode-label input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--green);
+}
+
+/* debug drawer: 工作流地图 (stays in the quarantined slate world) */
+.wf-map-stage { margin-bottom: calc(var(--sp) * 1.5); padding-left: var(--sp); border-left: 2px solid transparent; }
+.wf-map-stage.current { border-left-color: #7EE787; }
+
+.wf-map-stage-title {
+  color: #8B949E;
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+
+.wf-map-stage.current .wf-map-stage-title { color: #7EE787; }
+
+.wf-map-node { color: #6E7681; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wf-map-node.done { color: var(--slate-text); }

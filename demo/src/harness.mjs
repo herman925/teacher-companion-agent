@@ -42,6 +42,8 @@ export function parseTurn(raw) {
     state_delta: obj.state_delta && typeof obj.state_delta === 'object' ? obj.state_delta : {},
     evidence_refs: Array.isArray(obj.evidence_refs) ? obj.evidence_refs : [],
     round_complete: Boolean(obj.round_complete),
+    // Dev-facing workflow trace — passed through unvalidated (developer mode UI).
+    wf_trace: obj.wf_trace && typeof obj.wf_trace === 'object' ? obj.wf_trace : null,
   };
   return { turn, violations };
 }
