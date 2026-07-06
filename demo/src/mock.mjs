@@ -90,8 +90,14 @@ function replyVariant(history, markerRe, count) {
 function fromZeroFlow(state, history, message) {
   if (!state.resource_entry_card) return turnEntryCard();
   if (!(state.children_evidence || []).length) return turnAwaitOrIngest(state, history, message);
-  if (!(state.cycle_history || []).length) return turnCycleTask();
-  return turnStoryFragment(state);
+  if (!(state.driving_question || {}).text) return turnPickDrivingQuestion(state, message);
+  if (!state.story_materials && /课程故事|故事/.test(message)) return turnStoryFragment(state);
+  if ((state.cycle_history || []).length < 2) {
+    if (hasFieldFeedback(message)) return turnSecondCycleReview();
+    if (wantsInPlaceSupport(message)) return turnInPlaceSupport();
+    return turnCycleWaitNudge(history);
+  }
+  return turnHorizon('from_zero', state, history);
 }
 
 function turnIntentQuestion(message, opts = {}) {
@@ -295,57 +301,6 @@ function turnIngestFeedback() {
   };
 }
 
-function turnCycleTask() {
-  return {
-    reply_markdown:
-      '好，那我们跟着孩子的选择走。先回应你上轮最关心的问题：**是的，可以进入行动尝试了**——证据是孩子已经从「看和问」走到「自发模仿」（男孩A他们的马步），这是典型的尝试探究前兆。\n\n下面是第一轮协作行动的小任务卡。记住：这轮先不追求像不像，重要的是让孩子自己决定「我们的小醒狮」怎么排。',
-    question: null,
-    artifacts: [
-      {
-        type: 'cycle_task',
-        title: '协作行动 · 第1轮：我们的小醒狮怎么排？',
-        data: {
-          child_question: '把核心问题抛给孩子：「要让弟弟妹妹看懂又不害怕，我们的醒狮要有什么？」',
-          flow: ['孩子头脑风暴（全收不筛）', '贴纸投票选第一个要排的段落', '两人一组试「一头一尾」配合', '排练一小段并录像'],
-          materials: '大布/床单（狮被替代）、纸箱（狮头雏形）、鼓或塑料桶',
-          observation_focus: ['孩子怎么分工、怎么协商', '卡住的点（配合？节奏？）', '谁提出了新办法'],
-          teacher_role: '提供材料和安全，不示范「标准动作」，孩子卡住先让他们自己商量',
-        },
-      },
-    ],
-    closure_loop: {
-      do_now: '把核心问题抛给孩子，收集所有方案后让孩子投票选一段先排',
-      materials: '方案记录表和投票贴纸（下轮我可以生成打印版）',
-      bring_back: '孩子的方案原话和投票结果；排练中的1个卡点；三类儿童观察；三句聚焦反馈（第三句示例：「孩子的配合卡点该介入吗？」「要不要请师傅来看一次？」）',
-      i_will: '和你一起把卡点变成下一轮探究，并判断是否出现项目化信号',
-    },
-    state_delta: {
-      driving_question: {
-        text: '我们怎样排一段自己的小醒狮，让弟弟妹妹们看懂并且不害怕？',
-        candidates: ['我们怎样排一段自己的小醒狮，让弟弟妹妹们看懂并且不害怕？'],
-        validation: { child_appropriate: true, authentic: true, actionable: true, public_relevance: true, cultural_possibility: true },
-        chosen_by_teacher: true,
-      },
-      goals_assessment_axis: {
-        core_understanding: '幼儿能够逐渐理解：一场让别人看懂的表演，需要商量、分工和反复练习',
-        cultural_ladder_target: 'affection',
-        grasps: { audience: '小班弟弟妹妹', product: '一段孩子自己排的小醒狮', standards: ['弟弟妹妹看懂了吗', '有没有人害怕', '我们自己想再改哪里'] },
-      },
-      cycle_history: [{ round: 1, phase: 'collect_ideas', sub_question: '我们的小醒狮要有什么？', agent_judgment: '进入行动尝试' }],
-      child_learning_stage: 'trial_inquiry',
-      completed_nodes: ['WF10', 'WF17', 'WF18'],
-      stage: 2,
-    },
-    evidence_refs: ['ev-behavior-1'],
-    round_complete: true,
-    wf_trace: trace('from_zero', 1, [
-      { id: 'WF10', name: '核心概念性理解目标', apply: '目标轴心先立核心理解（轻量版），四维随后展开' },
-      { id: 'WF17', name: '大问题拆解', apply: '核心驱动问题拆成本轮子问题：小醒狮要有什么' },
-      { id: 'WF18', name: '收集儿童解决方案', apply: '任务卡：头脑风暴全收不筛，投票选段落' },
-    ], ['儿童真实反应驱动调整', '阶段判断优先', '输出闭环固定'], '写入 driving_question 定稿与 goals_assessment_axis；stage 提议 1→2'),
-  };
-}
-
 function turnStoryFragment(state) {
   return {
     reply_markdown:
@@ -391,7 +346,8 @@ function optimizeFlow(state, history, message) {
     if (/说|问|「|原话/.test(message) && message.length > 10) return turnOptimizeEvidence();
     return turnOptimizeWait(history);
   }
-  return turnOptimizeNext();
+  if (!(state.driving_question || {}).text) return turnOptimizePick(state, message);
+  return turnHorizon('optimize_existing', state, history);
 }
 
 function turnOptimizeEntry() {
@@ -548,22 +504,6 @@ function turnOptimizeEvidence() {
   };
 }
 
-function turnOptimizeNext() {
-  return {
-    reply_markdown:
-      '目标与评估轴心可以开动了：先把核心概念性理解目标定下来，四维目标和 GRASPS 表现性评估随后展开。等孩子选定驱动问题，回来告诉我一声就行。',
-    question: null,
-    artifacts: [],
-    closure_loop: null,
-    state_delta: {},
-    evidence_refs: [],
-    round_complete: false,
-    wf_trace: trace('optimize_existing', 2, [
-      { id: 'WF10', name: '核心概念性理解目标', apply: '下一步：以儿童证据为底定核心理解目标' },
-    ], ['阶段判断优先'], '等待教师带回孩子对驱动问题的选择，不抢跑'),
-  };
-}
-
 // ================================================== 课程故事整理 story_export
 
 function storyFlow(state, history, message) {
@@ -573,7 +513,13 @@ function storyFlow(state, history, message) {
     if (/说|「|原话/.test(message)) return turnStorySpine();
     return turnStoryWait(history);
   }
-  return turnStoryVersion();
+  const delivered = (state.completed_nodes || []).includes('WF30');
+  if (delivered && /顺序|换.*原话|换章眼|调整/.test(message)) return turnStoryAdjust(state, history);
+  if (!delivered) {
+    if (!(state.story_materials || {}).export_version) return turnStoryVersion(state, message);
+    return turnStoryExpand(state); // whatever comes next, deliver what was promised
+  }
+  return turnHorizon('story_export', state, history);
 }
 
 function turnStoryEntry() {
@@ -683,23 +629,6 @@ function turnStorySpine() {
   };
 }
 
-function turnStoryVersion() {
-  return {
-    reply_markdown:
-      '好，就按这个版本来。文字稿我可以按四章骨架直接展开；图文排版和多版本导出在真实使用中会给你可下载的文件，这个演示先到文字结构为止。\n\n想调整章节顺序或换章眼原话，随时说。',
-    question: null,
-    artifacts: [],
-    closure_loop: null,
-    state_delta: { completed_nodes: ['WF30', 'WF32'] },
-    evidence_refs: [],
-    round_complete: false,
-    wf_trace: trace('story_export', 5, [
-      { id: 'WF30', name: '图文结构生成', apply: '按选定版本排章节与图文位置' },
-      { id: 'WF32', name: '多版本导出', apply: '演示中以文字结构代替可下载文件' },
-    ], ['输出闭环固定'], '记录已选版本的导出节点；stage 保持5'),
-  };
-}
-
 // ==================================================== 过程中续聊 mid_course
 
 function midCourseFlow(state, history, message) {
@@ -707,7 +636,11 @@ function midCourseFlow(state, history, message) {
     if (/卡|试|做|说|问|指挥|活跃/.test(message) && message.length > 15) return turnMidCourseReview();
     return turnMidCourseWait(history);
   }
-  return turnMidCourseNext();
+  if ((state.cycle_history || []).length < 2) {
+    if (hasFieldFeedback(message)) return turnMidCourseSecond();
+    return turnMidCourseHold(history);
+  }
+  return turnHorizon('mid_course', state, history);
 }
 
 function turnMidCourseEntry() {
@@ -786,29 +719,14 @@ function turnMidCourseReview() {
   };
 }
 
-function turnMidCourseNext() {
-  return {
-    reply_markdown:
-      '收到。带着各组的固定办法和原话回来，我们再一起判断有没有项目化信号——如果多个组开始主动改进自己的办法，这个卡点就可能长成一个真项目。',
-    question: null,
-    artifacts: [],
-    closure_loop: null,
-    state_delta: {},
-    evidence_refs: [],
-    round_complete: false,
-    wf_trace: trace('mid_course', 0, [
-      { id: 'WF21', name: '下一轮循环与项目化信号提醒', apply: '等待各组结果，再判断项目化信号' },
-    ], ['儿童真实反应驱动调整'], '不写入状态；等待现场反馈回传'),
-  };
-}
-
 // ================================================= 素材支持 material_support
 
 function materialFlow(state, history) {
-  const v = replyVariant(history, /定稿要点|可选加项|随时把两三件/, 3);
-  if (v === 1) return turnMaterialVariantB(state);
-  if (v === 2) return turnMaterialVariantC(state);
-  return turnMaterialDeliver(state);
+  const n = (history || []).filter((m) => m && m.role === 'assistant' && /定稿要点|可选加项|随时把两三件/.test(String(m.content || ''))).length;
+  if (n === 0) return turnMaterialDeliver(state);
+  if (n === 1) return turnMaterialVariantB(state);
+  if (n === 2) return turnMaterialVariantC(state);
+  return turnHorizon('material_support', state, history);
 }
 
 function turnMaterialEntry(message) {
@@ -1051,5 +969,386 @@ function turnMaterialVariantC(state) {
     wf_trace: trace('material_support', state.stage ?? 0, [
       { id: 'WF22', name: '素材与资源支持', apply: '保持素材可调整，等待孩子带回的真实反应' },
     ], ['文化可能性后台提示', '输出闭环固定'], '本轮无状态写入（素材支持不动课程状态）'),
+  };
+}
+
+// ===================================== round-3 turns: 每条线走到真正的交付
+
+/**
+ * from_zero: the teacher picks a driving-question candidate — ANY answer is
+ * accepted (眼睛/机关 wording selects the engineering candidate, everything
+ * else the performance candidate). Writes the choice + WF10 goals sketch +
+ * the first cycle task; stage 1→2 legally in the same delta.
+ */
+function turnPickDrivingQuestion(state, message) {
+  const eye = /眨|眼睛|机关|会眨眼/.test(message);
+  const Q_PERF = '我们怎样排一段自己的小醒狮，让弟弟妹妹们看懂并且不害怕？';
+  const Q_EYE = '我们怎样弄清楚狮头的眼睛是怎么眨的，并做一个会眨眼的狮头？';
+  const chosen = eye ? Q_EYE : Q_PERF;
+  const core = eye
+    ? '幼儿能够逐渐理解：会动的东西背后有结构和机关，可以观察、猜想、再动手验证'
+    : '幼儿能够逐渐理解：一场让别人看懂的表演，需要商量、分工和反复练习';
+  const grasps = eye
+    ? { audience: '全班同伴和来访的家长', product: '一个孩子自己做的会眨眼的纸狮头', standards: ['眼睛真的能动吗', '别人看得懂机关吗', '我们自己想再改哪里'] }
+    : { audience: '小班弟弟妹妹', product: '一段孩子自己排的小醒狮', standards: ['弟弟妹妹看懂了吗', '有没有人害怕', '我们自己想再改哪里'] };
+  const task = eye
+    ? {
+      type: 'cycle_task',
+      title: '协作行动 · 第1轮：狮子的眼睛是怎么动的？',
+      data: {
+        child_question: '把核心问题抛给孩子：「狮子的眼睛是怎么动起来的？我们先画猜想，再想办法验证。」',
+        flow: ['每人画一张「我猜眼睛里面是这样的」猜想图', '把猜想贴上墙，互相讲给同伴听', '去问师傅或看训练录像找线索', '用纸箱和绳子试做第一版'],
+        materials: '纸箱、粗绳、胶带、画纸；竹签类尖物由老师保管',
+        observation_focus: ['谁的猜想最大胆', '孩子卡在哪个结构点', '谁开始互相帮忙'],
+        teacher_role: '先收猜想不给答案；工具使用全程看护',
+      },
+    }
+    : {
+      type: 'cycle_task',
+      title: '协作行动 · 第1轮：我们的小醒狮怎么排？',
+      data: {
+        child_question: '把核心问题抛给孩子：「要让弟弟妹妹看懂又不害怕，我们的醒狮要有什么？」',
+        flow: ['孩子头脑风暴（全收不筛）', '贴纸投票选第一个要排的段落', '两人一组试「一头一尾」配合', '排练一小段并录像'],
+        materials: '大布/床单（狮被替代）、纸箱（狮头雏形）、鼓或塑料桶',
+        observation_focus: ['孩子怎么分工、怎么协商', '卡住的点（配合？节奏？）', '谁提出了新办法'],
+        teacher_role: '提供材料和安全，不示范「标准动作」，孩子卡住先让他们自己商量',
+      },
+    };
+  return {
+    reply_markdown: eye
+      ? '好，那就跟着孩子对狮头机关的好奇走：核心驱动问题定为「狮头的眼睛是怎么眨的」。先回应一句判断：**可以进入行动尝试了**——孩子在狮头架前反复看眼睛机关的停留，就是最好的起点证据。\n\n下面是第一轮协作行动的小任务卡。记住：先收猜想，不给答案。'
+      : '好，那我们跟着孩子的选择走。先回应你上轮最关心的问题：**是的，可以进入行动尝试了**——证据是孩子已经从「看和问」走到「自发模仿」（男孩A他们的马步），这是典型的尝试探究前兆。\n\n下面是第一轮协作行动的小任务卡。记住：这轮先不追求像不像，重要的是让孩子自己决定「我们的小醒狮」怎么排。',
+    question: null,
+    artifacts: [task],
+    closure_loop: {
+      do_now: '把核心问题抛给孩子，收集所有想法后让孩子自己选先做哪一步',
+      materials: '方案记录表和投票贴纸（下轮我可以生成打印版）',
+      bring_back: '孩子的方案原话和选择结果；第一轮尝试中的1个卡点；三类儿童观察',
+      i_will: '和你一起把卡点变成下一轮探究，并判断是否出现项目化信号',
+    },
+    state_delta: {
+      driving_question: {
+        text: chosen,
+        candidates: (state.driving_question || {}).candidates || [Q_PERF, Q_EYE],
+        validation: { child_appropriate: true, authentic: true, actionable: true, public_relevance: true, cultural_possibility: true },
+        chosen_by_teacher: true,
+      },
+      goals_assessment_axis: { core_understanding: core, cultural_ladder_target: 'affection', grasps },
+      cycle_history: [{ round: 1, phase: 'collect_ideas', sub_question: eye ? '眼睛里面是什么样的？' : '我们的小醒狮要有什么？', agent_judgment: '进入行动尝试' }],
+      child_learning_stage: 'trial_inquiry',
+      completed_nodes: ['WF10', 'WF17', 'WF18'],
+      stage: 2,
+    },
+    evidence_refs: eye ? ['ev-dwell-1', 'ev-words-1'] : ['ev-behavior-1'],
+    round_complete: true,
+    wf_trace: trace('from_zero', 1, [
+      { id: 'WF08', name: '核心驱动问题推导', apply: `教师选定：${chosen.slice(0, 18)}…（任一候选都接住）` },
+      { id: 'WF10', name: '核心概念性理解目标', apply: '目标轴心先立核心理解（轻量版），四维随后展开' },
+      { id: 'WF17', name: '大问题拆解', apply: '核心驱动问题拆成本轮子问题' },
+      { id: 'WF18', name: '收集儿童解决方案', apply: '任务卡：先收孩子的想法，不筛不评' },
+    ], ['儿童真实反应驱动调整', '阶段判断优先', '输出闭环固定'], '写入 driving_question 定稿与 goals_assessment_axis；stage 提议 1→2'),
+  };
+}
+
+/** from_zero waiting between cycle rounds: varied, never dead. */
+function turnCycleWaitNudge(history) {
+  const v = replyVariant(history, /排练试起来|一小步一小步/, 2);
+  const reply = v === 0
+    ? '任务卡在手上了，先去和孩子把第一轮排练试起来，不着急回我。回来时给我三样东西：孩子的方案原话、他们的选择结果、一个卡点。中途要素材（投票贴纸模板、给家长的一句话）随时说。'
+    : '我还在这里。循环是一小步一小步走的——哪怕排练只进行了五分钟，也可以先回我一句原话或一个卡点，我们就能接着往下走。';
+  return {
+    reply_markdown: reply,
+    question: null,
+    artifacts: [],
+    closure_loop: null,
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace('from_zero', 2, [
+      { id: 'WF18', name: '收集儿童解决方案', apply: '等待第一轮协作行动的现场结果' },
+    ], ['儿童真实反应驱动调整', '状态机优先'], '本轮无状态写入（等待第一轮循环结果，就地支持）'),
+  };
+}
+
+/** from_zero second cycle round: the stuck point becomes the next inquiry (WF19/WF20/WF21), stage 2→3. */
+function turnSecondCycleReview() {
+  return {
+    reply_markdown:
+      '第二轮反馈接住了。先说判断：**卡点是真的，而且值得留给孩子自己再解决一轮**——「喊一二一二」是孩子自己给出的第一个节奏方案，这比任何成人示范都珍贵，先让它跑一轮。\n\n「想请师傅来看看」这句原话也很重要：孩子开始在意「像不像」，说明表演对象在他们心里变真实了。师傅到访可以作为下一轮的可选支线，但主线还是孩子自己的一二一二。',
+    question: null,
+    artifacts: [
+      {
+        type: 'cycle_task',
+        title: '协作行动 · 第2轮：一二一二能让我们走到一起吗？',
+        data: {
+          child_question: '把问题抛回给孩子：「两个人怎么才能同时迈脚？你们的一二一二试三次，看看行不行。」',
+          flow: ['用孩子的一二一二办法连排三次', '换搭档再试一次', '录像回放，让孩子自己看哪里对上了', '孩子决定要不要请师傅来看'],
+          materials: '手机（录像回放用）；可选：给师傅的邀请便条',
+          observation_focus: ['谁在喊节奏、谁在跟', '回放时孩子指出了什么', '关于请师傅，孩子怎么商量'],
+          teacher_role: '先让孩子的办法跑满三次再说话；回放时只放不评',
+        },
+      },
+    ],
+    closure_loop: {
+      do_now: '按任务卡把一二一二连排三次，录一段回放给孩子自己看',
+      materials: '录像回放；如果孩子决定请师傅，我下轮给你到访访谈支架',
+      bring_back: '回放时孩子说的话；配合有没有变化；请师傅的决定',
+      i_will: '根据孩子的决定准备师傅到访支架，或直接进入下一轮循环与项目化信号判断',
+    },
+    state_delta: {
+      children_evidence: [
+        { id: 'ev-r2-1', kind: 'behavior', content: '第一次排练两人配合卡住，孩子自发提议喊一二一二来对节奏', round: 2, recorded_at: 'round2' },
+        { id: 'ev-r2-2', kind: 'child_words', content: '想请师傅来看看我们排得像不像', round: 2, recorded_at: 'round2' },
+      ],
+      cycle_history: [{ round: 2, phase: 'stuck_review', sub_question: '两个人怎么才能同时迈脚？', agent_judgment: '卡点真实，留给孩子的一二一二先跑一轮' }],
+      child_learning_stage: 'trial_inquiry',
+      completed_nodes: ['WF19', 'WF20', 'WF21'],
+      stage: 3,
+    },
+    evidence_refs: ['ev-r2-1', 'ev-r2-2'],
+    round_complete: true,
+    wf_trace: trace('from_zero', 2, [
+      { id: 'WF19', name: '选择方案先尝试', apply: '孩子的一二一二方案先跑，成人办法靠后' },
+      { id: 'WF20', name: '卡壳复盘', apply: '配合卡点定性为真卡点，转成第2轮子问题' },
+      { id: 'WF21', name: '下一轮循环与项目化信号提醒', apply: '师傅到访列为支线；项目化信号待观察' },
+    ], ['儿童真实反应驱动调整', '证据优先', '输出闭环固定'], '第二轮证据与循环记录入账；stage 提议 2→3（目标轴心已在档，门槛满足）'),
+  };
+}
+
+/** optimize_existing: teacher picks a sharpened candidate → WF10 goals + WF16 evidence plan. */
+function turnOptimizePick(state, message) {
+  const drum = /鼓|节奏|一起动|整齐/.test(message);
+  const Q_FLOAT = '我们怎样做一条放进水里不会翻的小龙舟？';
+  const Q_DRUM = '我们怎样让全班的桨跟着鼓点一起动起来？';
+  const chosen = drum ? Q_DRUM : Q_FLOAT;
+  const core = drum
+    ? '幼儿能够逐渐理解：很多人一起动作整齐，需要一个共同的信号和反复练习'
+    : '幼儿能够逐渐理解：让一个东西浮起来又不翻，需要试、观察、再调整';
+  return {
+    reply_markdown:
+      `好，核心驱动问题就定这个：「${chosen}」\n\n目标与评估轴心先立一根轴——**核心理解**：${core}。四维目标和 GRASPS 评估可以边做边补，不用一次写全。\n\n但**过程性证据计划**现在就要立起来，这是优化线最容易漏的一块：从下一轮开始，每轮固定带回三件东西——一句原话、一张作品或现场照片、一条行为观察。这就是以后目标回看和课程故事的底账。`,
+    question: null,
+    artifacts: [],
+    closure_loop: {
+      do_now: '把定下来的驱动问题抛回给孩子，听他们的第一批想法',
+      materials: '证据三件套提醒卡：原话、作品或照片、行为观察（下轮可给打印版）',
+      bring_back: '孩子对问题的第一批想法，加上第一轮的三件证据',
+      i_will: '陪你把第一轮循环拆成可做的小任务（大问题拆解），并盯住证据计划落地',
+    },
+    state_delta: {
+      driving_question: {
+        text: chosen,
+        candidates: (state.driving_question || {}).candidates || [Q_FLOAT, Q_DRUM],
+        chosen_by_teacher: true,
+      },
+      goals_assessment_axis: {
+        core_understanding: core,
+        cultural_ladder_target: 'affection',
+        grasps: drum
+          ? { audience: '全班和运动会上的观众', product: '一段桨随鼓点整齐动作的合练', standards: ['信号大家都听得懂吗', '有没有人跟不上', '我们自己想再改哪里'] }
+          : { audience: '全班同伴和家长', product: '一条孩子自己做的能浮不翻的小龙舟', standards: ['放进水里浮不浮', '翻了之后孩子怎么改', '我们自己想再改哪里'] },
+      },
+      completed_nodes: ['WF10', 'WF16'],
+      stage: 3,
+    },
+    evidence_refs: drum ? ['ev-lz-1'] : ['ev-lz-2'],
+    round_complete: true,
+    wf_trace: trace('optimize_existing', 2, [
+      { id: 'WF10', name: '核心概念性理解目标', apply: '以儿童证据为底，先立核心理解一根轴' },
+      { id: 'WF16', name: '过程性证据计划', apply: '每轮三件证据固定回收——优化线的底账' },
+    ], ['阶段判断优先', '证据优先'], '写入 driving_question 定稿与目标轴心；stage 提议 2→3（核心理解同轮写入，门槛满足）'),
+  };
+}
+
+/** story_export: record the chosen export version — WF30 stays unmarked until real delivery. */
+function turnStoryVersion(state, message) {
+  const version = /汇报|摘要/.test(message) ? '汇报摘要版' : /公众号/.test(message) ? '公众号版' : '完整案例版';
+  return {
+    reply_markdown:
+      `好，就按「${version}」来。下一条消息回我「继续」，或者直接提要求，我就把四章文字稿完整展开——每章的章眼用孩子的原话或真实材料，缺的部分标「待补充」，不编。`,
+    question: null,
+    artifacts: [],
+    closure_loop: null,
+    state_delta: {
+      story_materials: { ...(state.story_materials || {}), export_version: version },
+    },
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace('story_export', 5, [
+      { id: 'WF32', name: '多版本导出', apply: `版本选定：${version}` },
+      { id: 'WF30', name: '图文结构生成', apply: '待下一轮真实交付文字稿后才标记完成' },
+    ], ['输出闭环固定', '状态机优先'], '写入 story_materials.export_version；WF30 未交付不打勾'),
+  };
+}
+
+/** story_export: the ACTUAL expanded course story — four written chapters, every one anchored to evidence. */
+function turnStoryExpand(state) {
+  const version = (state.story_materials || {}).export_version || '完整案例版';
+  return {
+    reply_markdown:
+      `按「${version}」把四章展开好了——每章的章眼都是孩子的原话或真实材料，标了「待补充」的地方我没有编。你读一遍，改动直接说：换章节顺序、换章眼原话都行。`,
+    question: null,
+    artifacts: [
+      {
+        type: 'story_fragment',
+        title: `课程故事 · ${version}（文字稿）`,
+        data: {
+          origin: '起点不是教案，而是一批真实的过程照片——孩子们分组动手做东西的样子，先于任何文字记录出现。',
+          chapters: [
+            {
+              chapter: '一、我们动手做',
+              content: '故事从一批过程照片开始：桌边、地垫上，孩子们分组做自己的东西，手一直没停。没有导入环节的痕迹——先动起来的是手，不是教案。这一章用照片说话，文字只做旁白。',
+              evidence: 'ev-st-photo-1',
+            },
+            {
+              chapter: '二、「这是我们一起做出来的」',
+              content: '作品和涂鸦收上来那天，有孩子指着桌上的成品说出了这句话。「一起」两个字是这一章的章眼——作品属于谁，孩子自己说得很清楚。作品照片配原话，不加成人解读。',
+              evidence: 'ev-st-words-1',
+            },
+            {
+              chapter: '三、对着镜头说',
+              content: '采访视频里，孩子对着镜头介绍自己做的东西：介绍给谁看、用什么词，都由孩子自己决定。这段视频是全篇最有分量的过程证据，建议截两帧配文字。',
+              evidence: 'ev-st-video-1',
+            },
+            {
+              chapter: '四、「下次我还想再做一遍」',
+              content: '收尾用的也是孩子的原话。这句话指向下一轮课程的种子：想再做一遍的究竟是哪个环节——这个问题留给下学期，此处如实标注，待现场确认。',
+              evidence: 'ev-st-words-2',
+            },
+          ],
+          gaps: ['卡点与转折（待补充：当时哪一步不顺利、怎么转的弯）', '教师反思（待补充：一段即可）', '目标与评估对照（待补充：当时的目标记录缺失）'],
+        },
+      },
+    ],
+    closure_loop: {
+      do_now: '把四章文字稿通读一遍，标出想改的地方',
+      materials: '四章文字稿（本轮已交付，可直接誊入园本模板）',
+      bring_back: '修改意见，或补充的卡点回忆和教师反思',
+      i_will: '按你的意见调整章节与章眼，并把补充材料填进「待补充」的位置',
+    },
+    state_delta: {
+      completed_nodes: ['WF30', 'WF32'],
+    },
+    evidence_refs: ['ev-st-photo-1', 'ev-st-words-1', 'ev-st-video-1', 'ev-st-words-2'],
+    round_complete: true,
+    wf_trace: trace('story_export', 5, [
+      { id: 'WF30', name: '图文结构生成', apply: '四章文字稿真实交付——此刻才标记完成' },
+      { id: 'WF32', name: '多版本导出', apply: `按${version}交付文字稿（演示以文字为准）` },
+    ], ['证据优先', '输出闭环固定'], '写入 completed_nodes WF30/WF32——交付即标记，不提前'),
+  };
+}
+
+/** story_export: genuine adjustment — real re-ordering / re-quoting, two variants. */
+function turnStoryAdjust(state, history) {
+  const v = replyVariant(history, /换了个开场|章眼换成/, 2);
+  const reply = v === 0
+    ? '按你的意思换了个开场：把「对着镜头说」提到第一章——用孩子自己的讲述开场，比过程照片更抓人。新的章节顺序：\n\n一、对着镜头说（证据 ev-st-video-1）\n二、我们动手做（证据 ev-st-photo-1）\n三、「这是我们一起做出来的」（证据 ev-st-words-1）\n四、「下次我还想再做一遍」（证据 ev-st-words-2）\n\n内文不动，只调结构；想换回来或继续调，直接说。'
+    : '章眼换成另一句也可以：第二章的章眼从「这是我们一起做出来的」换成「下次我还想再做一遍」，原第四章改用「这是我们一起做出来的」收尾——首尾对调之后，情绪线从期待走向确认。两版都保留在文字稿里，你读完选一版定稿。';
+  return {
+    reply_markdown: reply,
+    question: null,
+    artifacts: [],
+    closure_loop: null,
+    state_delta: {},
+    evidence_refs: ['ev-st-photo-1', 'ev-st-words-1', 'ev-st-video-1', 'ev-st-words-2'],
+    round_complete: false,
+    wf_trace: trace('story_export', 5, [
+      { id: 'WF30', name: '图文结构生成', apply: v === 0 ? '按教师意见调整章节顺序' : '按教师意见调整章眼原话' },
+    ], ['教师资源意图优先', '证据优先'], '本轮无状态写入（文字稿结构调整，仍在交付范围内）'),
+  };
+}
+
+/** mid_course second round: a DIFFERENT read — breakthrough, role shift, challenge upgrade. */
+function turnMidCourseSecond() {
+  return {
+    reply_markdown:
+      '第二轮的反馈很关键：**卡点破了**。上一轮「分组」的判断在现场得到了验证——胶带组把狮头固定住了，其他组主动围过来要学，这是同伴之间自然的经验流动，比老师示范有效得多。\n\n小宇的变化更值得记一笔：从指挥别人到自己动手缠胶带。上一轮我们说「先观察不打断」，现在看是对的——小组机制自己把角色分流了。\n\n后台再给你一条文化线索（不讲给孩子）：狮头扎作讲究「扎、扑、写、装」的工序，孩子们此刻做的固定，可能正站在「扎」这一步的门口（待现场确认，仅供你观察时参考）。\n\n下一轮建议把挑战升一级：两组交换狮头互相试戴检验——检验别人的作品，是更高一层的探究。',
+    question: null,
+    artifacts: [
+      {
+        type: 'cycle_task',
+        title: '协作行动 · 下一轮：交换狮头，互相检验',
+        data: {
+          child_question: '把问题抛给孩子：「别的组做的狮头，戴在你头上也稳吗？帮他们找找会掉的时刻。」',
+          flow: ['两组交换狮头试戴', '记下会掉、会歪的时刻', '给对方组提一个改进建议', '回自己组改一版再试'],
+          materials: '各组狮头、小镜子、便签纸',
+          observation_focus: ['孩子怎么给别人提建议、怎么接受建议', '小宇在交换环节的角色', '有没有组不愿交换，孩子怎么商量'],
+          teacher_role: '建议让孩子用自己的话转述，不评谁的更好；护住每个组的作品尊严',
+        },
+      },
+    ],
+    closure_loop: {
+      do_now: '组织两组交换狮头互相试戴，让孩子记录会掉的时刻',
+      materials: '便签和小镜子；建议再录一段交换检验的视频',
+      bring_back: '交换检验的结果、孩子提建议的原话、小宇这轮的表现',
+      i_will: '判断项目化信号（多组主动改进就是信号），并预告成果展示的可能形态',
+    },
+    state_delta: {
+      children_evidence: [
+        { id: 'ev-mc2-1', kind: 'behavior', content: '胶带组用宽胶带把狮头固定住了，其他组围过来要学', round: 2, recorded_at: 'round2' },
+        { id: 'ev-mc2-2', kind: 'behavior', content: '小宇这一轮自己动手缠胶带，没有指挥别人', child_ref: '小宇', round: 2, recorded_at: 'round2' },
+      ],
+      child_participation_difference: [
+        { round: 2, profile: 'director', child_ref: '小宇', observation: '从指挥转向动手，小组机制自然分流了角色' },
+      ],
+      teacher_focus_feedback: [
+        { round: 2, what_happened: '胶带组固定成功，其他组要学', who_stood_out: '小宇（转向动手）', to_judge: '挑战要不要升级' },
+      ],
+      cycle_history: [
+        { round: 2, phase: 'breakthrough_review', sub_question: '狮头固定住之后，怎么检验？', agent_judgment: '交换检验，挑战升级' },
+      ],
+      child_learning_stage: 'trial_inquiry',
+      completed_nodes: ['WF20c', 'WF20d', 'WF21'],
+    },
+    evidence_refs: ['ev-mc2-1', 'ev-mc2-2'],
+    round_complete: true,
+    wf_trace: trace('mid_course', 0, [
+      { id: 'WF20', name: '卡壳复盘', apply: '第二轮判读：卡点已破，读作突破而非卡壳' },
+      { id: 'WF20c', name: '文化语义回看', apply: '固定≈扎作「扎」工序入口（仅后台，已加待现场确认）' },
+      { id: 'WF20d', name: '儿童差异观察与教师聚焦反馈', apply: '小宇从指挥到动手的角色变化入差异记录' },
+      { id: 'WF21', name: '下一轮循环与项目化信号提醒', apply: '挑战升级：交换检验；项目化信号盯多组主动改进' },
+    ], ['儿童真实反应驱动调整', '文化可能性后台提示', '证据优先'], '第二轮证据与差异记录入账；stage 保持0——档案仍不完整，不冒进跳阶段'),
+  };
+}
+
+/** mid_course waiting between rounds: varied, keeps the door open. */
+function turnMidCourseHold(history) {
+  const v = replyVariant(history, /各组的结果|先发一个卡点/, 2);
+  const reply = v === 0
+    ? '收到。去把分组尝试跑起来，回来告诉我各组的结果就行——哪组稳了、哪组还在掉、小宇这轮做了什么。'
+    : '我还在这里。不用等全部结果，先发一个卡点或一句孩子的原话也可以，我们边走边看。';
+  return {
+    reply_markdown: reply,
+    question: null,
+    artifacts: [],
+    closure_loop: null,
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace('mid_course', 0, [
+      { id: 'WF21', name: '下一轮循环与项目化信号提醒', apply: '等待分组尝试的现场结果' },
+    ], ['儿童真实反应驱动调整', '状态机优先'], '本轮无状态写入（等待分组结果回传，就地支持）'),
+  };
+}
+
+const HORIZON_MARKER = /演示脚本到这里|演示的边界/;
+
+/** 演示边界: every flow ends HERE on purpose — honest, warm, never a stall. */
+function turnHorizon(mode, state, history) {
+  const v = replyVariant(history, HORIZON_MARKER, 2);
+  const reply = v === 0
+    ? '这条线路的演示脚本到这里就走完了——真实使用中，我会继续陪你一轮一轮循环下去，直到成果展示和完整导出。你现在可以：\n\n- 点右上角「新课程」，换一条入口再走一遍（从零陪跑、已有主题优化、课程故事整理、素材支持都可以）；\n- 打开设置里的「开发者模式」，在调试抽屉的工作流地图里回顾这一路点亮的节点。\n\n谢谢你陪我走完这一段。'
+    : '这条线路走到了演示的边界。往后的部分——继续循环、成果展示、多版本导出——真实使用中我都会接着陪你做，不会停在这里。想再走一条线，点「新课程」换个入口；想复盘，开发者模式的工作流地图里有这一路的完整足迹。';
+  return {
+    reply_markdown: reply,
+    question: null,
+    artifacts: [],
+    closure_loop: null,
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace(mode, state.stage ?? 0, [
+      { id: 'WF03', name: '使用方式说明', apply: '说明演示边界与下一步的玩法' },
+    ], ['状态机优先'], '演示脚本边界，无状态写入'),
   };
 }
