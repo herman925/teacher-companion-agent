@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&display=swap">
-  <link rel="stylesheet" href="/src/ui/styles.css">
+  <link rel="stylesheet" href="src/ui/styles.css">
 </head>
 <body>
 
@@ -72,7 +72,7 @@
         <select class="settings-select" id="provider-select"></select>
       </div>
       <div id="provider-box"></div>
-      <p class="settings-note">密钥和模型选择只保存在这台设备的浏览器里，随每次请求发送给本地演示服务，不会上传到其他任何地方。选「演示模式」可以不填密钥直接体验完整流程；「自定义端点」支持任何 OpenAI 兼容接口。</p>
+      <p class="settings-note">密钥和模型选择只保存在这台设备的浏览器里；只有在「服务器地址」填写后，才会随请求发送到你指定的服务，否则不外传。选「演示模式」可以不填密钥、离线直接体验完整流程；要接真实模型，请在「服务器地址」填写代理地址（见 docs/DEPLOY.md）。</p>
     </div>
   </aside>
 
@@ -90,6 +90,6 @@
 
   <!-- GSAP from CDN; motion.js no-ops (content stays visible) if this fails to load. -->
   <script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>
-  <script type="module" src="/src/ui/main.js"></script>
+  <script type="module" src="src/ui/main.js"></script>
 </body>
 </html>

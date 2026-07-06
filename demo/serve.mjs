@@ -21,8 +21,8 @@ import { applyDelta, createInitialState, STAGE_NAMES } from './src/engine.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 // Port precedence: FC_SERVER_PORT (Alibaba FC web function) > --port > 8787; FC needs 0.0.0.0.
-const PORT = Number(process.env.FC_SERVER_PORT) || Number(process.argv[process.argv.indexOf('--port') + 1]) || 8787;
-const HOST = process.env.FC_SERVER_PORT ? '0.0.0.0' : (process.env.HOST || '127.0.0.1');
+const PORT = Number(process.env.FC_SERVER_PORT) || Number(process.env.PORT) || Number(process.argv[process.argv.indexOf('--port') + 1]) || 8787;
+const HOST = (process.env.FC_SERVER_PORT || process.env.PORT) ? '0.0.0.0' : (process.env.HOST || '127.0.0.1');
 
 const ENV_KEYS = {
   minimax: process.env.MINIMAX_API_KEY || '',
