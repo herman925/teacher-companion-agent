@@ -22,6 +22,31 @@ export function runLocalMockTurn(state, history, message, opts = {}) {
   const ok = Boolean(parsed.turn) && blocking.length === 0;
   const turn = ok ? parsed.turn : safeTemplate(cur);
   const applied = applyDelta(cur, turn.state_delta, { roundComplete: turn.round_complete, teacherTurn: true });
+  // Transparency parity with the server path: one "attempt" whose response is the
+  // scripted mock payload (no network). The system prompt rides in prompt_debug.
+  const api_debug = {
+    provider: 'mock',
+    model: '（演示脚本）',
+    base_url: '',
+    kind: 'mock',
+    chain_errors: [],
+    attempts: [{
+      attempt: 1,
+      provider: 'mock',
+      endpoint: '（无 API 调用 · 本地演示脚本）',
+      model: '（演示脚本）',
+      strategy: 'mock',
+      request_messages: [...(history || []).map((m) => ({ role: m.role, content: m.content })), { role: 'user', content: message }],
+      response_raw: typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2),
+      usage: null,
+      elapsed_ms: 0,
+      parsed_ok: Boolean(parsed.turn),
+      violations: violations.map((v) => ({ kind: v.kind, action: v.action, detail: v.detail })),
+      blocking_count: blocking.length,
+      decision: ok ? 'accepted' : 'degraded',
+      feedback_injected: null,
+    }],
+  };
   return {
     turn,
     state: applied.state,
@@ -30,5 +55,6 @@ export function runLocalMockTurn(state, history, message, opts = {}) {
     providerLabel: '演示模式',
     usage: null,
     stageName: STAGE_NAMES[applied.state.stage],
+    api_debug,
   };
 }

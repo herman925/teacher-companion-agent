@@ -2,6 +2,13 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-08 (later, 3) — Debug drawer: full API transparency
+
+- **Debug drawer now shows the whole API round-trip** (dev-mode). New `api_debug` on the turn event (server `runTurn` + client `runLocalMockTurn`), rendered as an 「API 往返（本轮）」 section: per attempt — endpoint + model + strategy + latency, the **exact `messages` sent** (system prompt is message 0, collapsible), the **raw API response** before parse, and the **harness verdict** (parsed_ok · blocking count · decision accepted/retried/degraded, violation list, and the L4 feedback text injected on retry). Plus `chain_errors` for failover skips. Answers Herman's three asks: system prompt, harness log, raw response.
+- **Layout (方案 B)**: widened the debug drawer to `min(760px, 96vw)` (~half screen) and made `#debug-body` a 2-column grid — short sections (stage/gate/delta/provider) pack two-up, long ones (`debug-span`: API round-trip, course_state, 工作流地图, prompt) span full width. Uses horizontal space so the panel doesn't grow endlessly tall. Single column on ≤480px (bottom sheet).
+- Verified live: real Zen turn (`opencode-zen`/`deepseek-v4-flash-free`, debug:true) — drawer renders endpoint `POST https://opencode.ai/zen/v1/chat/completions`, system prompt (5057 chars), raw JSON response, verdict `可解析 · 0 个阻断 · accepted`. Drawer width 760px, grid 2×336px. Gate + tests green.
+- `api_debug` is dev-only for real providers (gated by `req.debug`); always attached for mock (no secrets, pure demo transparency). Keys never appear in it — only the messages/response bodies.
+
 ## 2026-07-08 (later, 2) — OpenCode Zen hosted provider
 
 - **`opencode-zen`** added alongside the local provider: OpenCode Zen (opencode.ai/docs/zen) is a hosted **OpenAI-compatible** gateway (`https://opencode.ai/zen/v1`, Bearer key from opencode.ai/auth) — so it's just a normal cloud provider, no new adapter path, no local server. Uses the existing `json_object_prompt` strategy + generic `providerSection` UI (key + model row). Default model blank (pick via 获取模型列表; five free models incl. `deepseek-v4-flash-free`). Optional server-side key via `OPENCODE_API_KEY` (serve.mjs ENV_KEYS).
