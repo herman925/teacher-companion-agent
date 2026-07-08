@@ -45,3 +45,4 @@ secrets/
 # understand-anything scratch
 .understand-anything/.trash-*/
 .understand-anything/tmp/
+.gstack/
