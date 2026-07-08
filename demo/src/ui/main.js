@@ -118,12 +118,16 @@ const LOCAL_LABELS = {
   custom: '自定义端点（OpenAI 兼容）',
 };
 
-/** Offline fallback when /api/health is unreachable. */
+/** Offline fallback when /api/health is unreachable (e.g. static hosting).
+ * Must mirror the enabled providers in adapter.mjs PROVIDERS, so the dropdown
+ * offers the same choices with or without a backend. */
 const FALLBACK_PROVIDERS = [
   { id: 'minimax', label: 'MiniMax', defaultModel: '', hasEnvKey: false },
   { id: 'glm', label: 'GLM', defaultModel: '', hasEnvKey: false },
   { id: 'glm-flash', label: 'GLM-Flash', defaultModel: '', hasEnvKey: false },
   { id: 'kimi', label: 'Kimi', defaultModel: '', hasEnvKey: false },
+  { id: 'opencode-zen', label: 'OpenCode Zen（在线）', defaultModel: '', hasEnvKey: false },
+  { id: 'opencode', label: 'OpenCode（本地）', defaultModel: 'opencode/deepseek-v4-flash-free', hasEnvKey: false },
 ];
 
 /** @type {Array<{id: string, label: string, defaultModel: string, hasEnvKey: boolean}>} */
