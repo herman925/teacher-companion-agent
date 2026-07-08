@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 import { PROVIDERS, callWithFailover, listModels } from './src/adapter.mjs';
 import { mockTurn } from './src/mock.mjs';
+import { WF_NODES } from './src/wf-nodes.mjs';
 import { parseTurn, validateTurn, violationFeedback, safeTemplate } from './src/harness.mjs';
 import { applyDelta, createInitialState, STAGE_NAMES } from './src/engine.mjs';
 import { buildSystemPrompt, stageModuleName, profileSectionText } from './src/prompt-builder.mjs';
@@ -35,6 +36,8 @@ const ENV_KEYS = {
 };
 
 // ---------- prompt assembly ----------
+
+const WF_NAME = Object.fromEntries(WF_NODES.map((n) => [n.id, n.name]));
 
 const PROMPT_DIR = path.join(ROOT, 'src', 'prompts');
 const promptCache = new Map();
@@ -183,6 +186,23 @@ async function runTurn(req, emit) {
     teacherTurn: true,
   });
   allViolations.push(...applied.violations.map((v) => ({ ...v, attempt: 'apply' })));
+
+  // Dev-mode wf_trace: if the model didn't emit its own trace, synthesize one
+  // from the nodes it declared this turn (state_delta.completed_nodes). Makes the
+  // 工作流地图 / node annotations reflect real turns, and honestly reports when
+  // the model declared no nodes at all.
+  if (debug && turn && !turn.wf_trace) {
+    const declared = Array.isArray(turn.state_delta?.completed_nodes) ? turn.state_delta.completed_nodes : [];
+    turn.wf_trace = {
+      stage: applied.state.stage,
+      mode: applied.state.teacher_mode,
+      nodes: declared.map((id) => ({ id, name: WF_NAME[id] ?? id })),
+      state_notes: declared.length
+        ? '（server 依据本轮 completed_nodes 合成）'
+        : '本轮模型未申报完成任何 WF 节点（completed_nodes 为空）——工作流地图不会前进。',
+      synthesized: true,
+    };
+  }
 
   emit('turn', {
     turn,
