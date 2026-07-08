@@ -75,15 +75,23 @@ function wantsInPlaceSupport(message) {
   return /素材|预案|铺垫|家长|打印/.test(message);
 }
 
+/** Prior assistant turns matching markerRe — nudge bookkeeping, no hidden state. */
+function priorTurnsMatching(history, markerRe) {
+  return (history || []).filter((m) => m && m.role === 'assistant' && markerRe.test(String(m.content || ''))).length;
+}
+
 /**
  * Deterministic reply-variant picker: counts prior assistant turns matching
  * markerRe and cycles through count variants — consecutive nudges never
  * repeat verbatim, and no hidden state is needed (derived from history alone).
  */
 function replyVariant(history, markerRe, count) {
-  const n = (history || []).filter((m) => m && m.role === 'assistant' && markerRe.test(String(m.content || ''))).length;
-  return n % count;
+  return priorTurnsMatching(history, markerRe) % count;
 }
+
+// 筛选对准模型，不对准老师（PRD 核心论点）：等待关卡最多温柔追问两次。
+// 第三次起，无论老师怎么回，都当作现场反馈接住，剧本继续走——演示绝不死锁。
+const MAX_NUDGES = 2;
 
 // ======================================================== 从零陪跑 from_zero
 
@@ -95,6 +103,7 @@ function fromZeroFlow(state, history, message) {
   if ((state.cycle_history || []).length < 2) {
     if (hasFieldFeedback(message)) return turnSecondCycleReview();
     if (wantsInPlaceSupport(message)) return turnInPlaceSupport();
+    if (priorTurnsMatching(history, CYCLE_NUDGE_MARKER) >= MAX_NUDGES) return turnSecondCycleReview();
     return turnCycleWaitNudge(history);
   }
   return turnHorizon('from_zero', state, history);
@@ -228,6 +237,7 @@ function turnAwaitOrIngest(state, history, message) {
   if (choice && message.length <= 40 && !/「|」|原话|照片/.test(message)) return turnEntryChoice(state, choice);
   if (hasFieldFeedback(message)) return turnIngestFeedback();
   if (wantsInPlaceSupport(message)) return turnInPlaceSupport();
+  if (priorTurnsMatching(history, NUDGE_MARKER) >= MAX_NUDGES) return turnIngestFeedback();
   return turnAwaitNudge(history);
 }
 
@@ -344,6 +354,7 @@ function optimizeFlow(state, history, message) {
   if (!(state.children_evidence || []).length) {
     // 证据优先: only ingest when the message plausibly carries 原话.
     if (/说|问|「|原话/.test(message) && message.length > 10) return turnOptimizeEvidence();
+    if (priorTurnsMatching(history, OPTIMIZE_WAIT_MARKER) >= MAX_NUDGES) return turnOptimizeEvidence();
     return turnOptimizeWait(history);
   }
   if (!(state.driving_question || {}).text) return turnOptimizePick(state, message);
@@ -511,6 +522,7 @@ function storyFlow(state, history, message) {
   if (state.stage < 5) {
     // The spine needs real 原话 — a nudge or 记不全 answer must not fabricate.
     if (/说|「|原话/.test(message)) return turnStorySpine();
+    if (priorTurnsMatching(history, STORY_WAIT_MARKER) >= MAX_NUDGES) return turnStorySpine();
     return turnStoryWait(history);
   }
   const delivered = (state.completed_nodes || []).includes('WF30');
@@ -634,10 +646,12 @@ function turnStorySpine() {
 function midCourseFlow(state, history, message) {
   if (!(state.children_evidence || []).length) {
     if (/卡|试|做|说|问|指挥|活跃/.test(message) && message.length > 15) return turnMidCourseReview();
+    if (priorTurnsMatching(history, MIDCOURSE_WAIT_MARKER) >= MAX_NUDGES) return turnMidCourseReview();
     return turnMidCourseWait(history);
   }
   if ((state.cycle_history || []).length < 2) {
     if (hasFieldFeedback(message)) return turnMidCourseSecond();
+    if (priorTurnsMatching(history, MIDCOURSE_HOLD_MARKER) >= MAX_NUDGES) return turnMidCourseSecond();
     return turnMidCourseHold(history);
   }
   return turnHorizon('mid_course', state, history);
@@ -857,6 +871,11 @@ function turnInPlaceSupport() {
 }
 
 const NUDGE_MARKER = /把进度摊开|我还在这里/;
+const OPTIMIZE_WAIT_MARKER = /先把档案的账摊开|行为线索入手/;
+const STORY_WAIT_MARKER = /想不全很正常|视频里往往就有/;
+const MIDCOURSE_WAIT_MARKER = /三句话随时补|先回我一句/;
+const CYCLE_NUDGE_MARKER = /排练试起来|一小步一小步/;
+const MIDCOURSE_HOLD_MARKER = /各组的结果|先发一个卡点/;
 
 /** Status-report nudge: never repeats verbatim, never plays dead. */
 function turnAwaitNudge(history) {
@@ -866,7 +885,14 @@ function turnAwaitNudge(history) {
     : '我还在这里，随时接得住。如果是卡在准备环节——比如还没约到醒狮队、家长有顾虑、想先在班里做点铺垫——直接说，我出预案。如果已经去过现场了，哪怕只记得一句孩子的原话，也先发我这一句。';
   return {
     reply_markdown: reply,
-    question: null,
+    question: {
+      text: '现场回来后，最先想告诉我的一句是什么？',
+      why: '一句孩子的原话或一个现场片段，就够我接住下一步',
+      examples: [
+        '孩子们围着狮头看了很久，有人问「眼睛为什么会眨」',
+        '还没去成，想先要一段给家长的知会话术',
+      ],
+    },
     artifacts: [],
     closure_loop: null,
     state_delta: {},
@@ -880,13 +906,20 @@ function turnAwaitNudge(history) {
 
 /** optimize_existing wait: evidence-first, no fabricated 原话. */
 function turnOptimizeWait(history) {
-  const v = replyVariant(history, /先把档案的账摊开|行为线索入手/, 2);
+  const v = replyVariant(history, OPTIMIZE_WAIT_MARKER, 2);
   const reply = v === 0
     ? '不急，先把档案的账摊开：切口卡（已有主题回填）和适配性筛查都已入档，现在缺的只有一样——孩子的两三句原话。翻活动记录、问搭班老师、看活动照片旁的备注都可以。等待期间想先要问题墙卡片模板的文字稿，说一声就给。'
     : '我还在这里。原话一时找不齐的话，也可以从行为线索入手：告诉我这两周孩子最常聚在哪个角落、反复摆弄什么材料，我们先用行为证据把方向粗对一下，原话之后再补。';
   return {
     reply_markdown: reply,
-    question: null,
+    question: {
+      text: '翻记录时找到的第一句孩子原话是什么？',
+      why: '有一两句原话，优化方向就能从证据里长出来',
+      examples: [
+        '有孩子问龙舟为什么要有鼓，还有孩子说想自己做一条',
+        '照片备注里记了一句「我们的龙舟会浮吗」',
+      ],
+    },
     artifacts: [],
     closure_loop: null,
     state_delta: {},
@@ -900,13 +933,20 @@ function turnOptimizeWait(history) {
 
 /** story_export wait: gaps stay honest, point to where 原话 can be found. */
 function turnStoryWait(history) {
-  const v = replyVariant(history, /想不全很正常|视频里往往就有/, 2);
+  const v = replyVariant(history, STORY_WAIT_MARKER, 2);
   const reply = v === 0
     ? '想不全很正常，不用硬凑。已入账的材料不会丢：过程照片、作品涂鸦、采访视频，缺口清单也都在。原话可以慢慢找——问搭班老师、问家长，或者翻一翻采访视频，孩子对着镜头讲的话就是最好的原话。'
     : '再给你一条捷径：采访视频里往往就有现成的原话。挑一段视频听一遍，把孩子讲的一两句敲给我就行——有这一两句，叙事主线就能立起来。';
   return {
     reply_markdown: reply,
-    question: null,
+    question: {
+      text: '视频或记录里，孩子讲过的哪一句最打动你？',
+      why: '有一两句原话，叙事主线就能立起来',
+      examples: [
+        '有孩子说这是我们一起做出来的',
+        '视频里有孩子讲「下次还想再做一遍」',
+      ],
+    },
     artifacts: [],
     closure_loop: null,
     state_delta: {},
@@ -920,13 +960,20 @@ function turnStoryWait(history) {
 
 /** mid_course wait: the 三句聚焦反馈 can arrive one sentence at a time. */
 function turnMidCourseWait(history) {
-  const v = replyVariant(history, /三句话随时补|先回我一句/, 2);
+  const v = replyVariant(history, MIDCOURSE_WAIT_MARKER, 2);
   const reply = v === 0
     ? '不着急，三句话随时补，不用一次说全：孩子们做了什么、谁的表现最让你在意、你现在最想判断什么。哪怕只发第一句，我也能先接住。'
     : '我还在这里。现场太忙的话，先回我一句就行：昨天具体卡在哪一步？有了这一句，卡壳复盘就能开工。';
   return {
     reply_markdown: reply,
-    question: null,
+    question: {
+      text: '三句里先补哪一句都行——孩子们做了什么？',
+      why: '有一句现场信息，卡壳复盘就能开工',
+      examples: [
+        '孩子们试了纸箱做狮头，卡在固定不住',
+        '最活跃的是小宇，一直在指挥别人不动手',
+      ],
+    },
     artifacts: [],
     closure_loop: null,
     state_delta: {},
@@ -1052,13 +1099,20 @@ function turnPickDrivingQuestion(state, message) {
 
 /** from_zero waiting between cycle rounds: varied, never dead. */
 function turnCycleWaitNudge(history) {
-  const v = replyVariant(history, /排练试起来|一小步一小步/, 2);
+  const v = replyVariant(history, CYCLE_NUDGE_MARKER, 2);
   const reply = v === 0
     ? '任务卡在手上了，先去和孩子把第一轮排练试起来，不着急回我。回来时给我三样东西：孩子的方案原话、他们的选择结果、一个卡点。中途要素材（投票贴纸模板、给家长的一句话）随时说。'
     : '我还在这里。循环是一小步一小步走的——哪怕排练只进行了五分钟，也可以先回我一句原话或一个卡点，我们就能接着往下走。';
   return {
     reply_markdown: reply,
-    question: null,
+    question: {
+      text: '第一轮试下来，最先带回来的一句是什么？',
+      why: '一句原话或一个卡点，循环就能继续走',
+      examples: [
+        '第一次排练卡在两人配合上，有孩子提议喊「一二一二」',
+        '中途想先要一版投票贴纸素材',
+      ],
+    },
     artifacts: [],
     closure_loop: null,
     state_delta: {},
@@ -1313,13 +1367,20 @@ function turnMidCourseSecond() {
 
 /** mid_course waiting between rounds: varied, keeps the door open. */
 function turnMidCourseHold(history) {
-  const v = replyVariant(history, /各组的结果|先发一个卡点/, 2);
+  const v = replyVariant(history, MIDCOURSE_HOLD_MARKER, 2);
   const reply = v === 0
     ? '收到。去把分组尝试跑起来，回来告诉我各组的结果就行——哪组稳了、哪组还在掉、小宇这轮做了什么。'
     : '我还在这里。不用等全部结果，先发一个卡点或一句孩子的原话也可以，我们边走边看。';
   return {
     reply_markdown: reply,
-    question: null,
+    question: {
+      text: '分组试完，先带回哪一组的情况？',
+      why: '不用等全部结果，一组的卡点或一句原话就够',
+      examples: [
+        '胶带组把狮头固定住了，孩子说「要缠三圈」',
+        '麻绳组卡住了还在掉，小宇这一轮自己动手试了',
+      ],
+    },
     artifacts: [],
     closure_loop: null,
     state_delta: {},
