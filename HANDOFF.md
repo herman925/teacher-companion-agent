@@ -2,6 +2,13 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-08 — Awaiting-gate dead-end fix, V1.3 gap nodes (WF04b/WF31b)
+
+- **Live-site bug fixed** (PR #1): every flow dead-ended at the awaiting gates (~exchange 4) — waiting turns had `question: null` (no chips) and gates only accepted Chinese evidence markers; generic/English replies looped two nudge variants forever. Now: all six waiting turns carry 2 gate-unlocking example chips, and every gate escalates after `MAX_NUDGES = 2` — third reply onward is accepted as field feedback regardless（筛选对准模型，不对准老师）. Regression net: `demo/tests/awaiting-escalation.test.mjs` (all five flows must reach the horizon on generic replies alone, ≤14 turns).
+- **Spec audit** (V1.3 41 nodes vs implementation): mock walks 31/41 after this session. Two true gaps closed (PR #2): **WF04b 资源深度网络图** (`depth_network` card in turnEntryCard, four layers + 做浅 risk; stage1 prompt section) and **WF31b 文化育人价值复盘** (`culture_review` card in turnStoryExpand, evidence-linked, ladder honestly stops at 情感层; stage5 prompt section). Stage 4 (WF23–27) stays outside the demo boundary per spec §7 — deliberate, documented. Audit correction: stage2 prompt covers WF12–14 via the "WF11–14" range wording — no gap there.
+- flow-crawler terminal checks tightened (WF04b, WF31b + culture_review shape); coverage 77 steps / 34 chip branches. Merged to main; live Pages needs the same commits pushed to the Chao0s repo.
+- Gotcha: running the harness suite from any path containing `.claude/` (e.g. worktrees under `.claude/worktrees/`) false-fails two pre-edit-guard tests — the guard treats the whole checkout as governance paths. Commit from a path without `.claude/`, or fix the guard later.
+
 ## 2026-07-06 (later) — Branching mock, 开发者模式, hosting
 
 - Mock redesigned as a state-machine with **five entry flows** (WF01 entry recognition → 从零陪跑 / 已有主题优化 / 过程中续聊 / 课程故事整理 / 素材支持), each walking different V1.3 nodes; every turn passes the runtime harness; story flow reaches stage 5 only after real evidence; mid-course honestly stays at stage 0 (0→3 jump is illegal) and says so.
