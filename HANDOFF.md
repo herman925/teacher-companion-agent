@@ -2,6 +2,14 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-08 (later) — OpenCode local-server provider
+
+- **New provider `opencode`** (settings drawer, between Kimi and 自定义端点). Drives a local `opencode serve` (opencode.ai/docs/server) — a **session-based API, NOT OpenAI `/chat/completions`**. New adapter path in `demo/src/adapter.mjs` (`callOpencode` + `listOpencodeModels`): `POST /session` → `POST /session/:id/message`, reads assistant text parts. Model id is OpenCode's two-part `providerID/modelID`; default `opencode/deepseek-v4-flash-free` (free, no key). OpenCode holds the model keys itself, so the UI "key" field is the **optional server password** (Basic auth); the failover key-guard and `/api/models` key-check both exempt `kind:'opencode'`.
+- **Turn contract via `json_object_prompt`, not the server's `format:json_schema`** — testing showed opencode's json_schema format refused several models (MiniMax: "Model did not produce structured output"). We fold the JSON reinforcement into the `system` field and flatten the transcript into one text part; `tools:{}` keeps the coding agent off the filesystem. Model errors arrive inside a 200 envelope (`info.error`, e.g. disabled Zen model) — surfaced as an `AdapterError`.
+- **Verified live** against a running `opencode serve` (v1.17.11, port 4096): `/api/health` lists opencode; `/api/models` flattens 71 models; full `/api/chat` turn passed the runtime harness (gate ok, attempt 1) on both `opencode/deepseek-v4-flash-free` (free) and `minimax-cn-coding-plan/MiniMax-M3` (user-authed, model-override path). Browser-verified the settings section renders (dropdown + baseURL prefilled + password + model row). Demo tests 56/56, gate `--fast` green.
+- **To use**: run `opencode serve` in another terminal, run the demo server, pick 「OpenCode（本地）」in settings, 获取模型列表 → choose a model. Note: opencode's `opencode-go` Zen tier returned "Model is disabled" (needs subscription); the `*-free` models and any provider the user has authed (MiniMax/GLM/…) work.
+- Not committed: pre-existing unrelated working-tree edits (`.gitattributes`, `.gitignore`, `launch-demo.bat`) left unstaged.
+
 ## 2026-07-08 — Awaiting-gate dead-end fix, V1.3 gap nodes (WF04b/WF31b)
 
 - **Live-site bug fixed** (PR #1): every flow dead-ended at the awaiting gates (~exchange 4) — waiting turns had `question: null` (no chips) and gates only accepted Chinese evidence markers; generic/English replies looped two nudge variants forever. Now: all six waiting turns carry 2 gate-unlocking example chips, and every gate escalates after `MAX_NUDGES = 2` — third reply onward is accepted as field feedback regardless（筛选对准模型，不对准老师）. Regression net: `demo/tests/awaiting-escalation.test.mjs` (all five flows must reach the horizon on generic replies alone, ≤14 turns).

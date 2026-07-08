@@ -59,6 +59,7 @@
  * @property {string} baseURL
  * @property {string} model
  * @property {"json_schema"|"tool_call"|"json_object_prompt"} jsonStrategy
+ * @property {"opencode"} [kind]  Non-OpenAI adapter path (OpenCode session API); absent = OpenAI-compatible.
  * @property {boolean} [stripThinking]  MiniMax M-series interleaved thinking.
  * @property {boolean} [enabled]
  */

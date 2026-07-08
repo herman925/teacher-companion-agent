@@ -23,6 +23,7 @@ const LS = {
   keys: 'cst.keys',
   models: 'cst.models',
   custom: 'cst.custom',
+  opencode: 'cst.opencode',
   apiBase: 'cst.apiBase',
   devmode: 'cst.devmode',
   profile: 'cst.profile',
@@ -57,6 +58,8 @@ let apiKeys = load(LS.keys, {});
 let modelChoices = load(LS.models, {});
 /** OpenAI-compatible custom endpoint config. */
 let customCfg = { baseURL: '', model: '', key: '', label: '', ...load(LS.custom, {}) };
+/** OpenCode local server config (session API; key = optional server password). */
+let opencodeCfg = { baseURL: 'http://127.0.0.1:4096', model: '', key: '', ...load(LS.opencode, {}) };
 /** 开发者模式: show wf_trace annotations + workflow map details. */
 let devMode = Boolean(load(LS.devmode, false));
 
@@ -368,6 +371,9 @@ function chatRequestBody(text) {
   if (provider === 'custom') {
     body.custom = { baseURL: customCfg.baseURL, model: customCfg.model, label: customCfg.label || undefined };
     if (customCfg.key) body.keys.custom = customCfg.key;
+  } else if (provider === 'opencode') {
+    body.opencode = { baseURL: opencodeCfg.baseURL, model: opencodeCfg.model || undefined };
+    if (opencodeCfg.key) body.keys.opencode = opencodeCfg.key;
   } else {
     const chosen = modelChoices[provider];
     if (chosen && chosen !== (providerInfo(provider)?.defaultModel ?? '')) body.model = chosen;
@@ -507,6 +513,7 @@ function showError(message) {
 function saveKeys() { save(LS.keys, apiKeys); }
 function saveModels() { save(LS.models, modelChoices); }
 function saveCustom() { save(LS.custom, customCfg); }
+function saveOpencode() { save(LS.opencode, opencodeCfg); }
 
 function providerOptions() {
   const ids = ['mock', ...providerInfos.map((p) => p.id), 'custom'];
@@ -711,6 +718,52 @@ function customSection() {
   return details;
 }
 
+/**
+ * OpenCode local-server section. Unlike a vendor, OpenCode holds the model keys
+ * itself (`opencode serve`), so the "key" field is an optional server password.
+ * The model row talks to /config/providers via /api/models.
+ * @param {{id:string,label:string,defaultModel:string}} info
+ */
+function opencodeSection(info) {
+  const details = el('details', 'provider-config');
+  details.dataset.id = 'opencode';
+  details.append(el('summary', '', info.label));
+
+  details.append(el('p', 'settings-note',
+    '先在另一个终端运行 opencode serve（默认 http://127.0.0.1:4096），再选择模型。模型密钥由 OpenCode 自己保管，不经过本机浏览器。'));
+
+  const fields = [
+    ['baseURL', '服务地址（baseURL）', 'text', '如 http://127.0.0.1:4096'],
+    ['key', '服务密码（可选）', 'password', '仅当 opencode serve 设了密码时填写'],
+  ];
+  for (const [prop, labelText, type, placeholder] of fields) {
+    const { field } = settingsField(labelText, `opencode-${prop}`, {
+      type,
+      placeholder,
+      value: opencodeCfg[prop] ?? '',
+      onInput: (v) => { opencodeCfg[prop] = v.trim(); saveOpencode(); },
+    });
+    details.append(field);
+  }
+
+  details.append(modelRow('opencode', {
+    defaultModel: info.defaultModel,
+    getModel: () => opencodeCfg.model || info.defaultModel || '',
+    setModel: (m) => {
+      if (m && m !== info.defaultModel) opencodeCfg.model = m;
+      else opencodeCfg.model = '';
+      saveOpencode();
+    },
+    modelsBody: () => ({
+      provider: 'opencode',
+      opencode: { baseURL: opencodeCfg.baseURL },
+      key: opencodeCfg.key || undefined,
+    }),
+  }));
+
+  return details;
+}
+
 /** 开发者模式 toggle: persists + replays the transcript so annotations (dis)appear. */
 function devModeField() {
   const field = el('div', 'settings-field');
@@ -794,7 +847,9 @@ function buildProviderSections() {
     },
   );
   providerBox.append(apiField);
-  for (const info of providerInfos) providerBox.append(providerSection(info));
+  for (const info of providerInfos) {
+    providerBox.append(info.id === 'opencode' ? opencodeSection(info) : providerSection(info));
+  }
   providerBox.append(customSection());
   syncOpenSection();
 }

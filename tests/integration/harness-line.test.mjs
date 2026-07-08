@@ -206,6 +206,16 @@ test('LINE code-review: FLAGS moderation-todo (DOM write without sanitize*) + ge
   assert.match(titles, /console/);
   assert.match(titles, /loose equality/);
 });
+test('LINE code-review: SILENT on loopback http:// (local dev servers, no TLS)', () => {
+  const d = mkTmp();
+  const f = path.join(d, 'chat.js');
+  fs.writeFileSync(f,
+    'const a = "http://127.0.0.1:4096";\n' +
+    'const b = "http://localhost:8787";\n', 'utf8');
+  const r = runNode([H.codeReview, f, '--json']);
+  assert.equal(r.code, 0, 'loopback http:// must not fire\n' + r.stdout + r.stderr);
+  assert.ok(!JSON.parse(r.stdout).findings.some(x => /http:\/\//.test(x.title)), 'no http:// finding on loopback');
+});
 test('LINE code-review: SILENT when DOM writes go through sanitize*()', () => {
   const d = mkTmp();
   const f = path.join(d, 'chat.js');

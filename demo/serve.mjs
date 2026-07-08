@@ -52,6 +52,8 @@ function loadPrompt(name) {
  *   req.model            — model id override for the preferred provider
  *   req.custom           — { baseURL, model, label? } OpenAI-compatible custom endpoint
  *                          (json_object_prompt strategy; key under keys.custom)
+ *   req.opencode         — { baseURL?, model? } OpenCode local server overrides
+ *                          (session API; optional server password under keys.opencode)
  */
 function effectiveRegistry(req) {
   const registry = { ...PROVIDERS };
@@ -63,6 +65,13 @@ function effectiveRegistry(req) {
       model: req.custom.model,
       jsonStrategy: 'json_object_prompt',
       enabled: true,
+    };
+  }
+  if (req.opencode && registry.opencode) {
+    registry.opencode = {
+      ...registry.opencode,
+      ...(req.opencode.baseURL ? { baseURL: String(req.opencode.baseURL).replace(/\/+$/, '') } : {}),
+      ...(req.opencode.model ? { model: req.opencode.model } : {}),
     };
   }
   const preferred = req.provider;
@@ -204,7 +213,8 @@ const server = http.createServer(async (req, res) => {
       const p = registry[q.provider];
       if (!p) throw new Error(`未知供应商：${q.provider}`);
       const key = q.key || ENV_KEYS[q.provider] || '';
-      if (!key) throw new Error('缺少 API 密钥——先填密钥再获取模型列表');
+      // OpenCode holds model keys itself; its server password is optional.
+      if (!key && p.kind !== 'opencode') throw new Error('缺少 API 密钥——先填密钥再获取模型列表');
       const models = await listModels(p, key);
       res.end(JSON.stringify({ ok: true, provider: q.provider, defaultModel: p.model, models }));
     } catch (e) {

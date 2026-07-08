@@ -127,8 +127,9 @@ for (const file of uniqueFiles) {
       add('P2', file, n, 'loose equality (== or !=)', 'Use strict equality === / !== to avoid coercion bugs.');
     }
 
-    // P1: hardcoded http:// URL — HTTPS only
-    if (/["'`]http:\/\//.test(raw)) {
+    // P1: hardcoded http:// URL — HTTPS only. Loopback is exempt: local dev
+    // servers (opencode serve, the demo proxy) run plain HTTP with no TLS.
+    if (/["'`]http:\/\//.test(raw) && !/["'`]http:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/.test(raw)) {
       add('P1', file, n, 'hardcoded http:// URL', 'Use https:// for all network requests.');
     }
 
