@@ -45,6 +45,18 @@ export const PROVIDERS = {
     jsonStrategy: 'json_object_prompt',
     enabled: false, // evaluation flag (PRD user story 24)
   },
+  // OpenCode Zen (opencode.ai/docs/zen): a hosted, OpenAI-compatible gateway —
+  // just a normal cloud provider. Bearer API key from opencode.ai/auth; five
+  // free models (deepseek-v4-flash-free, big-pickle, mimo-v2.5-free, …) plus
+  // pay-as-you-go for the rest. Model left blank — pick one via 获取模型列表.
+  'opencode-zen': {
+    id: 'opencode-zen',
+    label: 'OpenCode Zen（在线）',
+    baseURL: 'https://opencode.ai/zen/v1',
+    model: '',
+    jsonStrategy: 'json_object_prompt',
+    enabled: true,
+  },
   // OpenCode local server (opencode.ai/docs/server): a session-based API, NOT
   // OpenAI /chat/completions. `opencode serve` proxies whatever models the user
   // has authed (Zen free tier, or their own MiniMax/GLM/… keys). We drive it

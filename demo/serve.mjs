@@ -31,6 +31,7 @@ const ENV_KEYS = {
   'glm-flash': process.env.GLM_API_KEY || '',
   kimi: process.env.KIMI_API_KEY || '',
   qwen: process.env.QWEN_API_KEY || '',
+  'opencode-zen': process.env.OPENCODE_API_KEY || '',
 };
 
 // ---------- prompt assembly ----------

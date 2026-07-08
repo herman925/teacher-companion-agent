@@ -2,6 +2,12 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-08 (later, 2) — OpenCode Zen hosted provider
+
+- **`opencode-zen`** added alongside the local provider: OpenCode Zen (opencode.ai/docs/zen) is a hosted **OpenAI-compatible** gateway (`https://opencode.ai/zen/v1`, Bearer key from opencode.ai/auth) — so it's just a normal cloud provider, no new adapter path, no local server. Uses the existing `json_object_prompt` strategy + generic `providerSection` UI (key + model row). Default model blank (pick via 获取模型列表; five free models incl. `deepseek-v4-flash-free`). Optional server-side key via `OPENCODE_API_KEY` (serve.mjs ENV_KEYS).
+- The local `opencode` (session-API) provider stays — the two are different: Zen = hosted API you paste a key for; `opencode serve` = local server proxying your own model auths.
+- Verified: `/api/health` lists both; dropdown + Zen settings section browser-verified. **Not** exercised against the live Zen API — needs Herman's key.
+
 ## 2026-07-08 (later) — OpenCode local-server provider
 
 - **New provider `opencode`** (settings drawer, between Kimi and 自定义端点). Drives a local `opencode serve` (opencode.ai/docs/server) — a **session-based API, NOT OpenAI `/chat/completions`**. New adapter path in `demo/src/adapter.mjs` (`callOpencode` + `listOpencodeModels`): `POST /session` → `POST /session/:id/message`, reads assistant text parts. Model id is OpenCode's two-part `providerID/modelID`; default `opencode/deepseek-v4-flash-free` (free, no key). OpenCode holds the model keys itself, so the UI "key" field is the **optional server password** (Basic auth); the failover key-guard and `/api/models` key-check both exempt `kind:'opencode'`.
