@@ -132,7 +132,7 @@ function turnIntentQuestion(message, opts = {}) {
 function turnEntryCard() {
   return {
     reply_markdown:
-      '明白了。你的想法里已经有两个很好的线索：孩子们**见过**这个资源（有真实场域），你希望他们**不止于看热闹**（有意图方向）。我把它整理成一张资源课程化切口卡，你只要标出最认可的儿童入口。\n\n同时我判断了一下这个主题适合走到哪一步，以及第一轮可以怎么做——都在下面的卡片里。',
+      '明白了。你的想法里已经有两个很好的线索：孩子们**见过**这个资源（有真实场域），你希望他们**不止于看热闹**（有意图方向）。我把它整理成一张资源课程化切口卡，你只要标出最认可的儿童入口。\n\n同时我判断了一下这个主题适合走到哪一步、第一轮可以怎么做，还把资源摊开成一张深度网络图——孩子能看见什么、能体验什么、能和谁发生关系、往后可能多一点什么感受——都在下面的卡片里。',
     question: {
       text: '三个儿童入口里，哪一个最像你们班孩子会扑上去的？',
       why: '第一轮体验只做一个入口，做透比做全重要',
@@ -160,6 +160,30 @@ function turnEntryCard() {
           judgment_zh: '主题探究型（有项目化潜力，待儿童反应验证）',
           reasons: ['有真实场域和真实人物可接触', '资源可感知层次丰富（声音/物件/动作）', '公共交付可能性暂不明确——不急着定项目'],
           suggested_intensity: '先做一轮真实体验＋一轮问题收集，再判断要不要长成项目',
+        },
+      },
+      {
+        type: 'depth_network',
+        title: '资源深度网络图 · 醒狮（教师后台）',
+        data: {
+          physical_layer: {
+            see: ['狮头、狮被、鼓锣镲', '舞狮人的马步与动作', '训练场里的声音层次'],
+            task: '现场自由停留观察，回园画「我看到的醒狮」',
+          },
+          experience_layer: {
+            do: ['拍一段鼓点节奏', '掂一掂狮头的重量', '学一个马步动作'],
+            task: '每人选一样试一次，记下谁试了什么、停了多久',
+          },
+          relation_layer: {
+            connect: ['舞狮师傅', '看过醒狮的家人长辈', '家门口的节日场景'],
+            task: '用访谈卡问一个真人，把答案带回来讲给同伴听',
+          },
+          meaning_layer: {
+            hints: ['亲近与好奇', '一起做成一件事的热闹', '对家门口活动的归属感'],
+            task: '仅作教师后台观察线索，待现场确认——不向孩子讲授',
+            caution: '没有证据之前只能说「可能」',
+          },
+          depth_risk: '若只停在物象层看热闹，主题容易做浅——第一轮体验后，看孩子把哪条线索接走再决定往哪层走',
         },
       },
       {
@@ -206,7 +230,7 @@ function turnEntryCard() {
         adult_phrasings_to_avoid: ['传统文化瑰宝', '非遗传承'],
       },
       theme_fit_level: 'theme_inquiry',
-      completed_nodes: ['WF02b', 'WF03b'],
+      completed_nodes: ['WF02b', 'WF03b', 'WF04b'],
       stage: 1,
     },
     evidence_refs: [],
@@ -214,9 +238,10 @@ function turnEntryCard() {
     wf_trace: trace('from_zero', 0, [
       { id: 'WF03b', name: '资源意图确认与课程可能性启发', apply: '教师意图落成切口卡的三个儿童入口' },
       { id: 'WF02b', name: '主题探究适配性筛查', apply: '判定主题探究型，项目化留待儿童反应验证' },
+      { id: 'WF04b', name: '资源深度网络图', apply: '切口卡展开为物象/体验/关系/意义四层，意义层仅教师后台' },
       { id: 'WF05', name: '高频情境浸润', apply: '第一轮体验计划：看一次真实训练' },
       { id: 'WF05b', name: '真实人物与生活场景访谈任务', apply: '生成舞狮师傅访谈卡（孩子问＋老师问）' },
-    ], ['教师资源意图优先', '阶段判断优先', '输出闭环固定'], '写入 resource_entry_card 与 theme_fit_level；stage 提议 0→1（引擎按门槛放行）'),
+    ], ['教师资源意图优先', '阶段判断优先', '输出闭环固定'], '写入 resource_entry_card、theme_fit_level 与深度网络；stage 提议 0→1（引擎按门槛放行）'),
   };
 }
 
@@ -1186,7 +1211,7 @@ function turnStoryExpand(state) {
   const version = (state.story_materials || {}).export_version || '完整案例版';
   return {
     reply_markdown:
-      `按「${version}」把四章展开好了——每章的章眼都是孩子的原话或真实材料，标了「待补充」的地方我没有编。你读一遍，改动直接说：换章节顺序、换章眼原话都行。`,
+      `按「${version}」把四章展开好了——每章的章眼都是孩子的原话或真实材料，标了「待补充」的地方我没有编。结尾附了一段文化育人价值复盘：只写四条证据撑得住的变化苗头，行动层如实标「尚未充分看见」。你读一遍，改动直接说：换章节顺序、换章眼原话都行。`,
     question: null,
     artifacts: [
       {
@@ -1219,6 +1244,21 @@ function turnStoryExpand(state) {
           gaps: ['卡点与转折（待补充：当时哪一步不顺利、怎么转的弯）', '教师反思（待补充：一段即可）', '目标与评估对照（待补充：当时的目标记录缺失）'],
         },
       },
+      {
+        type: 'culture_review',
+        title: '文化育人价值复盘（教师后台段落）',
+        data: {
+          core_resource: '孩子们动手做的这件作品，以及它背后的生活场景',
+          initial_relation: '起点：照片里的孩子最初只是动手参与，谈不上「认作自己的」（ev-st-photo-1）',
+          evidence_of_change: [
+            '「这是我们一起做出来的」——把作品认作自己的（ev-st-words-1）',
+            '对着镜头主动介绍自己做的东西——愿意表达、愿意介绍（ev-st-video-1）',
+            '「下次我还想再做一遍」——愿意继续探索（ev-st-words-2）',
+          ],
+          ladder_position: '证据撑到情感层的苗头（喜欢、愿意分享）；行动层（改良、服务、向外介绍）尚未充分看见——如实标注，不拔高',
+          usable_statement: '孩子与这份材料的关系从「做」走到「认、讲、想再做」；四条证据俱在，更大的价值结论暂不写。',
+        },
+      },
     ],
     closure_loop: {
       do_now: '把四章文字稿通读一遍，标出想改的地方',
@@ -1227,14 +1267,15 @@ function turnStoryExpand(state) {
       i_will: '按你的意见调整章节与章眼，并把补充材料填进「待补充」的位置',
     },
     state_delta: {
-      completed_nodes: ['WF30', 'WF32'],
+      completed_nodes: ['WF30', 'WF31b', 'WF32'],
     },
     evidence_refs: ['ev-st-photo-1', 'ev-st-words-1', 'ev-st-video-1', 'ev-st-words-2'],
     round_complete: true,
     wf_trace: trace('story_export', 5, [
       { id: 'WF30', name: '图文结构生成', apply: '四章文字稿真实交付——此刻才标记完成' },
+      { id: 'WF31b', name: '文化育人价值复盘', apply: '只写证据撑得住的变化苗头，阶梯标到情感层，行动层如实缺席' },
       { id: 'WF32', name: '多版本导出', apply: `按${version}交付文字稿（演示以文字为准）` },
-    ], ['证据优先', '输出闭环固定'], '写入 completed_nodes WF30/WF32——交付即标记，不提前'),
+    ], ['证据优先', '输出闭环固定'], '写入 completed_nodes WF30/WF31b/WF32——交付即标记，不提前'),
   };
 }
 
