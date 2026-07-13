@@ -16,10 +16,22 @@
 
 $Server     = "43.136.113.129"
 $TunnelUser = "devtunnel"
-$RemotePort = 3001
-$LocalPort  = 3001
+$RemotePort = 3001                    # fixed on the server; do not change
+$PortCandidates = 3001, 13001, 23001, 33001, 43001   # local side tries these in order
 $KeyPath    = "$env:USERPROFILE\.ssh\id_ed25519"
 $AdminName  = "Herman"
+
+# Pick the first local port nothing else is using (e.g. another app on 3001).
+$LocalPort = $null
+$listening = (Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue).LocalPort
+foreach ($p in $PortCandidates) {
+    if ($listening -notcontains $p) { $LocalPort = $p; break }
+}
+if (-not $LocalPort) {
+    Write-Host "All candidate ports ($($PortCandidates -join ', ')) are busy on this PC." -ForegroundColor Red
+    Write-Host "Close some apps and run the wizard again."
+    exit 1
+}
 
 function Write-Step($n, $text) {
     Write-Host ""
@@ -100,6 +112,9 @@ if (-not $probe -or $probe.StatusCode -ne 200) {
 # ---- Step 3: tunnel is up, open the browser ---------------------------
 Write-Step 3 "Access granted - opening DEV platform"
 Write-Host ""
+if ($LocalPort -ne $PortCandidates[0]) {
+    Write-Host "  (Port $($PortCandidates[0]) was busy on this PC - using $LocalPort instead.)" -ForegroundColor Yellow
+}
 Write-Host "  Tunnel is running. DEV platform: http://localhost:$LocalPort/" -ForegroundColor Green
 Write-Host ""
 Write-Host "  IMPORTANT: keep this window open while you work." -ForegroundColor Yellow
