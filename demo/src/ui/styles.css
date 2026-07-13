@@ -703,6 +703,44 @@ html, body {
 #debug-body .debug-section { margin-bottom: 0; min-width: 0; }
 #debug-body .debug-section.debug-span { grid-column: 1 / -1; }
 
+/* Session-log panel (日志): fixed strip under the drawer head, never repainted
+   by renderDebug — category toggles + export/clear live here. */
+.log-panel {
+  padding: 0 calc(var(--sp) * 3) calc(var(--sp) * 2);
+  margin-bottom: calc(var(--sp) * 2);
+  border-bottom: 1px solid rgba(139, 148, 158, 0.25);
+}
+.log-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 4px 0 var(--sp);
+}
+.log-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--slate-text);
+  cursor: pointer;
+  user-select: none;
+}
+.log-toggle input { accent-color: #7EE787; }
+.log-count { color: #8B949E; }
+.log-actions { display: flex; gap: var(--sp); }
+.log-btn {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--slate-text);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(139, 148, 158, 0.35);
+  border-radius: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.log-btn:hover { border-color: #7EE787; color: #7EE787; }
+.log-meta { color: #8B949E; font-size: 11px; margin-top: 6px; }
+
 /* API round-trip (往返) block */
 .api-meta { color: #8B949E; margin-bottom: 6px; }
 .api-attempt {
