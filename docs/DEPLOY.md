@@ -73,10 +73,16 @@ adjacency. If the product ships as a WeChat mini program, CloudBase is the natur
 `serve.mjs` deploys to **CloudBase Run (云托管)** — a container service that runs any HTTP server.
 
 1. In the CloudBase console, create an environment (mainland region) and open **云托管 (CloudBase Run)**.
-2. Create a service; deploy from source (or a Dockerfile). Startup command: `node demo/serve.mjs`.
+2. Create a service; deploy using the repo-root [Dockerfile](../Dockerfile) (zero-dependency image:
+   `node:20-slim` + `demo/` + `harness/schema/`). Startup command is baked in: `node demo/serve.mjs`.
 3. CloudBase Run injects the `PORT` env var; `serve.mjs` already honours it and binds `0.0.0.0`.
 4. Set model keys as service environment variables for server-seeded keys (else the UI sends them).
 5. The service gets an HTTPS URL — paste it into the demo's 服务器地址 field.
+
+CLI path (instead of the console): `npm i -g @cloudbase/cli`, `tcb login` (interactive browser auth, or
+`tcb login --apiKeyId … --apiKey …` with an API key pair), then from the repo root deploy the service in
+the target environment (CloudBase Run supports source/Dockerfile deploys; see `tcb -h` for the
+version-specific command — `tcb run` family on CLI v3).
 
 For a pure WeChat mini program (not this web UI), the proxy would instead be a CloudBase **云函数** with
 an HTTP trigger (functions-framework), and the client becomes mini-program pages calling `wx.request` /
