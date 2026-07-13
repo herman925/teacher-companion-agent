@@ -2,6 +2,12 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-14 (later, 2) — Provider roster overhaul; glm(http) root-caused
+
+- **Root cause of Herman's `glm(http)`** (read straight off the new 失败详情): bigmodel.cn returned `429 code 1113 余额不足或无可用资源包`. Herman's GLM plan lives on **Z.AI (international)** — a separate platform with its own key/balance, distinct from 智谱 mainland (bigmodel.cn). Wrong platform, not a code bug.
+- **Roster now split by platform** ([demo/src/adapter.mjs](demo/src/adapter.mjs)): MiniMax 中国 (minimaxi.com) + MiniMax 国际 (minimax.io); GLM 智谱国内 (bigmodel.cn) + `zai` GLM·Z.AI 国际按量 (`api.z.ai/api/paas/v4`) + `zai-coding` GLM·Z.AI Coding Plan (`api.z.ai/api/coding/paas/v4` — subscription quota bills ONLY through the coding endpoint; the two endpoints are not interchangeable). New aggregators: `freemodel` (FreeModel.dev, `api.freemodel.dev/v1`, default model `auto`), `openrouter` (`openrouter.ai/api/v1`), `kilocode` (Kilo Gateway, OpenRouter-compatible `api.kilo.ai/api/openrouter`). Removed per Herman: `glm-flash`, and the whole OpenCode-local provider (session-API adapter, settings section, `req.opencode` overrides — OpenCode Zen stays). New serve.mjs env keys: `ZAI_API_KEY` (shared by zai/zai-coding), `MINIMAX_INTL_API_KEY`, `FREEMODEL_API_KEY`, `OPENROUTER_API_KEY`, `KILO_API_KEY`.
+- **Endpoint sanity, live**: zai/zai-coding/minimax-intl answer 401 to a dummy key (real endpoints, auth wall); freemodel/openrouter/kilocode return public model lists through /api/models (freemodel: gpt-5.5/5.6/5.4…; kilocode mirrors OpenRouter ids incl. `z-ai/glm-4.7:free`). Tests 120/120, gate green. NOT yet exercised with a real key — Herman should pick 「GLM · Z.AI Coding Plan」 (subscription) or 「GLM · Z.AI」 (pay-as-you-go) and retry. Unverified whether z.ai / openrouter / minimax.io are reachable from the mainland VM itself (server-seeded keys); browser-side keys go client→VM→vendor, so VM egress matters there too.
+
 ## 2026-07-14 (later) — Pilot VM online: public + dev instances, deploy pipeline
 
 - **Platform is live** at http://43.136.113.129/ (Tencent Lighthouse VM, Guangzhou, prepaid to 2027-07). Full provisioning + access + deploy runbook: [docs/OPERATIONS.md](docs/OPERATIONS.md); decision recorded as [ADR-0002](docs/adr/0002-pilot-backend-lighthouse-vm.md) (VM instead of CloudBase for the pilot; migration path preserved).

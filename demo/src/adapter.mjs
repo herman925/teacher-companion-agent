@@ -4,28 +4,51 @@
 
 /** @type {Record<string, import('./types.mjs').ProviderConfig>} */
 export const PROVIDERS = {
+  // MiniMax runs two separate platforms with separate keys/balances:
+  // mainland (minimaxi.com) and international (minimax.io). Same API shape.
   minimax: {
     id: 'minimax',
-    label: 'MiniMax-M3',
+    label: 'MiniMax（中国 minimaxi.com）',
     baseURL: 'https://api.minimaxi.com/v1',
     model: 'MiniMax-M3',
     jsonStrategy: 'tool_call',
     stripThinking: true,
     enabled: true,
   },
+  'minimax-intl': {
+    id: 'minimax-intl',
+    label: 'MiniMax（国际 minimax.io）',
+    baseURL: 'https://api.minimax.io/v1',
+    model: 'MiniMax-M3',
+    jsonStrategy: 'tool_call',
+    stripThinking: true,
+    enabled: true,
+  },
+  // GLM likewise: 智谱 mainland (bigmodel.cn) vs Z.AI international (z.ai) are
+  // DIFFERENT platforms with different keys/balances — a Z.AI key gets 429
+  // 余额不足 on bigmodel.cn. Z.AI Coding Plan subscriptions bill only through
+  // the dedicated coding endpoint (…/api/coding/paas/v4), not the general one.
   glm: {
     id: 'glm',
-    label: 'GLM-5.2',
+    label: 'GLM（智谱国内 bigmodel.cn）',
     baseURL: 'https://open.bigmodel.cn/api/paas/v4',
     model: 'glm-5.2',
     jsonStrategy: 'json_schema',
     enabled: true,
   },
-  'glm-flash': {
-    id: 'glm-flash',
-    label: 'GLM-4.7-Flash（免费）',
-    baseURL: 'https://open.bigmodel.cn/api/paas/v4',
-    model: 'glm-4.7-flash',
+  zai: {
+    id: 'zai',
+    label: 'GLM · Z.AI（国际，按量计费）',
+    baseURL: 'https://api.z.ai/api/paas/v4',
+    model: 'glm-5.2',
+    jsonStrategy: 'json_schema',
+    enabled: true,
+  },
+  'zai-coding': {
+    id: 'zai-coding',
+    label: 'GLM · Z.AI Coding Plan（国际，订阅额度）',
+    baseURL: 'https://api.z.ai/api/coding/paas/v4',
+    model: 'glm-5.2',
     jsonStrategy: 'json_schema',
     enabled: true,
   },
@@ -45,6 +68,37 @@ export const PROVIDERS = {
     jsonStrategy: 'json_object_prompt',
     enabled: false, // evaluation flag (PRD user story 24)
   },
+  // FreeModel.dev (freemodel.dev/dashboard/docs): OpenAI-compatible relay,
+  // Bearer key (fe_oa_…) from the dashboard; model "auto" lets it route, or
+  // pick a concrete id via 获取模型列表 (/v1/models is supported).
+  freemodel: {
+    id: 'freemodel',
+    label: 'FreeModel.dev',
+    baseURL: 'https://api.freemodel.dev/v1',
+    model: 'auto',
+    jsonStrategy: 'json_object_prompt',
+    enabled: true,
+  },
+  // OpenRouter (openrouter.ai): OpenAI-compatible aggregator; key from
+  // openrouter.ai/keys. Model left blank — pick one via 获取模型列表.
+  openrouter: {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    baseURL: 'https://openrouter.ai/api/v1',
+    model: '',
+    jsonStrategy: 'json_object_prompt',
+    enabled: true,
+  },
+  // Kilo Gateway (app.kilo.ai): OpenRouter-compatible endpoint, one key for
+  // many models incl. free tiers (z-ai/glm-4.7:free, minimax/minimax-m2.1:free…).
+  kilocode: {
+    id: 'kilocode',
+    label: 'Kilo Gateway（kilo.ai）',
+    baseURL: 'https://api.kilo.ai/api/openrouter',
+    model: '',
+    jsonStrategy: 'json_object_prompt',
+    enabled: true,
+  },
   // OpenCode Zen (opencode.ai/docs/zen): a hosted, OpenAI-compatible gateway —
   // just a normal cloud provider. Bearer API key from opencode.ai/auth; five
   // free models (deepseek-v4-flash-free, big-pickle, mimo-v2.5-free, …) plus
@@ -54,21 +108,6 @@ export const PROVIDERS = {
     label: 'OpenCode Zen（在线）',
     baseURL: 'https://opencode.ai/zen/v1',
     model: '',
-    jsonStrategy: 'json_object_prompt',
-    enabled: true,
-  },
-  // OpenCode local server (opencode.ai/docs/server): a session-based API, NOT
-  // OpenAI /chat/completions. `opencode serve` proxies whatever models the user
-  // has authed (Zen free tier, or their own MiniMax/GLM/… keys). We drive it
-  // through the same turn contract via json_object_prompt — its json_schema
-  // `format` refused several models in testing, so we rely on the prompt.
-  // `model` is "providerID/modelID" (opencode's two-part identifier).
-  opencode: {
-    id: 'opencode',
-    label: 'OpenCode（本地）',
-    baseURL: 'http://127.0.0.1:4096',
-    model: 'opencode/deepseek-v4-flash-free',
-    kind: 'opencode',
     jsonStrategy: 'json_object_prompt',
     enabled: true,
   },
@@ -177,108 +216,10 @@ export class AdapterError extends Error {
 }
 
 /**
- * Split OpenCode's two-part "providerID/modelID" identifier.
- * @returns {{ providerID: string, modelID: string }}
- */
-function splitOpencodeModel(model) {
-  const idx = String(model).indexOf('/');
-  if (idx <= 0 || idx === String(model).length - 1) {
-    throw new AdapterError('http', `OpenCode 模型需写成 providerID/modelID，当前：${model}`);
-  }
-  return { providerID: model.slice(0, idx), modelID: model.slice(idx + 1) };
-}
-
-/** Optional Basic-auth header when the OpenCode server runs with a password. */
-function opencodeHeaders(apiKey) {
-  const h = { 'content-type': 'application/json' };
-  if (apiKey) h.authorization = `Basic ${Buffer.from(`opencode:${apiKey}`).toString('base64')}`;
-  return h;
-}
-
-/**
- * Call the OpenCode local server for one turn (opencode.ai/docs/server):
- * create a session, POST one message, read the assistant text parts.
- * The session is stateless from our side — we resend the flattened transcript
- * each turn, mirroring how the OpenAI-compatible path works.
- * @returns {Promise<{payload: string, usage: Object|null}>}
- */
-async function callOpencode(p, apiKey, messages, { timeoutMs = 180000 } = {}) {
-  const base = p.baseURL.replace(/\/+$/, '');
-  const { providerID, modelID } = splitOpencodeModel(p.model);
-  const headers = opencodeHeaders(apiKey);
-
-  // System-role messages carry the contract; fold in the json_object_prompt
-  // reinforcement (OpenCode has no response_format we can rely on here).
-  const system = [
-    ...messages.filter((m) => m.role === 'system').map((m) => m.content),
-    '记住：只输出符合契约的 JSON 对象，不要输出任何 JSON 以外的文字。',
-  ].join('\n\n');
-  const transcript = messages
-    .filter((m) => m.role !== 'system')
-    .map((m) => `${m.role === 'assistant' ? '【助手上一轮】' : '【教师】'}\n${m.content}`)
-    .join('\n\n');
-
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), timeoutMs);
-  try {
-    let res = await fetch(`${base}/session`, {
-      method: 'POST', headers, body: JSON.stringify({ title: '陪跑 demo' }), signal: ctl.signal,
-    });
-    if (!res.ok) {
-      const t = await res.text().catch(() => '');
-      throw new AdapterError('http', `OpenCode 建会话失败 ${res.status}：${t.slice(0, 200)}`, res.status);
-    }
-    const session = await res.json();
-    if (!session?.id) throw new AdapterError('http', 'OpenCode 未返回会话 id');
-
-    const body = {
-      model: { providerID, modelID },
-      system,
-      tools: {}, // don't let the coding agent reach for file tools during a chat turn
-      parts: [{ type: 'text', text: transcript || '（无内容）' }],
-    };
-    res = await fetch(`${base}/session/${session.id}/message`, {
-      method: 'POST', headers, body: JSON.stringify(body), signal: ctl.signal,
-    });
-    if (!res.ok) {
-      const t = await res.text().catch(() => '');
-      throw new AdapterError('http', `OpenCode 返回 ${res.status}：${t.slice(0, 300)}`, res.status);
-    }
-    const data = await res.json();
-    // The model call can fail inside a 200 envelope (info.error), e.g. a disabled model.
-    const modelErr = data?.info?.error;
-    if (modelErr) {
-      const detail = modelErr.data?.message || modelErr.name || 'unknown';
-      throw new AdapterError('http', `OpenCode 模型报错：${detail}`, modelErr.data?.statusCode ?? 0);
-    }
-    const text = (Array.isArray(data?.parts) ? data.parts : [])
-      .filter((part) => part?.type === 'text' && typeof part.text === 'string')
-      .map((part) => part.text)
-      .join('')
-      .trim();
-    if (!text) throw new AdapterError('empty_completion', 'OpenCode 未返回文本');
-    const tk = data?.info?.tokens;
-    const usage = tk ? {
-      prompt_tokens: tk.input ?? 0,
-      completion_tokens: tk.output ?? 0,
-      total_tokens: (tk.input ?? 0) + (tk.output ?? 0),
-    } : null;
-    return { payload: text, usage };
-  } catch (e) {
-    if (e instanceof AdapterError) throw e;
-    if (e.name === 'AbortError') throw new AdapterError('network', `OpenCode 请求超时（>${Math.round(timeoutMs / 1000)}s）`);
-    throw new AdapterError('network', `无法连接 OpenCode（${base}）：${e.message}`);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
  * Call one provider once. Node 18+ global fetch.
  * @returns {Promise<{payload: string|Object, usage: Object|null}>}
  */
 export async function callProvider(p, apiKey, messages, { timeoutMs = 180000 } = {}) {
-  if (p.kind === 'opencode') return callOpencode(p, apiKey, messages, { timeoutMs });
   const body = buildRequest(p, messages);
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
@@ -308,7 +249,6 @@ export async function callProvider(p, apiKey, messages, { timeoutMs = 180000 } =
  * @returns {Promise<string[]>} model ids, sorted
  */
 export async function listModels(p, apiKey, { timeoutMs = 20000 } = {}) {
-  if (p.kind === 'opencode') return listOpencodeModels(p, apiKey, { timeoutMs });
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   let res;
@@ -334,35 +274,6 @@ export async function listModels(p, apiKey, { timeoutMs = 20000 } = {}) {
 }
 
 /**
- * List models from an OpenCode server's /config/providers, flattened to the
- * "providerID/modelID" ids the message API expects.
- * @returns {Promise<string[]>}
- */
-async function listOpencodeModels(p, apiKey, { timeoutMs = 20000 } = {}) {
-  const base = p.baseURL.replace(/\/+$/, '');
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), timeoutMs);
-  let res;
-  try {
-    res = await fetch(`${base}/config/providers`, { headers: opencodeHeaders(apiKey), signal: ctl.signal });
-  } catch (e) {
-    throw new AdapterError('network', `无法连接 OpenCode（${base}）：${e.message}`);
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new AdapterError('http', `OpenCode 返回 ${res.status}：${text.slice(0, 200)}`, res.status);
-  }
-  const body = await res.json();
-  const ids = [];
-  for (const prov of Array.isArray(body?.providers) ? body.providers : []) {
-    for (const modelID of Object.keys(prov?.models ?? {})) ids.push(`${prov.id}/${modelID}`);
-  }
-  return [...new Set(ids)].sort();
-}
-
-/**
  * Call with failover: try `preferred`, then the FAILOVER chain, skipping
  * providers without a key. Returns the first success.
  * @param {Record<string,string>} keys  providerId → apiKey
@@ -375,8 +286,7 @@ export async function callWithFailover(preferred, keys, messages, opts = {}) {
   const errors = [];
   for (const id of chain) {
     const p = registry[id];
-    // OpenCode holds the model keys itself — the server auth password is optional.
-    if (!p || p.enabled === false || (p.kind !== 'opencode' && !keys[id])) continue;
+    if (!p || p.enabled === false || !keys[id]) continue;
     try {
       const r = await callProvider(p, keys[id], messages, opts);
       return { ...r, provider: id, errors };

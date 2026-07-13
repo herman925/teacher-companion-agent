@@ -6,7 +6,8 @@
 //
 // Usage:  node demo/serve.mjs [--port 8787]
 // Keys:   entered in the UI per session (sent per-request, held only in memory),
-//         or seeded via env: MINIMAX_API_KEY / GLM_API_KEY / KIMI_API_KEY / QWEN_API_KEY.
+//         or seeded via env — see ENV_KEYS below (MINIMAX_API_KEY, ZAI_API_KEY,
+//         GLM_API_KEY, OPENROUTER_API_KEY, FREEMODEL_API_KEY, KILO_API_KEY, …).
 
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -28,10 +29,15 @@ const HOST = (process.env.FC_SERVER_PORT || process.env.PORT) ? '0.0.0.0' : (pro
 
 const ENV_KEYS = {
   minimax: process.env.MINIMAX_API_KEY || '',
+  'minimax-intl': process.env.MINIMAX_INTL_API_KEY || '',
   glm: process.env.GLM_API_KEY || '',
-  'glm-flash': process.env.GLM_API_KEY || '',
+  zai: process.env.ZAI_API_KEY || '',
+  'zai-coding': process.env.ZAI_API_KEY || '',
   kimi: process.env.KIMI_API_KEY || '',
   qwen: process.env.QWEN_API_KEY || '',
+  freemodel: process.env.FREEMODEL_API_KEY || '',
+  openrouter: process.env.OPENROUTER_API_KEY || '',
+  kilocode: process.env.KILO_API_KEY || '',
   'opencode-zen': process.env.OPENCODE_API_KEY || '',
 };
 
@@ -56,8 +62,6 @@ function loadPrompt(name) {
  *   req.model            — model id override for the preferred provider
  *   req.custom           — { baseURL, model, label? } OpenAI-compatible custom endpoint
  *                          (json_object_prompt strategy; key under keys.custom)
- *   req.opencode         — { baseURL?, model? } OpenCode local server overrides
- *                          (session API; optional server password under keys.opencode)
  */
 function effectiveRegistry(req) {
   const registry = { ...PROVIDERS };
@@ -69,13 +73,6 @@ function effectiveRegistry(req) {
       model: req.custom.model,
       jsonStrategy: 'json_object_prompt',
       enabled: true,
-    };
-  }
-  if (req.opencode && registry.opencode) {
-    registry.opencode = {
-      ...registry.opencode,
-      ...(req.opencode.baseURL ? { baseURL: String(req.opencode.baseURL).replace(/\/+$/, '') } : {}),
-      ...(req.opencode.model ? { model: req.opencode.model } : {}),
     };
   }
   const preferred = req.provider;
@@ -154,11 +151,9 @@ async function runTurn(req, emit) {
       apiAttempts.push({
         attempt,
         provider: result.provider,
-        endpoint: p.kind === 'opencode'
-          ? `${p.baseURL}/session/:id/message`
-          : `${p.baseURL ?? ''}/chat/completions`,
+        endpoint: `${p.baseURL ?? ''}/chat/completions`,
         model: p.model ?? '',
-        strategy: p.kind === 'opencode' ? 'opencode-session' : (p.jsonStrategy ?? ''),
+        strategy: p.jsonStrategy ?? '',
         request_messages: sentMessages,
         response_raw: typeof result.payload === 'string' ? result.payload : JSON.stringify(result.payload, null, 2),
         usage: result.usage ?? null,
@@ -274,8 +269,7 @@ const server = http.createServer(async (req, res) => {
       const p = registry[q.provider];
       if (!p) throw new Error(`未知供应商：${q.provider}`);
       const key = q.key || ENV_KEYS[q.provider] || '';
-      // OpenCode holds model keys itself; its server password is optional.
-      if (!key && p.kind !== 'opencode') throw new Error('缺少 API 密钥——先填密钥再获取模型列表');
+      if (!key) throw new Error('缺少 API 密钥——先填密钥再获取模型列表');
       const models = await listModels(p, key);
       res.end(JSON.stringify({ ok: true, provider: q.provider, defaultModel: p.model, models }));
     } catch (e) {
