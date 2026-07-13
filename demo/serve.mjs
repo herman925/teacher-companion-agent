@@ -330,7 +330,12 @@ const server = http.createServer(async (req, res) => {
   }
   try {
     const data = await readFile(filePath);
-    res.writeHead(200, { 'content-type': MIME[path.extname(filePath)] ?? 'application/octet-stream' });
+    res.writeHead(200, {
+      'content-type': MIME[path.extname(filePath)] ?? 'application/octet-stream',
+      // Dev server: never let the browser serve stale UI modules after a code
+      // update — heuristic caching bit us (old main.js next to a new server).
+      'cache-control': 'no-cache',
+    });
     res.end(data);
   } catch {
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
