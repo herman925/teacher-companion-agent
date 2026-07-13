@@ -427,7 +427,7 @@ async function send(message, opts = {}) {
     else if (name === 'turn') { gotTurn = true; handleTurn(text, data); }
     else if (name === 'error') {
       logEvent('error', 'turn_error', { message: data.message ?? '', kind: data.kind ?? '', chain: data.chain ?? [] });
-      showError(data.message || '这一轮没有走通。');
+      showError(data.message || '这一轮没有走通。', data.chain);
     }
   };
   const simulate = async (label) => {
@@ -562,11 +562,11 @@ function showSimulatedNotice() {
   fadeIn(note);
 }
 
-function showError(message) {
+function showError(message, chain) {
   setStatus(null);
   const notice = renderErrorNotice(message, () => {
     if (pendingMessage) send(pendingMessage, { isRetry: true });
-  });
+  }, { chain });
   messagesEl.append(notice);
   fadeIn(notice);
   scrollToEnd();

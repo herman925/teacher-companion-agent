@@ -420,6 +420,17 @@ html, body {
 
 .error-notice p { margin: 0 0 var(--sp); overflow-wrap: break-word; }
 
+/* Per-provider failure detail (failover chain) inside the error notice. */
+.error-chain { margin: 0 0 var(--sp); font-size: 13px; }
+.error-chain summary { cursor: pointer; opacity: 0.85; }
+.error-chain-line {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  opacity: 0.9;
+}
+
 .retry-btn {
   appearance: none;
   background: transparent;

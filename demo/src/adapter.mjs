@@ -386,7 +386,11 @@ export async function callWithFailover(preferred, keys, messages, opts = {}) {
       // the chain is short and the demo favors resilience over precision.
     }
   }
-  const err = new AdapterError('network', `所有可用供应商都失败了：${errors.map((e) => `${e.provider}(${e.kind})`).join('，')}`);
+  // Nothing was even attempted (every provider skipped for lack of a key) reads
+  // very differently from "everything was tried and failed" — say which it was.
+  const err = errors.length
+    ? new AdapterError('network', `所有可用供应商都失败了：${errors.map((e) => `${e.provider}(${e.kind})`).join('，')}。点开「失败详情」看具体原因。`)
+    : new AdapterError('network', '没有可尝试的供应商：所选服务与备选链都没有 API 密钥。请在设置里填写至少一个密钥，或改用演示模式。');
   err.chain = errors;
   throw err;
 }

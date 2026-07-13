@@ -351,13 +351,27 @@ export function renderAwaitingNote() {
 }
 
 /**
- * Muted-brick error notice with a retry affordance.
+ * Muted-brick error notice with a retry affordance. When the failover chain
+ * carried per-provider failures, they render as an expandable 失败详情 list
+ * (textContent only — vendor error bodies are untrusted), so the teacher sees
+ * WHY (限流/密钥/服务端错误) instead of just a provider id.
  * @param {string} message
  * @param {() => void} onRetry
+ * @param {{chain?: Array<{provider?: string, kind?: string, message?: string}>}} [opts]
  */
-export function renderErrorNotice(message, onRetry) {
+export function renderErrorNotice(message, onRetry, opts = {}) {
   const box = el('div', 'error-notice');
   box.append(el('p', '', message || '这一轮没有走通，稍等片刻再试一次。'));
+  const chain = Array.isArray(opts.chain) ? opts.chain.filter(Boolean) : [];
+  if (chain.length) {
+    const details = el('details', 'error-chain');
+    details.append(el('summary', '', '失败详情'));
+    for (const e of chain) {
+      details.append(el('div', 'error-chain-line',
+        `${e.provider ?? '—'}（${e.kind ?? 'unknown'}）：${e.message ?? ''}`));
+    }
+    box.append(details);
+  }
   const btn = el('button', 'retry-btn', '重试');
   btn.type = 'button';
   btn.addEventListener('click', () => {
