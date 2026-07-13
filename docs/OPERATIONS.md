@@ -36,7 +36,19 @@ git push server <branch>   # Tencent bare repo — auto-deploys via post-receive
 - `git push server main` → public instance redeploys itself
 - The `server` remote is `ubuntu@43.136.113.129:/srv/git/platform.git`; the hook lives in `hooks/post-receive` there and calls `/usr/local/bin/deploy-dev` / `deploy-public` (pull `--ff-only` + service restart; they can also be run by hand over SSH).
 
-Normal cycle: work on `dev` → push to both remotes → test via tunnel → merge `dev` into `main` → push `main` to both remotes.
+Normal cycle:
+
+```bash
+git checkout dev                  # work happens on dev
+# …edit, commit…
+git push server dev               # dev instance redeploys itself (watch hook output)
+# …teammates test via the tunnel wizard…
+git checkout main && git merge --ff-only dev
+git push server main              # public instance redeploys itself
+git push origin main dev          # GitHub mirror — fine if this fails; retry when reachable
+```
+
+Rules of thumb: `server` is the deploy truth, `origin` (GitHub) is the mirror; never commit directly on `main` except merges from `dev`; the hook prints `dev deployed: <commit>` / `public deployed: <commit>` — if that line is missing, the deploy did not happen.
 
 ## Dev access for teammates (no SSH knowledge needed)
 
