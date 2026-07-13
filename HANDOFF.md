@@ -2,6 +2,15 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-14 (later) — Pilot VM online: public + dev instances, deploy pipeline
+
+- **Platform is live** at http://43.136.113.129/ (Tencent Lighthouse VM, Guangzhou, prepaid to 2027-07). Full provisioning + access + deploy runbook: [docs/OPERATIONS.md](docs/OPERATIONS.md); decision recorded as [ADR-0002](docs/adr/0002-pilot-backend-lighthouse-vm.md) (VM instead of CloudBase for the pilot; migration path preserved).
+- **Two instances**: public (`main`, nginx→:3000) and dev (`dev`, localhost-only :3001, SSH-tunnel gated). Teammates get dev access via `tools/dev-access-wizard.bat` (no SSH knowledge needed); Herman authorizes keys with `tools/grant-dev-access.ps1`. The `devtunnel` server user is forward-only to 3001 — verified: shell denied, other ports refused, tunnel serves the dev page.
+- **Deploy pipeline is local→Tencent, never GitHub-pull** (GitHub flaky/blocked from mainland — fetches from the VM timed out repeatedly). `git push server dev|main` hits a bare repo on the VM whose post-receive hook auto-runs `deploy-dev`/`deploy-public`. Verified end-to-end: push produced `dev deployed: 941b91c…` from the hook. GitHub (`origin` = org Chao0s, `fork` = herman925 — remote names fixed this session per Herman) stays as the collaboration mirror.
+- **PostgreSQL 16 provisioned but NOT wired to code** — `serve.mjs` still stateless. Data-shape + API design ready for the build: [docs/DATABASE.md](docs/DATABASE.md) (JSONB course_state + append-only messages/snapshots/violations, one-transaction turn shape, v1 endpoint table). Persistence layer = next big task.
+- **Verified live**: public page title + `/api/chat` mock round-trip through the full pipeline; dev instance same via tunnel; port 3000 externally blocked, 3001 loopback-only.
+- **Open risks / next**: no domain → no 备案 → no TLS → **test data only, no real child data**; 备案 is the multi-week long pole, start early. Model keys in both `.env`s are empty placeholders. Nightly pg_dump lands with the persistence layer. Auth choice (SMS vs invite-code) still open ([docs/DATABASE.md](docs/DATABASE.md) §6).
+
 ## 2026-07-14 — Debug drawer session log + export
 
 - **Herman's screenshot triage**: the reported "JSON parsing error" was the harness doing its job — GLM-5.2 attempt 1 emitted invalid JSON (`contract_parse` block at position 115), L4 injected feedback, attempt 2 was accepted. The red 「所有可用供应商都失败了：glm(http)」 bubble was a DIFFERENT, later turn: GLM returned an HTTP error and no other provider had a key, so the failover chain had nothing left. Nothing broken in the parse path; the gap was observability — hence this session's feature.
