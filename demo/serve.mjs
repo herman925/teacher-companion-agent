@@ -151,7 +151,9 @@ async function runTurn(req, emit) {
       apiAttempts.push({
         attempt,
         provider: result.provider,
-        endpoint: `${p.baseURL ?? ''}/chat/completions`,
+        // base_url_used: the node that actually answered (providers with
+        // altBaseURLs, e.g. FreeModel tier nodes, hop automatically).
+        endpoint: `${result.base_url_used ?? p.baseURL ?? ''}/chat/completions`,
         model: p.model ?? '',
         strategy: p.jsonStrategy ?? '',
         request_messages: sentMessages,

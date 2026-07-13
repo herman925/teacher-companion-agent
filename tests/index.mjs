@@ -11,3 +11,4 @@ import '../demo/tests/runtime-harness.test.mjs';
 import '../demo/tests/mock-walkthrough.test.mjs';
 import '../demo/tests/session-log.test.mjs';
 import '../demo/tests/adapter-failover.test.mjs';
+import '../demo/tests/node-failover.test.mjs';

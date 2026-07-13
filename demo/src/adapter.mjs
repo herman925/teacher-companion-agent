@@ -71,10 +71,18 @@ export const PROVIDERS = {
   // FreeModel.dev (freemodel.dev/dashboard/docs): OpenAI-compatible relay,
   // Bearer key (fe_oa_…) from the dashboard; model "auto" lets it route, or
   // pick a concrete id via 获取模型列表 (/v1/models is supported).
+  // FreeModel publishes several OpenAI-format nodes: openai-t0
+  // (api.freemodel.dev, all tiers) plus the T1+/T2+ Singapore nodes. The
+  // primary works for every account; the alternates are tried AUTOMATICALLY
+  // when the primary is down or throttled (altBaseURLs, see callProvider).
+  // Its Anthropic-format nodes (cc./api-cc.freemodel.dev, /v1/messages) are
+  // a different wire format — not used here. To PIN a premium node instead,
+  // use 自定义端点 with e.g. https://vip-sg.freemodel.dev/v1.
   freemodel: {
     id: 'freemodel',
     label: 'FreeModel.dev',
     baseURL: 'https://api.freemodel.dev/v1',
+    altBaseURLs: ['https://vip-sg.freemodel.dev/v1', 'https://api-t2-sg.freemodel.dev/v1'],
     model: 'auto',
     jsonStrategy: 'json_object_prompt',
     enabled: true,
@@ -215,33 +223,57 @@ export class AdapterError extends Error {
   }
 }
 
-/**
- * Call one provider once. Node 18+ global fetch.
- * @returns {Promise<{payload: string|Object, usage: Object|null}>}
- */
-export async function callProvider(p, apiKey, messages, { timeoutMs = 180000 } = {}) {
-  const body = buildRequest(p, messages);
+/** One POST to a node's /chat/completions; throws AdapterError on any failure. */
+async function callNode(p, base, apiKey, body, timeoutMs) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   let res;
   try {
-    res = await fetch(`${p.baseURL}/chat/completions`, {
+    res = await fetch(`${base}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
       body: JSON.stringify(body),
       signal: ctl.signal,
     });
   } catch (e) {
-    throw new AdapterError('network', `无法连接 ${p.label}：${e.message}`);
+    throw new AdapterError('network', `无法连接 ${p.label}（${base}）：${e.message}`);
   } finally {
     clearTimeout(timer);
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new AdapterError('http', `${p.label} 返回 ${res.status}：${text.slice(0, 300)}`, res.status);
+    throw new AdapterError('http', `${p.label}（${base}）返回 ${res.status}：${text.slice(0, 300)}`, res.status);
   }
   const completion = await res.json();
-  return { payload: extractPayload(p, completion), usage: completion.usage ?? null };
+  return { payload: extractPayload(p, completion), usage: completion.usage ?? null, base_url_used: base };
+}
+
+/** Node failures worth retrying on an alternate node of the SAME provider:
+ * unreachable, throttled, or server-side — NOT auth errors (same key everywhere). */
+function nodeHopWorthy(e) {
+  return e.kind === 'network' || (e.kind === 'http' && (e.status === 429 || e.status >= 500));
+}
+
+/**
+ * Call one provider once. Node 18+ global fetch. Providers with `altBaseURLs`
+ * (e.g. FreeModel.dev's tier nodes) fail over across their own nodes
+ * automatically when the primary is down/throttled; the node actually used is
+ * returned as `base_url_used` so the debug drawer / session log can show it.
+ * @returns {Promise<{payload: string|Object, usage: Object|null, base_url_used: string}>}
+ */
+export async function callProvider(p, apiKey, messages, { timeoutMs = 180000 } = {}) {
+  const body = buildRequest(p, messages);
+  const bases = [p.baseURL, ...(Array.isArray(p.altBaseURLs) ? p.altBaseURLs : [])];
+  let lastErr = null;
+  for (const base of bases) {
+    try {
+      return await callNode(p, base, apiKey, body, timeoutMs);
+    } catch (e) {
+      lastErr = e;
+      if (!(e instanceof AdapterError) || !nodeHopWorthy(e) || base === bases[bases.length - 1]) throw e;
+    }
+  }
+  throw lastErr; // unreachable; loop always returns or throws
 }
 
 /**
