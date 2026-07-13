@@ -351,13 +351,27 @@ export function renderAwaitingNote() {
 }
 
 /**
- * Muted-brick error notice with a retry affordance.
+ * Muted-brick error notice with a retry affordance. When the failover chain
+ * carried per-provider failures, they render as an expandable 失败详情 list
+ * (textContent only — vendor error bodies are untrusted), so the teacher sees
+ * WHY (限流/密钥/服务端错误) instead of just a provider id.
  * @param {string} message
  * @param {() => void} onRetry
+ * @param {{chain?: Array<{provider?: string, kind?: string, message?: string}>}} [opts]
  */
-export function renderErrorNotice(message, onRetry) {
+export function renderErrorNotice(message, onRetry, opts = {}) {
   const box = el('div', 'error-notice');
   box.append(el('p', '', message || '这一轮没有走通，稍等片刻再试一次。'));
+  const chain = Array.isArray(opts.chain) ? opts.chain.filter(Boolean) : [];
+  if (chain.length) {
+    const details = el('details', 'error-chain');
+    details.append(el('summary', '', '失败详情'));
+    for (const e of chain) {
+      details.append(el('div', 'error-chain-line',
+        `${e.provider ?? '—'}（${e.kind ?? 'unknown'}）：${e.message ?? ''}`));
+    }
+    box.append(details);
+  }
   const btn = el('button', 'retry-btn', '重试');
   btn.type = 'button';
   btn.addEventListener('click', () => {
@@ -396,8 +410,8 @@ export function renderWfTrace(wfTrace) {
 
 // -------------------------------------------------------------- debug drawer
 
-function debugSection(heading, node) {
-  const section = el('div', 'debug-section');
+function debugSection(heading, node, { span = false } = {}) {
+  const section = el('div', 'debug-section' + (span ? ' debug-span' : ''));
   section.append(el('div', 'debug-heading', heading));
   section.append(node);
   return section;
@@ -407,6 +421,51 @@ function pre(value) {
   const node = el('pre');
   node.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
   return node;
+}
+
+/** Render one API round-trip attempt: request messages, raw response, harness verdict. */
+function apiAttemptBlock(a) {
+  const box = el('div', 'api-attempt');
+  const decClass = a.decision === 'accepted' ? 'debug-ok'
+    : a.decision === 'degraded' ? 'debug-violation' : 'api-retry';
+  box.append(el('div', 'api-attempt-head',
+    `尝试 ${a.attempt} · ${a.provider ?? '—'} · ${a.model ?? ''} · ${a.strategy ?? ''} · ${a.elapsed_ms ?? 0}ms`));
+  box.append(el('div', 'api-endpoint', `POST ${a.endpoint ?? '—'}`));
+
+  // Request: one collapsible per message (system prompt is the first).
+  const reqD = el('details');
+  reqD.append(el('summary', '', `发送 messages（${(a.request_messages ?? []).length}）`));
+  for (const m of a.request_messages ?? []) {
+    const md = el('details', 'api-msg');
+    md.append(el('summary', '', `${m.role} · ${String(m.content ?? '').length} 字符`));
+    md.append(pre(m.content ?? ''));
+    reqD.append(md);
+  }
+  box.append(reqD);
+
+  // Raw response exactly as the model returned it (before parse).
+  const respD = el('details');
+  respD.append(el('summary', '', 'API 原始响应（raw）'));
+  respD.append(pre(a.response_raw ?? '（空）'));
+  box.append(respD);
+
+  // Harness verdict for this attempt.
+  const verdict = el('div', 'api-verdict');
+  verdict.append(el('span', decClass,
+    `${a.parsed_ok ? '可解析' : '解析失败'} · ${a.blocking_count ?? 0} 个阻断 · 判定：${a.decision ?? '—'}`));
+  box.append(verdict);
+  for (const v of a.violations ?? []) {
+    const line = el('div', 'debug-violation');
+    line.append(el('span', 'v-kind', v.kind), document.createTextNode(` (${v.action ?? '—'}) ${v.detail ?? ''}`));
+    box.append(line);
+  }
+  if (a.feedback_injected) {
+    const fbD = el('details', 'api-feedback');
+    fbD.append(el('summary', '', '注入的护栏反馈（L4 重写指令）'));
+    fbD.append(pre(a.feedback_injected));
+    box.append(fbD);
+  }
+  return box;
 }
 
 /**
@@ -443,11 +502,34 @@ export function renderDebug(container, info) {
     container.append(debugSection('state_delta（本轮）', pre(ev.turn.state_delta ?? {})));
   }
 
+  // API round-trip(s): what left, what came back, and the harness verdict.
+  if (ev?.api_debug) {
+    const ad = ev.api_debug;
+    const box = el('div');
+    const meta = [
+      `${ad.provider ?? '—'}`,
+      ad.model ? `model ${ad.model}` : '',
+      ad.base_url || '',
+      `${(ad.attempts ?? []).length} 次尝试`,
+    ].filter(Boolean).join(' · ');
+    box.append(el('div', 'api-meta', meta));
+    if (ad.chain_errors?.length) {
+      const ce = el('div', 'api-chain-errors');
+      ce.append(el('div', 'prompt-note', '失败切换记录（failover）：'));
+      for (const e of ad.chain_errors) {
+        ce.append(el('div', 'debug-violation', `${e.provider}（${e.kind}）${e.message ?? ''}`));
+      }
+      box.append(ce);
+    }
+    for (const a of ad.attempts ?? []) box.append(apiAttemptBlock(a));
+    container.append(debugSection('API 往返（本轮）', box, { span: true }));
+  }
+
   if (info?.state) {
     const details = el('details');
     details.append(el('summary', '', 'course_state（展开）'));
     details.append(pre(info.state));
-    container.append(debugSection('course_state', details));
+    container.append(debugSection('course_state', details, { span: true }));
 
     const map = el('div', 'wf-map');
     const done = new Set(info.state.completed_nodes || []);
@@ -462,7 +544,7 @@ export function renderDebug(container, info) {
       }
       map.append(stageBox);
     }
-    container.append(debugSection('工作流地图', map));
+    container.append(debugSection('工作流地图', map, { span: true }));
   }
 
   // Dev-mode prompt visibility: full system prompt for this turn (if captured).
@@ -484,7 +566,7 @@ export function renderDebug(container, info) {
     promptPre.classList.add('prompt-pre');
     promptDetails.append(promptPre);
     box.append(promptDetails);
-    container.append(debugSection('提示词（本轮）', box));
+    container.append(debugSection('提示词（本轮）', box, { span: true }));
   }
 
   if (ev) {

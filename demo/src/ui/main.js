@@ -13,6 +13,7 @@ import {
 import { messageIn, cardIn, chipsIn, closureIn, fadeIn } from './motion.js';
 import { runLocalMockTurn } from './local-turn.mjs';
 import { buildSystemPrompt, stageModuleName, profileSectionText } from '../prompt-builder.mjs';
+import { createLogStore, mountLogPanel, redactSecrets } from './session-log.mjs';
 
 // ------------------------------------------------------------ persistence
 
@@ -27,6 +28,7 @@ const LS = {
   apiBase: 'cst.apiBase',
   devmode: 'cst.devmode',
   profile: 'cst.profile',
+  logcfg: 'cst.logcfg',
 };
 
 function load(key, fallback) {
@@ -62,6 +64,14 @@ let customCfg = { baseURL: '', model: '', key: '', label: '', ...load(LS.custom,
 let opencodeCfg = { baseURL: 'http://127.0.0.1:4096', model: '', key: '', ...load(LS.opencode, {}) };
 /** 开发者模式: show wf_trace annotations + workflow map details. */
 let devMode = Boolean(load(LS.devmode, false));
+
+/** Session logger (debug drawer 「日志」 panel): every category defaults ON;
+ * toggles persist in localStorage; entries are secret-redacted at append time. */
+const logStore = createLogStore({
+  loadConfig: () => load(LS.logcfg, null),
+  saveConfig: (cfg) => save(LS.logcfg, cfg),
+});
+const logEvent = (cat, event, data) => logStore.log(cat, event, data);
 
 /** 教师档案 (PRD §7.4 v1, local-only): read-only context, never model-writable. */
 let profile = { region: '', ageBand: '', classSize: '', stylePref: '', ...load(LS.profile, {}) };
@@ -118,12 +128,16 @@ const LOCAL_LABELS = {
   custom: '自定义端点（OpenAI 兼容）',
 };
 
-/** Offline fallback when /api/health is unreachable. */
+/** Offline fallback when /api/health is unreachable (e.g. static hosting).
+ * Must mirror the enabled providers in adapter.mjs PROVIDERS, so the dropdown
+ * offers the same choices with or without a backend. */
 const FALLBACK_PROVIDERS = [
   { id: 'minimax', label: 'MiniMax', defaultModel: '', hasEnvKey: false },
   { id: 'glm', label: 'GLM', defaultModel: '', hasEnvKey: false },
   { id: 'glm-flash', label: 'GLM-Flash', defaultModel: '', hasEnvKey: false },
   { id: 'kimi', label: 'Kimi', defaultModel: '', hasEnvKey: false },
+  { id: 'opencode-zen', label: 'OpenCode Zen（在线）', defaultModel: '', hasEnvKey: false },
+  { id: 'opencode', label: 'OpenCode（本地）', defaultModel: 'opencode/deepseek-v4-flash-free', hasEnvKey: false },
 ];
 
 /** @type {Array<{id: string, label: string, defaultModel: string, hasEnvKey: boolean}>} */
@@ -393,6 +407,9 @@ async function send(message, opts = {}) {
   updateSkipLink();
   removeWelcome();
   pendingMessage = text;
+  logEvent('user_input', opts.isRetry ? 'retry' : 'message', {
+    text, provider, dev_mode: devMode, stage: courseState?.stage ?? null,
+  });
 
   if (!opts.isRetry) {
     clearAwaitingNotes();
@@ -408,11 +425,17 @@ async function send(message, opts = {}) {
   const dispatch = (name, data) => {
     if (name === 'status') setStatus(data.text ?? '…');
     else if (name === 'turn') { gotTurn = true; handleTurn(text, data); }
-    else if (name === 'error') showError(data.message || '这一轮没有走通。');
+    else if (name === 'error') {
+      logEvent('error', 'turn_error', { message: data.message ?? '', kind: data.kind ?? '', chain: data.chain ?? [] });
+      showError(data.message || '这一轮没有走通。', data.chain);
+    }
   };
   const simulate = async (label) => {
     const stateBefore = courseState;
     const wired = wireHistory();
+    logEvent('api_out', 'local_mock_turn', {
+      provider, label: label || '演示模式', history_count: wired.length, message: text,
+    });
     const ev = runLocalMockTurn(stateBefore, wired, text, { profile: profileForRequest() });
     if (label) { ev.providerLabel = label; ev.simulated = true; }
     if (devMode) {
@@ -433,13 +456,21 @@ async function send(message, opts = {}) {
       await simulate(`模拟演示（后端未连接，未实际调用 ${providerInfo(provider)?.label ?? provider}）`);
     } else {
       const crossOrigin = Boolean(apiBase);
+      const requestBody = chatRequestBody(text);
+      // The store redacts again on append; redacting here too keeps the raw
+      // keys object from ever entering the logging path.
+      logEvent('api_out', 'chat_request', {
+        url: apiUrl('/api/chat'),
+        transport: crossOrigin ? 'buffered-json' : 'sse',
+        body: redactSecrets(requestBody),
+      });
       const res = await fetch(apiUrl('/api/chat'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           accept: crossOrigin ? 'application/json' : 'text/event-stream',
         },
-        body: JSON.stringify(chatRequestBody(text)),
+        body: JSON.stringify(requestBody),
       });
       if (!res.ok) throw new Error(`服务返回 ${res.status}`);
       const ct = res.headers.get('content-type') || '';
@@ -456,6 +487,7 @@ async function send(message, opts = {}) {
       }
     }
   } catch (err) {
+    logEvent('error', 'request_failed', { message: err?.message ?? String(err), provider });
     if (needsBackend) {
       showSimulatedNotice();
       await simulate(`模拟演示（后端连接失败，未实际调用 ${providerInfo(provider)?.label ?? provider}）`);
@@ -472,6 +504,38 @@ async function send(message, opts = {}) {
 
 /** @param {string} userText @param {Object} ev the "turn" SSE event */
 function handleTurn(userText, ev) {
+  const stageBefore = courseState?.stage ?? null;
+  // API 返回: the reply + full round-trip detail when the server attached it
+  // (api_debug arrives only in 开发者模式; usage/provider always).
+  logEvent('api_in', 'turn', {
+    provider: ev.provider ?? null,
+    provider_label: ev.providerLabel ?? null,
+    simulated: Boolean(ev.simulated),
+    usage: ev.usage ?? null,
+    reply_markdown: ev.turn?.reply_markdown ?? '',
+    question: ev.turn?.question ?? null,
+    artifacts: (ev.turn?.artifacts ?? []).map((a) => ({ type: a.type, title: a.title })),
+    api_debug: ev.api_debug ?? null,
+  });
+  // 护栏: every gate report, including clean passes (attempt count matters).
+  logEvent('harness', 'gate_report', {
+    ok: ev.gate_report?.ok ?? null,
+    attempt: ev.gate_report?.attempt ?? null,
+    degraded: Boolean(ev.gate_report?.degraded),
+    violations: ev.gate_report?.violations ?? [],
+  });
+  // 工作流: stage movement + node declarations + the state delta that drove them.
+  logEvent('workflow', 'turn_progress', {
+    stage_before: stageBefore,
+    stage_after: ev.state?.stage ?? null,
+    stage_name: ev.stageName ?? null,
+    completed_nodes: ev.state?.completed_nodes ?? [],
+    round_complete: Boolean(ev.turn?.round_complete),
+    awaiting_feedback: Boolean(ev.state?.awaiting_feedback),
+    state_delta: ev.turn?.state_delta ?? {},
+    wf_trace: ev.turn?.wf_trace ?? null,
+  });
+
   courseState = ev.state;
   lastEvent = ev;
   lastTurnHadQuestion = Boolean(ev.turn?.question);
@@ -498,11 +562,11 @@ function showSimulatedNotice() {
   fadeIn(note);
 }
 
-function showError(message) {
+function showError(message, chain) {
   setStatus(null);
   const notice = renderErrorNotice(message, () => {
     if (pendingMessage) send(pendingMessage, { isRetry: true });
-  });
+  }, { chain });
   messagesEl.append(notice);
   fadeIn(notice);
   scrollToEnd();
@@ -773,6 +837,7 @@ function devModeField() {
   box.id = 'devmode-toggle';
   box.checked = devMode;
   box.addEventListener('change', () => {
+    logEvent('session', 'devmode_toggle', { on: box.checked });
     devMode = box.checked;
     save(LS.devmode, devMode);
     replayTranscript();
@@ -881,6 +946,7 @@ async function initProviders() {
 function resetCourse() {
   const sure = window.confirm('开始新课程会清空当前对话和课程进度，确定吗？');
   if (!sure) return;
+  logEvent('session', 'new_course', { previous_course: courseState?.course_id ?? null });
   courseState = createInitialState(`course-${Date.now()}`);
   transcript = [];
   lastEvent = null;
@@ -944,6 +1010,7 @@ function wire() {
   });
 
   providerSelect.addEventListener('change', () => {
+    logEvent('session', 'provider_change', { from: provider, to: providerSelect.value });
     provider = providerSelect.value;
     save(LS.provider, provider);
     syncOpenSection();
@@ -955,6 +1022,20 @@ function wire() {
 function boot() {
   save(LS.state, courseState); // persist a fresh course on first visit
   wire();
+  mountLogPanel($('#log-panel'), logStore, {
+    getContext: () => ({
+      provider,
+      dev_mode: devMode,
+      backend_online: backendOnline,
+      api_base: apiBase || '(same-origin)',
+      course_id: courseState?.course_id ?? null,
+      stage: courseState?.stage ?? null,
+    }),
+  });
+  logEvent('session', 'boot', {
+    provider, dev_mode: devMode, transcript_entries: transcript.length,
+    course_id: courseState?.course_id ?? null, stage: courseState?.stage ?? null,
+  });
   replayTranscript();
   updateHeader();
   updateSkipLink();

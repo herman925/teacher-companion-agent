@@ -1,6 +1,9 @@
 @echo off
+rem NOTE: keep this file ASCII-only above the chcp line -- cmd parses
+rem batch files with the system codepage, and UTF-8 Chinese here
+rem desyncs the parser into executing comment fragments.
 rem ============================================================
-rem  陪跑智能体 demo launcher
+rem  Peipao companion-agent demo launcher
 rem  Starts the zero-dependency demo server and opens the browser.
 rem  Requirements: Node.js 18+ on PATH. No npm install needed.
 rem
@@ -12,6 +15,7 @@ rem    set KIMI_API_KEY=sk-...
 rem  Usage: launch-demo.bat [port]   (default 8787)
 rem ============================================================
 setlocal
+chcp 65001 >nul
 cd /d "%~dp0"
 
 where node >nul 2>nul
