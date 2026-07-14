@@ -46,6 +46,8 @@ Rule: teacher-facing surfaces use only the warm family; the cool slate pair is q
 * **Harness-refusal notice:** when L3 blocks fabrication or a gate refuses a request (e.g., full plan before evidence), the reply renders normally but carries a slim Muted Brick top rule and a one-line plain-language reason plus the next-evidence task. Courteous, brief, never scolding.
 * **Input area:** single rounded field (12px) with warm border, growing to 5 lines; send button is a Banyan Deep Green circle with an ink-brush arrow glyph. A quiet 先跳过 text link sits left of send whenever the agent has asked a question.
 * **Debug drawer:** slides from the right, Study-Lamp Slate, monospace; shows stage, state diff (green/red JSON lines), gate checks with pass/fail ticks, provider + token usage. A keyboard shortcut and a tiny wrench icon open it; teachers should never notice it exists.
+* **History rail (历史课程侧栏):** the conversation-list surface (as a chat app has a left rail), shown only when server-side history exists (the persistence tier). It defers to the reading experience — collapsed by default so the single centered column stays undisturbed. A narrow (12px) hot-zone at the left edge reveals it on hover (desktop): it slides in over the left margin on a paper surface with a hairline warm right border and the card shadow (never a green fill — the rail is backdrop, not brand), and slides away when the pointer leaves. A pin toggle keeps it open and reflows the column to its right, and that choice persists across reloads; unpinning returns to hover-reveal. On touch, a header 历史 button opens it as a left sheet. Rows: course title in body sans; the active course is marked with a Banyan Deep Green dot and Banyan Wash fill (never persimmon or gold — those stay reserved). Motion matches the drawers: slide 280ms `power2.out`.
+* **History rail — manage & delete:** a 管理 text link flips the rows into a multi-select state (a checkbox per row); a footer then offers 删除所选 (N) and 全部删除. Deletion is destructive, so it is always two-step and inline — never a browser modal dialog: the delete control re-labels to a 确定删除 N 个？ confirm and only completes on a second click (取消, or leaving manage mode, aborts). A single row's ✕ (revealed on hover) uses the same inline confirm. Destructive labels use Muted Brick, consistent with harness-refusal and error color.
 
 ## 5. Layout Principles
 
@@ -54,6 +56,7 @@ Rule: teacher-facing surfaces use only the warm family; the cool slate pair is q
 - Mobile-first: at <480px the column is full-bleed with 16px gutters; chips become a horizontal scroll row; the debug drawer becomes a bottom sheet.
 - Touch targets ≥44px everywhere (chips included).
 - The page header is minimal: product name in serif, course name in faded ink, and the settings (API key/provider) gear — no navigation chrome to compete with the conversation.
+- The history rail is the one permitted left surface, and it earns that by staying hidden until asked for (a hover hot-zone, or pinned by explicit choice). First paint is unchanged — one centered column, no competing chrome (§1). Pinned mode reflows the column to the right of a 260px rail rather than overlapping it; hover-reveal overlays the left margin without moving the column.
 
 ## 6. Motion (GSAP)
 

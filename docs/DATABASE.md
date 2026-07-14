@@ -168,8 +168,12 @@ saveState(courseId, delta, newState, ver)  -> void             // optimistic loc
 |---|---|
 | `GET /api/courses` | List the demo user's courses |
 | `POST /api/courses` | Create a course (starts stage 0; rejects past the 30-course quota) |
+| `GET /api/courses/:id` | One course with its current state document |
 | `GET /api/courses/:id/messages?before=&limit=` | Paged chat history |
 | `POST /api/courses/:id/chat` | Turn endpoint with **server-side state** — replaces stateless `/api/chat`: server loads state + last 10 messages, runs the same pipeline, appends both message rows, saves the new state |
+| `DELETE /api/courses/:id` | Delete one course the demo user owns. The history rail's multi-select and delete-all loop this endpoint. |
+
+Deletion vs append-only: §1 keeps messages/snapshots append-only so child-evidence claims stay auditable — that rule governs edits *within* a course. Deleting a *whole* course is a different act: a data subject erasing their own record (PIPL right to erasure), legitimate even in v1. The demo JSON store hard-deletes the course file. For Postgres v1, course deletion should be a soft-delete/archive (tombstone the row, purge on the retention timer, cascade COS deletion for child materials) rather than a hard `DELETE`, so an in-flight audit is never silently broken — a persistence-layer-build decision, flagged here.
 
 **Maps to the v1 tables** `courses` + `messages` exactly, so client and pipeline shape do not change when Postgres lands. **Skipped this tier:** auth (one demo user), `course_snapshots` checkpointing (optional — deltas can be appended to the same JSON for a replay demo), `violations`/`materials` (unchanged from today). The one-row-per-message model and the load-last-10 prompt window (§ sizing) are honored as-is.
 
