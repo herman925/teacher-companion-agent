@@ -75,25 +75,39 @@ if (Test-Path "$KeyPath.pub") {
     Write-Host "  Done. Key created." -ForegroundColor Green
 }
 
-# ---- Step 2: is this key authorized on the server yet? ----------------
+# ---- Step 2: open the tunnel (non-blocking) and check access ----------
 Write-Step 2 "Checking whether the server knows you"
-Write-Host "  Contacting server (a few seconds)..."
-$null = ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new `
-        -N -L "${LocalPort}:127.0.0.1:${RemotePort}" "$TunnelUser@$Server" -o ExitOnForwardFailure=yes -f 2>$null
-Start-Sleep -Seconds 2
+Write-Host "  Contacting server (up to ~15s)..."
+
+# Launch ssh as a real background process. Windows OpenSSH does not background
+# reliably with -f (it can run in the foreground and hang the wizard), so we use
+# Start-Process and keep the handle. ServerAliveInterval makes a stalled
+# handshake fail fast instead of hanging. We only ever stop THIS ssh by its Id,
+# never a broad "kill all ssh" (that would also kill your admin sessions).
+$sshArgs = @(
+    '-o','BatchMode=yes','-o','ConnectTimeout=10',
+    '-o','ServerAliveInterval=5','-o','ServerAliveCountMax=3',
+    '-o','StrictHostKeyChecking=accept-new','-o','ExitOnForwardFailure=yes',
+    '-N','-L',"${LocalPort}:127.0.0.1:${RemotePort}","$TunnelUser@$Server"
+)
+$tunnel = Start-Process ssh -ArgumentList $sshArgs -WindowStyle Hidden -PassThru
 
 $probe = $null
-try {
-    $probe = Invoke-WebRequest -Uri "http://127.0.0.1:$LocalPort/" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-} catch { }
+for ($i = 0; $i -lt 7; $i++) {
+    if ($tunnel.HasExited) { break }        # ssh gave up (key not added / forward refused)
+    Start-Sleep -Seconds 2
+    try { $probe = Invoke-WebRequest -Uri "http://127.0.0.1:$LocalPort/" -UseBasicParsing -TimeoutSec 4 -ErrorAction Stop } catch { $probe = $null }
+    if ($probe -and $probe.StatusCode -eq 200) { break }
+}
 
 if (-not $probe -or $probe.StatusCode -ne 200) {
-    # Not authorized yet (or tunnel failed) -> onboarding path
-    Get-Process ssh -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    if ($tunnel -and -not $tunnel.HasExited) { Stop-Process -Id $tunnel.Id -Force -ErrorAction SilentlyContinue }
     $pub = Get-Content "$KeyPath.pub" -Raw
     Set-Clipboard -Value $pub.Trim()
     Write-Host ""
-    Write-Host "  The server does not know your key yet. One-time step:" -ForegroundColor Yellow
+    Write-Host "  Could not open the tunnel yet. Most likely one of:" -ForegroundColor Yellow
+    Write-Host "    - the server has not added your key yet, or"
+    Write-Host "    - the link was slow/blocked just now (a re-run usually works)."
     Write-Host ""
     Write-Host "  Your PUBLIC key (safe to share) is now IN YOUR CLIPBOARD." -ForegroundColor Green
     Write-Host "  It looks like this:"
@@ -102,10 +116,8 @@ if (-not $probe -or $probe.StatusCode -ne 200) {
     Write-Host ""
     Write-Host "  1. Paste it to $AdminName (WeChat / email - it is not secret)."
     Write-Host "  2. Wait for $AdminName to reply 'added'."
-    Write-Host "  3. Run this wizard again. That's it."
-    Write-Host ""
-    Write-Host "  (If $AdminName already added you and you still see this,"
-    Write-Host "   check your internet connection, then ask $AdminName.)"
+    Write-Host "  3. Run this wizard again. If $AdminName already added you,"
+    Write-Host "     just re-run - a slow link often connects on the second try."
     exit 0
 }
 
@@ -115,7 +127,9 @@ Write-Host ""
 if ($LocalPort -ne $PortCandidates[0]) {
     Write-Host "  (Port $($PortCandidates[0]) was busy on this PC - using $LocalPort instead.)" -ForegroundColor Yellow
 }
-Write-Host "  Tunnel is running. DEV platform: http://localhost:$LocalPort/" -ForegroundColor Green
+Write-Host "  Tunnel is running." -ForegroundColor Green
+Write-Host "    DEV platform:        http://localhost:$LocalPort/" -ForegroundColor Green
+Write-Host "    Admin data console:  http://localhost:$LocalPort/admin" -ForegroundColor Green
 Write-Host ""
 Write-Host "  IMPORTANT: keep this window open while you work." -ForegroundColor Yellow
 Write-Host "  Closing it closes the tunnel (the page will stop loading)."
@@ -123,11 +137,11 @@ Write-Host "  When you are done, just close this window."
 Write-Host ""
 Start-Process "http://localhost:$LocalPort/"
 
-# Foreground tunnel keeps the session alive; window close kills it.
-# The -f background tunnel from the probe is already serving; wait on it.
+# The background ssh ($tunnel) keeps the session alive; closing this window (or
+# Ctrl+C) triggers the finally block, which stops only that ssh process.
 Write-Host "  Press Ctrl+C or close this window to disconnect."
 try {
-    while ($true) {
+    while (-not $tunnel.HasExited) {
         Start-Sleep -Seconds 30
         try {
             $null = Invoke-WebRequest -Uri "http://127.0.0.1:$LocalPort/" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
@@ -137,5 +151,5 @@ try {
         }
     }
 } finally {
-    Get-Process ssh -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    if ($tunnel -and -not $tunnel.HasExited) { Stop-Process -Id $tunnel.Id -Force -ErrorAction SilentlyContinue }
 }
