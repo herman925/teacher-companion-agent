@@ -69,6 +69,23 @@ ssh ubuntu@43.136.113.129 "sudo nginx -t && sudo systemctl reload nginx"        
 
 Model API keys: edit `/home/app/platform/.env` (or `platform-dev/.env`), then `sudo systemctl restart platform` (or `platform-dev`). Keys may also be supplied per-request from the UI settings drawer instead.
 
+## Inspecting demo data
+
+The demo persistence tier stores chat history as JSON files on each instance's disk (`<checkout>/demo/.data/courses/<id>.json`), one file per course, owned by the `app` service user — not in PostgreSQL yet ([DATABASE.md](DATABASE.md) §4). Two ways to look:
+
+**Admin console (GUI).** Each running instance serves a token-gated data console at `/admin`: courses with message/snapshot counts, full-record view, per-course download and whole-export, plus delete / multi-delete. On dev it is reached through the tunnel at `http://localhost:3001/admin` (the dev-access wizard prints this URL on connect). Gate it by setting `ADMIN_TOKEN` in the instance `.env`; unset = open, which is acceptable only because dev sits behind the SSH tunnel. Do not expose `/admin` on the public instance without a token.
+
+**CLI (files are `app`-owned → `sudo`).**
+```bash
+ssh ubuntu@43.136.113.129 'sudo ls -la /home/app/platform-dev/demo/.data/courses/'
+ssh ubuntu@43.136.113.129 'sudo cat /home/app/platform-dev/demo/.data/courses/<id>.json | jq .'
+# export ALL demo data to your PC
+ssh ubuntu@43.136.113.129 'sudo tar -C /home/app/platform-dev/demo -czf /tmp/demo-data.tgz .data && sudo chown ubuntu /tmp/demo-data.tgz'
+scp ubuntu@43.136.113.129:/tmp/demo-data.tgz .
+```
+
+Once the v1 persistence layer lands, this data moves to PostgreSQL; manage it then with `psql` / `pg_dump`, or a desktop GUI (DBeaver, TablePlus) over a tunnel: `ssh -L 5432:localhost:5432 ubuntu@43.136.113.129` (empty until the schema is applied).
+
 ## Standing constraints
 
 - **No domain / no ICP 备案 / no TLS yet.** Bare-IP HTTP is test-only: no real teacher or child data until 备案 approval + HTTPS (see [LAUNCH-COMPLIANCE.md](LAUNCH-COMPLIANCE.md) and ADR-0002). 备案 is the multi-week long pole — buy domain, file early.
