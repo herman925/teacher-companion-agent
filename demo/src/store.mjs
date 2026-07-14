@@ -7,6 +7,7 @@
 //   listCourses(userId)                        -> [{ id, title, state_version, updated_at }]
 //   createCourse(userId, title)                -> course brief   (enforces 30-course quota)
 //   getCourse(userId, courseId)                -> { id, title, course_state, state_version, ... } | null
+//   deleteCourse(userId, courseId)             -> boolean          (whole-course erasure)
 //   appendMessage(courseId, msg)               -> message row    (append-only)
 //   getMessages(courseId, { before, limit })   -> message rows   (chronological)
 //   saveState(courseId, delta, newState, ver)  -> { state_version } (optimistic lock + checkpoints)

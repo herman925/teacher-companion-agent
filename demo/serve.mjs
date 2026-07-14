@@ -340,6 +340,12 @@ const server = http.createServer(async (req, res) => {
         if (!course) return json(404, { ok: false, message: '课程不存在' });
         return json(200, { ok: true, course });
       }
+      // DELETE /api/courses/:id — whole-course erasure (data-subject deletion)
+      if (seg.length === 1 && req.method === 'DELETE') {
+        const removed = await store.deleteCourse(DEMO_USER, courseId);
+        if (!removed) return json(404, { ok: false, message: '课程不存在' });
+        return json(200, { ok: true, deleted: courseId });
+      }
       // GET /api/courses/:id/messages?before=&limit= — paged history
       if (seg.length === 2 && seg[1] === 'messages' && req.method === 'GET') {
         const before = url.searchParams.get('before');

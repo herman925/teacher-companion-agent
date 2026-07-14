@@ -28,7 +28,8 @@ const LS = {
   devmode: 'cst.devmode',
   profile: 'cst.profile',
   logcfg: 'cst.logcfg',
-  courseId: 'cst.courseId', // pointer to the active server course (persistence tier)
+  courseId: 'cst.courseId',   // pointer to the active server course (persistence tier)
+  railPinned: 'cst.railPinned', // history rail pinned-open preference
 };
 
 function load(key, fallback) {
@@ -114,8 +115,13 @@ let backendOnline = false;
 let persistent = false;
 /** Active server course id (persistence tier); null = not loaded / offline. */
 let activeCourseId = load(LS.courseId, null);
-/** Brief list of the demo user's server courses, for the drawer switcher. */
+/** Brief list of the demo user's server courses, for the history rail. */
 let coursesCache = [];
+/** History rail state. */
+let railPinned = Boolean(load(LS.railPinned, false));
+let manageMode = false;
+const selectedIds = new Set();
+let pendingDeleteId = null; // single-row inline delete confirm
 /** Build an API URL against the configured base (empty = same-origin, local dev). */
 const apiUrl = (p) => `${apiBase}${p}`;
 
@@ -867,40 +873,9 @@ function profileSection() {
   return details;
 }
 
-/** 历史课程 switcher — only shown on the persistence tier (server chat history). */
-function coursesSection() {
-  const details = el('details', 'provider-config');
-  details.dataset.id = 'courses';
-  details.open = true;
-  details.append(el('summary', '', '历史课程（存于服务器）'));
-
-  const list = el('div', 'course-list');
-  if (!coursesCache.length) {
-    list.append(el('p', 'settings-note', '还没有课程。'));
-  }
-  for (const c of coursesCache) {
-    const active = c.id === activeCourseId;
-    const btn = el('button', `text-btn course-item${active ? ' active' : ''}`, c.title || '未命名课程');
-    btn.type = 'button';
-    if (active) btn.setAttribute('aria-current', 'true');
-    btn.addEventListener('click', () => switchCourse(c.id));
-    list.append(btn);
-  }
-  details.append(list);
-
-  const newBtn = el('button', 'text-btn', '＋ 新课程');
-  newBtn.type = 'button';
-  newBtn.addEventListener('click', () => resetCourse());
-  details.append(newBtn);
-
-  details.append(el('p', 'settings-note', '对话存在服务器上，换设备或刷新后仍能读回（GitHub Pages 是静态托管，做不到这一点）。'));
-  return details;
-}
-
 /** Rebuild the provider config sections; open the selected provider's one. */
 function buildProviderSections() {
   providerBox.replaceChildren();
-  if (persistent) providerBox.append(coursesSection());
   providerBox.append(devModeField());
   providerBox.append(profileSection());
   const { field: apiField } = settingsField(
@@ -997,6 +972,12 @@ async function serverCreateCourse(title) {
   if (!res.ok || !data.ok) throw new Error(data.message || `创建课程失败 (${res.status})`);
   return data.course;
 }
+async function serverDeleteCourse(id) {
+  const res = await fetch(apiUrl(`/api/courses/${id}`), { method: 'DELETE' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.message || `删除失败 (${res.status})`);
+  return true;
+}
 
 /** Pull a course's state + full history from the server into the live view. */
 async function loadCourseFromServer(id) {
@@ -1029,9 +1010,9 @@ async function initCourseFromServer() {
   }
 }
 
-/** Switch the active course (drawer list). Loads its history from the server. */
+/** Switch the active course (history rail). Loads its history from the server. */
 async function switchCourse(id) {
-  if (id === activeCourseId) { closeDrawers(); return; }
+  if (id === activeCourseId) { if (!railPinned) closeRail(); return; }
   logEvent('session', 'switch_course', { from: activeCourseId, to: id });
   activeCourseId = id;
   save(LS.courseId, id);
@@ -1041,9 +1022,140 @@ async function switchCourse(id) {
   updateHeader();
   updateSkipLink();
   refreshDebug();
-  buildProviderSections();
-  closeDrawers();
+  renderRail();
+  if (!railPinned) closeRail();
   scrollToEnd();
+}
+
+// -------------------------------------------------- history rail (UI surface)
+
+function applyRailPinned() {
+  document.body.classList.toggle('rail-pinned', railPinned);
+  const pin = document.querySelector('#rail-pin');
+  if (pin) pin.setAttribute('aria-pressed', String(railPinned));
+}
+function openRail() { document.body.classList.add('rail-open'); }
+function closeRail() { document.body.classList.remove('rail-open'); exitManageMode(); }
+
+function resetDeleteArm() {
+  const dsel = document.querySelector('#rail-del-selected');
+  const dall = document.querySelector('#rail-del-all');
+  if (dsel) { dsel.dataset.armed = ''; dsel.classList.remove('confirming'); }
+  if (dall) { dall.dataset.armed = ''; dall.classList.remove('confirming'); dall.textContent = '全部删除'; }
+  updateManageBar();
+}
+function exitManageMode() {
+  if (!manageMode) return;
+  manageMode = false;
+  selectedIds.clear();
+  pendingDeleteId = null;
+  renderRail();
+}
+
+function updateManageBar() {
+  const dsel = document.querySelector('#rail-del-selected');
+  if (dsel && dsel.dataset.armed !== '1') {
+    dsel.disabled = selectedIds.size === 0;
+    dsel.textContent = `删除所选${selectedIds.size ? ` (${selectedIds.size})` : ''}`;
+  }
+}
+
+/** Render the rail's course list, delete affordances, and manage/normal footer. */
+function renderRail() {
+  const list = document.querySelector('#rail-list');
+  if (!list) return;
+  list.replaceChildren();
+  if (!coursesCache.length) {
+    list.append(el('div', 'rail-empty', '还没有课程。'));
+  }
+  for (const c of coursesCache) {
+    const item = el('div', `rail-item${c.id === activeCourseId ? ' active' : ''}`);
+    item.setAttribute('role', 'button');
+    item.tabIndex = 0;
+
+    if (manageMode) {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'rail-check';
+      cb.checked = selectedIds.has(c.id);
+      cb.setAttribute('aria-label', `选择 ${c.title || '未命名课程'}`);
+      cb.addEventListener('click', (e) => e.stopPropagation());
+      cb.addEventListener('change', () => {
+        if (cb.checked) selectedIds.add(c.id); else selectedIds.delete(c.id);
+        resetDeleteArm();
+      });
+      item.append(cb);
+    } else {
+      item.append(el('span', 'rail-item-dot'));
+    }
+
+    item.append(el('span', 'rail-item-title', c.title || '未命名课程'));
+
+    if (!manageMode) {
+      const arming = pendingDeleteId === c.id;
+      const del = el('button', `rail-del${arming ? ' confirming' : ''}`, arming ? '确定删除？' : '✕');
+      del.type = 'button';
+      del.title = '删除课程';
+      del.setAttribute('aria-label', `删除 ${c.title || '未命名课程'}`);
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (pendingDeleteId === c.id) deleteCourses([c.id]);
+        else { pendingDeleteId = c.id; renderRail(); }
+      });
+      item.append(del);
+    }
+
+    const activate = () => {
+      if (manageMode) return;
+      if (pendingDeleteId) { pendingDeleteId = null; renderRail(); return; }
+      switchCourse(c.id);
+    };
+    item.addEventListener('click', activate);
+    item.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); }
+    });
+    list.append(item);
+  }
+
+  const foot = document.querySelector('.rail-foot');
+  const bar = document.querySelector('#rail-managebar');
+  if (foot) foot.hidden = manageMode;
+  if (bar) bar.hidden = !manageMode;
+  resetDeleteArm();
+}
+
+/** Delete one or more courses; if the active course goes, move to another/new. */
+async function deleteCourses(ids) {
+  if (!ids.length) return;
+  try {
+    for (const id of ids) await serverDeleteCourse(id);
+  } catch (err) {
+    showError(err?.message || '删除失败。');
+    return;
+  }
+  logEvent('session', 'delete_courses', { ids, count: ids.length });
+  const deletedActive = ids.includes(activeCourseId);
+  manageMode = false;
+  selectedIds.clear();
+  pendingDeleteId = null;
+  try { coursesCache = await serverListCourses(); }
+  catch { coursesCache = coursesCache.filter((c) => !ids.includes(c.id)); }
+
+  if (deletedActive) {
+    let target = coursesCache[0];
+    if (!target) {
+      target = await serverCreateCourse();
+      coursesCache = [target];
+    }
+    activeCourseId = target.id;
+    save(LS.courseId, activeCourseId);
+    await loadCourseFromServer(activeCourseId);
+    replayTranscript();
+    updateHeader();
+    updateSkipLink();
+    refreshDebug();
+  }
+  renderRail();
 }
 
 // ------------------------------------------------------------ new course
@@ -1062,7 +1174,8 @@ async function resetCourse() {
       updateHeader();
       updateSkipLink();
       refreshDebug();
-      buildProviderSections();
+      renderRail();
+      if (!railPinned) closeRail();
       return;
     } catch (err) {
       showError(err?.message || '创建新课程失败。');
@@ -1125,6 +1238,38 @@ function wire() {
   $('#close-settings').addEventListener('click', closeDrawers);
   $('#close-debug').addEventListener('click', closeDrawers);
 
+  // history rail
+  $('#btn-history').addEventListener('click', () => {
+    document.body.classList.toggle('rail-open');
+    if (!document.body.classList.contains('rail-open')) exitManageMode();
+  });
+  $('#rail-pin').addEventListener('click', () => {
+    railPinned = !railPinned;
+    save(LS.railPinned, railPinned);
+    applyRailPinned();
+    logEvent('session', 'rail_pin', { pinned: railPinned });
+  });
+  $('#rail-new').addEventListener('click', () => resetCourse());
+  $('#rail-manage').addEventListener('click', () => { manageMode = true; renderRail(); });
+  $('#rail-manage-done').addEventListener('click', () => exitManageMode());
+  // two-step bulk deletes (no modal dialog): arm on first click, delete on second.
+  const armBulk = (btn, getIds) => {
+    btn.addEventListener('click', () => {
+      const ids = getIds();
+      if (!ids.length) return;
+      if (btn.dataset.armed === '1') { btn.dataset.armed = ''; btn.classList.remove('confirming'); deleteCourses(ids); }
+      else { resetDeleteArm(); btn.dataset.armed = '1'; btn.classList.add('confirming'); btn.textContent = `确定删除 ${ids.length} 个？`; }
+    });
+  };
+  armBulk($('#rail-del-selected'), () => Array.from(selectedIds));
+  armBulk($('#rail-del-all'), () => coursesCache.map((c) => c.id));
+  // click-away closes an unpinned open rail
+  document.addEventListener('click', (e) => {
+    if (!document.body.classList.contains('rail-open') || railPinned) return;
+    if (e.target.closest('#history-rail') || e.target.closest('#btn-history')) return;
+    closeRail();
+  });
+
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key === '`') {
       e.preventDefault();
@@ -1132,6 +1277,7 @@ function wire() {
       openDrawer(debugDrawer);
     } else if (e.key === 'Escape') {
       closeDrawers();
+      closeRail();
     }
   });
 
@@ -1174,7 +1320,11 @@ function boot() {
     if (!persistent) return;
     await initCourseFromServer();
     if (!persistent) return; // init may have downgraded us on failure
-    buildProviderSections(); // now includes the 历史课程 switcher
+    document.body.classList.add('has-history'); // reveals the rail + its hot-zone
+    const hb = $('#btn-history');
+    if (hb) hb.hidden = false;
+    applyRailPinned();
+    renderRail();
     replayTranscript();
     updateHeader();
     updateSkipLink();

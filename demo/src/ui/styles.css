@@ -604,16 +604,72 @@ html, body {
 
 .settings-note { color: var(--ink-faded); font-size: 13px; max-width: 30em; }
 
-/* 历史课程 switcher (persistence tier) */
-.course-list { display: flex; flex-direction: column; gap: 4px; margin: calc(var(--sp) * 1) 0; }
-.course-item { justify-content: flex-start; text-align: left; width: 100%; }
-.course-item.active {
-  border-color: var(--green);
-  color: var(--green);
-  font-weight: 500;
-  background: var(--green-wash);
+/* ------------------------------------------------------ history rail (历史课程) */
+/* Shown only on the persistence tier (body.has-history). Collapsed by default;
+   hover the hot-zone to peek, or pin to keep open + reflow the column. DESIGN.md §4/§5. */
+.rail-hotzone { display: none; }
+body.has-history .rail-hotzone {
+  display: block; position: fixed; left: 0; top: 0; bottom: 0; width: 14px; z-index: 39;
 }
-.course-item.active::before { content: "● "; font-size: 10px; vertical-align: middle; }
+.history-rail {
+  position: fixed; left: 0; top: 0; bottom: 0; width: 260px; z-index: 40;
+  display: none; flex-direction: column;
+  background: var(--paper);
+  border-right: 1px solid var(--border-warm);
+  box-shadow: var(--shadow-card);
+  transform: translateX(-100%);
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  padding: calc(var(--sp) * 2);
+}
+body.has-history .history-rail { display: flex; }
+.rail-hotzone:hover ~ .history-rail,
+.history-rail:hover,
+body.rail-open .history-rail,
+body.rail-pinned .history-rail { transform: translateX(0); }
+/* Pinned: reflow the centered column to the right of the rail. */
+body.rail-pinned { padding-left: 260px; }
+body.rail-pinned .composer { left: 260px; }
+
+.rail-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp); }
+.rail-title { font-family: var(--font-serif); font-weight: 600; font-size: 15px; }
+.rail-pin[aria-pressed="true"] { color: var(--green); }
+.rail-list {
+  flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;
+  margin: calc(var(--sp) * 1.5) 0;
+}
+.rail-empty { color: var(--ink-faded); font-size: 13px; padding: var(--sp); }
+.rail-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 10px; min-height: 40px;
+  border: 1px solid transparent; border-radius: 8px;
+  background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer;
+}
+.rail-item:hover { background: var(--cream); }
+.rail-item.active { background: var(--green-wash); color: var(--green); border-color: var(--green); font-weight: 500; }
+.rail-item-dot { flex: 0 0 auto; width: 8px; text-align: center; color: var(--green); }
+.rail-item.active .rail-item-dot::before { content: "●"; font-size: 9px; }
+.rail-item-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-del {
+  flex: 0 0 auto; opacity: 0; border: none; background: none; cursor: pointer;
+  color: var(--brick); padding: 2px 6px; font-size: 15px; line-height: 1;
+}
+.rail-item:hover .rail-del, .rail-del.confirming { opacity: 1; }
+.rail-del.confirming { font-size: 12px; font-weight: 500; }
+.rail-check { flex: 0 0 auto; }
+.rail-foot, .rail-managebar { display: flex; gap: 6px; flex-wrap: wrap; }
+.rail-foot[hidden], .rail-managebar[hidden] { display: none; } /* explicit display beats the [hidden] UA rule */
+.rail-foot .text-btn, .rail-managebar .text-btn { flex: 1 1 auto; min-height: 40px; }
+.text-btn.danger { color: var(--brick); }
+.text-btn.danger:hover { border-color: var(--brick); color: var(--brick); }
+.text-btn.confirming { background: var(--brick); color: #fff; border-color: var(--brick); }
+.text-btn.confirming:hover { color: #fff; }
+
+/* Narrow screens: the rail overlays instead of reflowing (pin still keeps it open). */
+@media (max-width: 900px) {
+  body.rail-pinned { padding-left: 0; }
+  body.rail-pinned .composer { left: 0; }
+  .history-rail { width: min(280px, 82vw); }
+}
 
 /* per-provider config sections (key + model row) — warm side, not slate */
 .provider-config {

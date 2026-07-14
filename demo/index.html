@@ -14,11 +14,43 @@
 </head>
 <body>
 
+  <!-- History rail (persistence tier only; toggled by JS via body.has-history).
+       Hover the hot-zone to peek; pin to keep it open (DESIGN.md §4/§5). -->
+  <div class="rail-hotzone" id="rail-hotzone" aria-hidden="true"></div>
+  <aside class="history-rail" id="history-rail" aria-label="历史课程">
+    <div class="rail-head">
+      <span class="rail-title">历史课程</span>
+      <button type="button" class="icon-btn rail-pin" id="rail-pin" title="固定侧栏" aria-label="固定侧栏" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 4h6l-1 6 3 3v2H7v-2l3-3-1-6Z"></path>
+          <line x1="12" y1="15" x2="12" y2="21"></line>
+        </svg>
+      </button>
+    </div>
+    <div class="rail-list" id="rail-list"></div>
+    <div class="rail-foot">
+      <button type="button" class="text-btn" id="rail-new">＋ 新课程</button>
+      <button type="button" class="text-btn" id="rail-manage">管理</button>
+    </div>
+    <div class="rail-managebar" id="rail-managebar" hidden>
+      <button type="button" class="text-btn danger" id="rail-del-selected" disabled>删除所选</button>
+      <button type="button" class="text-btn danger" id="rail-del-all">全部删除</button>
+      <button type="button" class="text-btn" id="rail-manage-done">完成</button>
+    </div>
+  </aside>
+
   <header class="app-header">
     <div class="app-header-inner">
       <h1 class="app-title">陪跑智能体</h1>
       <div class="app-subtitle" id="subtitle">新课程</div>
       <div class="header-actions">
+        <button type="button" class="icon-btn history-toggle" id="btn-history" hidden title="历史课程" aria-label="历史课程">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="4" y1="7" x2="20" y2="7"></line>
+            <line x1="4" y1="12" x2="20" y2="12"></line>
+            <line x1="4" y1="17" x2="14" y2="17"></line>
+          </svg>
+        </button>
         <button type="button" class="text-btn" id="btn-new">新课程</button>
         <button type="button" class="icon-btn" id="btn-settings" title="设置（模型与密钥）" aria-label="设置">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

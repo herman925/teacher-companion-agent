@@ -6,7 +6,7 @@
 // Not for production child data: no auth, single demo user, plain files on disk.
 // demo/.data/ is gitignored (child-data non-negotiable #4).
 
-import { readFile, writeFile, mkdir, readdir, rename } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, readdir, rename, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -122,6 +122,20 @@ export function createJsonStore() {
           id: c.id, title: c.title, course_state: c.course_state,
           state_version: c.state_version, created_at: c.created_at, updated_at: c.updated_at,
         };
+      });
+    },
+
+    /**
+     * Delete a whole course the user owns (data-subject erasure, DATABASE.md §4).
+     * Not a violation of message-level append-only: it removes the entire record,
+     * not selected evidence. @returns true if a file was removed.
+     */
+    async deleteCourse(userId, courseId) {
+      return withLock(async () => {
+        const c = await readCourse(courseId);
+        if (!c || c.user_id !== userId) return false;
+        await unlink(coursePath(courseId)).catch(() => {});
+        return true;
       });
     },
 
