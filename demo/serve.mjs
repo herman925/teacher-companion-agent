@@ -21,6 +21,11 @@ import { WF_NODES } from './src/wf-nodes.mjs';
 import { parseTurn, validateTurn, violationFeedback, safeTemplate } from './src/harness.mjs';
 import { applyDelta, createInitialState, STAGE_NAMES } from './src/engine.mjs';
 import { buildSystemPrompt, stageModuleName, profileSectionText } from './src/prompt-builder.mjs';
+import { store } from './src/store.mjs';
+
+// Demo persistence tier (DATABASE.md §4): single hard-coded user, no auth.
+// Real auth + per-teacher scoping is the v1 persistence-layer build.
+const DEMO_USER = 'demo';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 // Port precedence: FC_SERVER_PORT (Alibaba FC web function) > --port > 8787; FC needs 0.0.0.0.
@@ -230,6 +235,45 @@ async function runTurn(req, emit) {
   });
 }
 
+/**
+ * Persistent turn (DATABASE.md §4): server owns state + history.
+ * Loads the course's state and last 10 messages from the store, runs the SAME
+ * pipeline, then appends both message rows and saves the new state (with the
+ * checkpoint snapshot). Emits the identical SSE events as /api/chat.
+ */
+async function runCourseTurn(userId, courseId, body, emit) {
+  const course = await store.getCourse(userId, courseId);
+  if (!course) { emit('error', { kind: 'not_found', message: '课程不存在' }); return; }
+
+  // Store roles are teacher/agent/system; the model pipeline speaks user/assistant.
+  const recent = await store.getMessages(courseId, { limit: 10 });
+  const history = recent.map((m) => ({
+    role: m.role === 'agent' ? 'assistant' : 'user',
+    content: m.content,
+  }));
+
+  let captured = null;
+  const wrap = (event, data) => { if (event === 'turn') captured = data; emit(event, data); };
+  await runTurn({ ...body, state: course.course_state, history, message: body.message }, wrap);
+
+  // Persist only a real, accepted turn. append-only messages + gated state save.
+  if (captured && captured.turn) {
+    await store.appendMessage(courseId, { role: 'teacher', content: body.message });
+    await store.appendMessage(courseId, {
+      role: 'agent',
+      content: captured.turn.reply_markdown ?? '',
+      turn_contract: captured.turn, // full turn for faithful history re-render
+      provider: captured.provider ?? null,
+      provider_label: captured.providerLabel ?? null,
+      usage: captured.usage ?? null,
+      stage_name: captured.stageName ?? null,
+    });
+    try {
+      await store.saveState(courseId, captured.turn.state_delta ?? {}, captured.state, course.state_version);
+    } catch { /* optimistic-lock conflict (not expected single-user); messages kept, state left */ }
+  }
+}
+
 // ---------- http plumbing ----------
 
 const MIME = {
@@ -253,11 +297,87 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       ok: true,
+      // Demo persistence tier is always on when a server answers (DATABASE.md §4).
+      persistence: true,
+      user: DEMO_USER,
       providers: Object.entries(PROVIDERS)
         .filter(([, p]) => p.enabled !== false)
         .map(([id, p]) => ({ id, label: p.label, defaultModel: p.model, hasEnvKey: Boolean(ENV_KEYS[id]) })),
     }));
     return;
+  }
+
+  // ---------- demo persistence tier: courses + server-side chat history ----------
+  // Single demo user (DEMO_USER); no auth this tier. Maps to DATABASE.md courses/messages.
+  if (url.pathname === '/api/courses' || url.pathname.startsWith('/api/courses/')) {
+    const rest = url.pathname.slice('/api/courses'.length); // '' | '/:id' | '/:id/messages' | '/:id/chat'
+    const seg = rest.split('/').filter(Boolean).map(decodeURIComponent);
+    const json = (status, obj) => {
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(obj));
+    };
+    try {
+      // GET /api/courses — list
+      if (seg.length === 0 && req.method === 'GET') {
+        return json(200, { ok: true, courses: await store.listCourses(DEMO_USER) });
+      }
+      // POST /api/courses — create (30-course quota enforced in the store)
+      if (seg.length === 0 && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const q = body ? JSON.parse(body) : {};
+        try {
+          const course = await store.createCourse(DEMO_USER, q.title);
+          return json(200, { ok: true, course });
+        } catch (e) {
+          return json(e.status === 409 ? 409 : 500, { ok: false, message: e.message });
+        }
+      }
+      const courseId = seg[0];
+      // GET /api/courses/:id — course + current state document
+      if (seg.length === 1 && req.method === 'GET') {
+        const course = await store.getCourse(DEMO_USER, courseId);
+        if (!course) return json(404, { ok: false, message: '课程不存在' });
+        return json(200, { ok: true, course });
+      }
+      // GET /api/courses/:id/messages?before=&limit= — paged history
+      if (seg.length === 2 && seg[1] === 'messages' && req.method === 'GET') {
+        const before = url.searchParams.get('before');
+        const limit = url.searchParams.get('limit');
+        const messages = await store.getMessages(courseId, {
+          before: before != null ? Number(before) : undefined,
+          limit: limit != null ? Number(limit) : undefined,
+        });
+        return json(200, { ok: true, messages });
+      }
+      // POST /api/courses/:id/chat — the turn endpoint, server-side state
+      if (seg.length === 2 && seg[1] === 'chat' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const accept = req.headers.accept || '';
+        const parsed = JSON.parse(body);
+        if (accept.includes('application/json') && !accept.includes('text/event-stream')) {
+          const events = [];
+          const emit = (event, data) => events.push({ event, data });
+          try { await runCourseTurn(DEMO_USER, courseId, parsed, emit); }
+          catch (e) { emit('error', { kind: e.kind ?? 'internal', message: e.message, chain: e.chain ?? [] }); }
+          return json(200, { events });
+        }
+        res.writeHead(200, {
+          'content-type': 'text/event-stream; charset=utf-8',
+          'cache-control': 'no-cache',
+          connection: 'keep-alive',
+        });
+        const emit = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        try { await runCourseTurn(DEMO_USER, courseId, parsed, emit); }
+        catch (e) { emit('error', { kind: e.kind ?? 'internal', message: e.message, chain: e.chain ?? [] }); }
+        res.end();
+        return;
+      }
+      return json(405, { ok: false, message: 'method not allowed' });
+    } catch (e) {
+      return json(500, { ok: false, message: e.message });
+    }
   }
 
   // List a provider's available models (proxied — the browser can't reach vendors directly).

@@ -604,6 +604,17 @@ html, body {
 
 .settings-note { color: var(--ink-faded); font-size: 13px; max-width: 30em; }
 
+/* 历史课程 switcher (persistence tier) */
+.course-list { display: flex; flex-direction: column; gap: 4px; margin: calc(var(--sp) * 1) 0; }
+.course-item { justify-content: flex-start; text-align: left; width: 100%; }
+.course-item.active {
+  border-color: var(--green);
+  color: var(--green);
+  font-weight: 500;
+  background: var(--green-wash);
+}
+.course-item.active::before { content: "● "; font-size: 10px; vertical-align: middle; }
+
 /* per-provider config sections (key + model row) — warm side, not slate */
 .provider-config {
   border: 1px solid var(--border-warm);

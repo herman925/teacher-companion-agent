@@ -28,6 +28,7 @@ const LS = {
   devmode: 'cst.devmode',
   profile: 'cst.profile',
   logcfg: 'cst.logcfg',
+  courseId: 'cst.courseId', // pointer to the active server course (persistence tier)
 };
 
 function load(key, fallback) {
@@ -109,6 +110,12 @@ async function buildMockPromptDebug(state, historyCount) {
 let apiBase = (load(LS.apiBase, '') || '').replace(/\/+$/, '');
 /** Whether a proxy answered /api/health (set by initProviders). */
 let backendOnline = false;
+/** Whether the backend offers the persistence tier (server-side chat history). */
+let persistent = false;
+/** Active server course id (persistence tier); null = not loaded / offline. */
+let activeCourseId = load(LS.courseId, null);
+/** Brief list of the demo user's server courses, for the drawer switcher. */
+let coursesCache = [];
 /** Build an API URL against the configured base (empty = same-origin, local dev). */
 const apiUrl = (p) => `${apiBase}${p}`;
 
@@ -393,6 +400,12 @@ function chatRequestBody(text) {
   return body;
 }
 
+/** Persistence-tier body: server owns state + history, so ship neither. */
+function courseChatRequestBody(text) {
+  const { state, history, ...rest } = chatRequestBody(text);
+  return rest;
+}
+
 /**
  * @param {string} message
  * @param {{isRetry?: boolean}} [opts]
@@ -445,48 +458,56 @@ async function send(message, opts = {}) {
 
   const needsBackend = provider !== 'mock';
   const haveBackend = backendOnline || Boolean(apiBase);
+  const usePersistent = persistent && backendOnline && Boolean(activeCourseId);
+
+  // POST one turn to a turn endpoint (persistent course chat or the stateless
+  // /api/chat) and pump its SSE / buffered-JSON events through dispatch.
+  const postTurn = async (url, requestBody) => {
+    const crossOrigin = Boolean(apiBase);
+    // The store redacts again on append; redacting here too keeps the raw keys
+    // object from ever entering the logging path.
+    logEvent('api_out', 'chat_request', {
+      url, transport: crossOrigin ? 'buffered-json' : 'sse', body: redactSecrets(requestBody),
+    });
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: crossOrigin ? 'application/json' : 'text/event-stream',
+      },
+      body: JSON.stringify(requestBody),
+    });
+    if (!res.ok) throw new Error(`服务返回 ${res.status}`);
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const payload = await res.json();
+      for (const { event, data } of payload.events || []) dispatch(event, data);
+    } else if (res.body) {
+      await readSSE(res, dispatch);
+    } else {
+      throw new Error('服务没有返回内容');
+    }
+    if (!gotTurn && !messagesEl.querySelector('.error-notice')) {
+      showError('连接中断了，这一轮没有收到回复。');
+    }
+  };
 
   try {
-    if (!needsBackend) {
+    if (usePersistent) {
+      // Persistence tier: every provider (mock included) runs on the server so
+      // the turn is stored and history reloads from the server next visit.
+      await postTurn(apiUrl(`/api/courses/${activeCourseId}/chat`), courseChatRequestBody(text));
+    } else if (!needsBackend) {
       await simulate(null);
     } else if (!haveBackend) {
       showSimulatedNotice();
       await simulate(`模拟演示（后端未连接，未实际调用 ${providerInfo(provider)?.label ?? provider}）`);
     } else {
-      const crossOrigin = Boolean(apiBase);
-      const requestBody = chatRequestBody(text);
-      // The store redacts again on append; redacting here too keeps the raw
-      // keys object from ever entering the logging path.
-      logEvent('api_out', 'chat_request', {
-        url: apiUrl('/api/chat'),
-        transport: crossOrigin ? 'buffered-json' : 'sse',
-        body: redactSecrets(requestBody),
-      });
-      const res = await fetch(apiUrl('/api/chat'), {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          accept: crossOrigin ? 'application/json' : 'text/event-stream',
-        },
-        body: JSON.stringify(requestBody),
-      });
-      if (!res.ok) throw new Error(`服务返回 ${res.status}`);
-      const ct = res.headers.get('content-type') || '';
-      if (ct.includes('application/json')) {
-        const payload = await res.json();
-        for (const { event, data } of payload.events || []) dispatch(event, data);
-      } else if (res.body) {
-        await readSSE(res, dispatch);
-      } else {
-        throw new Error('服务没有返回内容');
-      }
-      if (!gotTurn && !messagesEl.querySelector('.error-notice')) {
-        showError('连接中断了，这一轮没有收到回复。');
-      }
+      await postTurn(apiUrl('/api/chat'), chatRequestBody(text));
     }
   } catch (err) {
     logEvent('error', 'request_failed', { message: err?.message ?? String(err), provider });
-    if (needsBackend) {
+    if (needsBackend || usePersistent) {
       showSimulatedNotice();
       await simulate(`模拟演示（后端连接失败，未实际调用 ${providerInfo(provider)?.label ?? provider}）`);
     } else {
@@ -846,9 +867,40 @@ function profileSection() {
   return details;
 }
 
+/** 历史课程 switcher — only shown on the persistence tier (server chat history). */
+function coursesSection() {
+  const details = el('details', 'provider-config');
+  details.dataset.id = 'courses';
+  details.open = true;
+  details.append(el('summary', '', '历史课程（存于服务器）'));
+
+  const list = el('div', 'course-list');
+  if (!coursesCache.length) {
+    list.append(el('p', 'settings-note', '还没有课程。'));
+  }
+  for (const c of coursesCache) {
+    const active = c.id === activeCourseId;
+    const btn = el('button', `text-btn course-item${active ? ' active' : ''}`, c.title || '未命名课程');
+    btn.type = 'button';
+    if (active) btn.setAttribute('aria-current', 'true');
+    btn.addEventListener('click', () => switchCourse(c.id));
+    list.append(btn);
+  }
+  details.append(list);
+
+  const newBtn = el('button', 'text-btn', '＋ 新课程');
+  newBtn.type = 'button';
+  newBtn.addEventListener('click', () => resetCourse());
+  details.append(newBtn);
+
+  details.append(el('p', 'settings-note', '对话存在服务器上，换设备或刷新后仍能读回（GitHub Pages 是静态托管，做不到这一点）。'));
+  return details;
+}
+
 /** Rebuild the provider config sections; open the selected provider's one. */
 function buildProviderSections() {
   providerBox.replaceChildren();
+  if (persistent) providerBox.append(coursesSection());
   providerBox.append(devModeField());
   providerBox.append(profileSection());
   const { field: apiField } = settingsField(
@@ -885,6 +937,7 @@ async function initProviders() {
       if (Array.isArray(health.providers) && health.providers.every((p) => p && typeof p === 'object')) {
         providerInfos = health.providers;
       }
+      persistent = Boolean(health.persistence);
       backendOnline = true;
     }
   } catch { /* offline from the API is fine — 演示模式 still works client-side */ }
@@ -892,9 +945,131 @@ async function initProviders() {
   buildProviderSections();
 }
 
+// -------------------------------------------------- persistence tier (server)
+
+/** Turn stored message rows (teacher/agent) into the rich transcript shape. */
+function messagesToTranscript(rows) {
+  const out = [];
+  for (const m of rows) {
+    if (m.role === 'agent') {
+      const tc = m.turn_contract || { reply_markdown: m.content };
+      out.push({
+        role: 'assistant',
+        content: m.content,
+        ev: {
+          turn: tc,
+          gate_report: { ok: true, violations: [] },
+          state: { awaiting_feedback: Boolean(tc.round_complete) },
+          provider: m.provider ?? null,
+          providerLabel: m.provider_label ?? null,
+          stageName: m.stage_name ?? null,
+        },
+      });
+    } else {
+      out.push({ role: 'user', content: m.content });
+    }
+  }
+  return out;
+}
+
+async function serverListCourses() {
+  const res = await fetch(apiUrl('/api/courses'));
+  if (!res.ok) throw new Error(`courses ${res.status}`);
+  return (await res.json()).courses || [];
+}
+async function serverGetCourse(id) {
+  const res = await fetch(apiUrl(`/api/courses/${id}`));
+  if (!res.ok) return null;
+  return (await res.json()).course ?? null;
+}
+async function serverGetMessages(id) {
+  const res = await fetch(apiUrl(`/api/courses/${id}/messages`));
+  if (!res.ok) return [];
+  return (await res.json()).messages || [];
+}
+async function serverCreateCourse(title) {
+  const res = await fetch(apiUrl('/api/courses'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.message || `创建课程失败 (${res.status})`);
+  return data.course;
+}
+
+/** Pull a course's state + full history from the server into the live view. */
+async function loadCourseFromServer(id) {
+  const [course, msgs] = await Promise.all([serverGetCourse(id), serverGetMessages(id)]);
+  if (course?.course_state) courseState = course.course_state;
+  transcript = messagesToTranscript(msgs || []);
+  lastEvent = null;
+  lastTurnHadQuestion = Boolean(transcript[transcript.length - 1]?.ev?.turn?.question);
+  save(LS.state, courseState);      // localStorage stays a cache of the active course
+  save(LS.transcript, transcript);
+}
+
+/** Boot the persistence tier: choose (or create) the active course, load it. */
+async function initCourseFromServer() {
+  try {
+    coursesCache = await serverListCourses();
+    let target = coursesCache.find((c) => c.id === activeCourseId) || coursesCache[0];
+    if (!target) {
+      target = await serverCreateCourse();
+      coursesCache = [target];
+    }
+    activeCourseId = target.id;
+    save(LS.courseId, activeCourseId);
+    await loadCourseFromServer(activeCourseId);
+    logEvent('session', 'course_loaded', { course_id: activeCourseId, count: coursesCache.length });
+  } catch (err) {
+    // Persistence unusable — fall back to the stateless/localStorage path.
+    persistent = false;
+    logEvent('error', 'persistence_init_failed', { message: err?.message ?? String(err) });
+  }
+}
+
+/** Switch the active course (drawer list). Loads its history from the server. */
+async function switchCourse(id) {
+  if (id === activeCourseId) { closeDrawers(); return; }
+  logEvent('session', 'switch_course', { from: activeCourseId, to: id });
+  activeCourseId = id;
+  save(LS.courseId, id);
+  pendingMessage = null;
+  await loadCourseFromServer(id);
+  replayTranscript();
+  updateHeader();
+  updateSkipLink();
+  refreshDebug();
+  buildProviderSections();
+  closeDrawers();
+  scrollToEnd();
+}
+
 // ------------------------------------------------------------ new course
 
-function resetCourse() {
+async function resetCourse() {
+  // Persistence tier: a new course is a new server record, not a wipe — no confirm.
+  if (persistent && backendOnline) {
+    try {
+      const course = await serverCreateCourse();
+      coursesCache = [course, ...coursesCache];
+      activeCourseId = course.id;
+      save(LS.courseId, activeCourseId);
+      logEvent('session', 'new_course', { previous_course: courseState?.course_id ?? null, course_id: activeCourseId });
+      await loadCourseFromServer(activeCourseId);
+      replayTranscript();
+      updateHeader();
+      updateSkipLink();
+      refreshDebug();
+      buildProviderSections();
+      return;
+    } catch (err) {
+      showError(err?.message || '创建新课程失败。');
+      return;
+    }
+  }
+  // Offline / static hosting: local wipe (old behavior).
   const sure = window.confirm('开始新课程会清空当前对话和课程进度，确定吗？');
   if (!sure) return;
   logEvent('session', 'new_course', { previous_course: courseState?.course_id ?? null });
@@ -987,13 +1162,25 @@ function boot() {
     provider, dev_mode: devMode, transcript_entries: transcript.length,
     course_id: courseState?.course_id ?? null, stage: courseState?.stage ?? null,
   });
-  replayTranscript();
+  replayTranscript(); // instant render from the localStorage cache
   updateHeader();
   updateSkipLink();
   refreshDebug();
-  initProviders();
   autogrow();
   window.scrollTo(0, document.body.scrollHeight);
+  // Detect the backend, then (if it offers persistence) load server-side history
+  // and re-render — the localStorage cache above kept first paint instant.
+  initProviders().then(async () => {
+    if (!persistent) return;
+    await initCourseFromServer();
+    if (!persistent) return; // init may have downgraded us on failure
+    buildProviderSections(); // now includes the 历史课程 switcher
+    replayTranscript();
+    updateHeader();
+    updateSkipLink();
+    refreshDebug();
+    scrollToEnd();
+  });
 }
 
 boot();

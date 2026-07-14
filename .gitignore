@@ -23,6 +23,10 @@ tmp/
 .scratch/
 *.tmp
 tests/.tmp/
+
+# Demo persistence tier — local course/message JSON store (DATABASE.md §4).
+# Holds demo chat history; MUST never be committed (child-data non-negotiable #4).
+demo/.data/
 # Harness parity-test fixture names — must never be tracked at the repo root
 /a.md
 /b.md
