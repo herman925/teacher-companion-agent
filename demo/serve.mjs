@@ -27,6 +27,11 @@ import { store } from './src/store.mjs';
 // Real auth + per-teacher scoping is the v1 persistence-layer build.
 const DEMO_USER = 'demo';
 
+// Admin console token. When ADMIN_TOKEN is set, /api/admin/* requires the
+// x-admin-token header to match. Unset = open (dev convenience) — the dev
+// instance is already gated behind the SSH tunnel (OPERATIONS.md).
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 // Port precedence: FC_SERVER_PORT (Alibaba FC web function) > --port > 8787; FC needs 0.0.0.0.
 const PORT = Number(process.env.FC_SERVER_PORT) || Number(process.env.PORT) || Number(process.argv[process.argv.indexOf('--port') + 1]) || 8787;
@@ -438,6 +443,53 @@ const server = http.createServer(async (req, res) => {
     }
     res.end();
     return;
+  }
+
+  // ---------- admin console (token-gated data inspector, admin.html) ----------
+  if (url.pathname === '/admin' || url.pathname.startsWith('/api/admin/')) {
+    const json = (status, obj) => {
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(obj));
+    };
+    // The page itself is public (it only holds the token prompt + JS); the API is gated.
+    if (url.pathname === '/admin') {
+      try {
+        const html = await readFile(path.join(ROOT, 'admin.html'));
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+        res.end(html);
+      } catch { res.writeHead(404); res.end('admin.html missing'); }
+      return;
+    }
+    if (ADMIN_TOKEN && (req.headers['x-admin-token'] || '') !== ADMIN_TOKEN) {
+      return json(401, { ok: false, message: '需要管理令牌（x-admin-token）' });
+    }
+    const seg = url.pathname.slice('/api/admin/'.length).split('/').filter(Boolean).map(decodeURIComponent);
+    try {
+      if (seg[0] === 'data' && req.method === 'GET') {
+        return json(200, { ok: true, token_required: Boolean(ADMIN_TOKEN), courses: await store.adminListCourses() });
+      }
+      if (seg[0] === 'export' && req.method === 'GET') {
+        const courses = await store.adminExportAll();
+        res.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          'content-disposition': 'attachment; filename="demo-data.json"',
+        });
+        res.end(JSON.stringify({ exported_at: new Date().toISOString(), courses }, null, 2));
+        return;
+      }
+      if (seg[0] === 'courses' && seg[1]) {
+        if (req.method === 'GET') {
+          const course = await store.adminGetCourse(seg[1]);
+          if (!course) return json(404, { ok: false, message: '课程不存在' });
+          return json(200, { ok: true, course });
+        }
+        if (req.method === 'DELETE') {
+          const removed = await store.adminDelete(seg[1]);
+          return json(removed ? 200 : 404, removed ? { ok: true, deleted: seg[1] } : { ok: false, message: '课程不存在' });
+        }
+      }
+      return json(405, { ok: false, message: 'method not allowed' });
+    } catch (e) { return json(500, { ok: false, message: e.message }); }
   }
 
   // static: demo/ files, plus /schema/ passthrough for the debug drawer

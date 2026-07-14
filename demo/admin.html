@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>数据管理台 · 陪跑智能体（dev）</title>
+  <style>
+    :root {
+      --slate: #23282E; --slate-2: #2c333b; --text: #C9D1D9; --muted: #8a93a0;
+      --green: #6fae9c; --brick: #d17a63; --border: #3a424c; --gold: #c9a86a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--slate); color: var(--text);
+      font-family: "JetBrains Mono", Consolas, monospace; font-size: 13px; line-height: 1.6;
+    }
+    header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+    header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+    header .note { color: var(--muted); font-size: 12px; }
+    .bar { padding: 10px 18px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    input[type=text], input[type=password] {
+      background: var(--slate-2); border: 1px solid var(--border); color: var(--text);
+      padding: 6px 8px; border-radius: 6px; font: inherit; min-width: 180px;
+    }
+    button {
+      background: var(--slate-2); border: 1px solid var(--border); color: var(--text);
+      padding: 6px 10px; border-radius: 6px; font: inherit; cursor: pointer;
+    }
+    button:hover { border-color: var(--green); color: var(--green); }
+    button.danger:hover { border-color: var(--brick); color: var(--brick); }
+    button.confirming { background: var(--brick); border-color: var(--brick); color: #fff; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .wrap { display: flex; gap: 0; align-items: stretch; min-height: calc(100vh - 108px); }
+    .list { flex: 1 1 55%; padding: 12px 18px; overflow: auto; }
+    .detail { flex: 1 1 45%; padding: 12px 18px; border-left: 1px solid var(--border); overflow: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th { color: var(--muted); font-weight: 500; }
+    td.title { white-space: normal; cursor: pointer; }
+    td.title:hover { color: var(--green); }
+    .row-actions button { padding: 2px 6px; font-size: 12px; }
+    pre { background: var(--slate-2); border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+    .msg { color: var(--gold); padding: 8px 18px; }
+    .empty { color: var(--muted); padding: 20px 0; }
+    .pill { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>数据管理台</h1>
+    <span class="note">dev 数据检视 · 只读 + 删除 + 导出 · 测试数据，勿存真实儿童信息</span>
+  </header>
+
+  <div class="bar">
+    <label>管理令牌 <input type="password" id="token" placeholder="ADMIN_TOKEN（未设置可留空）"></label>
+    <button id="connect">连接</button>
+    <button id="refresh">刷新</button>
+    <span style="flex:1"></span>
+    <button id="export">导出全部 (.json)</button>
+    <button id="del-selected" class="danger" disabled>删除所选</button>
+    <button id="del-all" class="danger">全部删除</button>
+  </div>
+
+  <div id="banner" class="msg" hidden></div>
+
+  <div class="wrap">
+    <div class="list">
+      <table>
+        <thead><tr>
+          <th></th><th>课程</th><th>user</th><th>ver</th><th>消息</th><th>快照</th><th>更新时间</th><th></th>
+        </tr></thead>
+        <tbody id="rows"><tr><td colspan="8" class="empty">点「连接」加载数据。</td></tr></tbody>
+      </table>
+    </div>
+    <div class="detail">
+      <div class="pill" id="detail-head">选中一个课程查看完整记录（course_state · messages · snapshots）。</div>
+      <pre id="detail" hidden></pre>
+    </div>
+  </div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const selected = new Set();
+    let allIds = [];
+
+    function token() { return sessionStorage.getItem('admin.token') || ''; }
+    async function af(path, opts = {}) {
+      const headers = { ...(opts.headers || {}) };
+      if (token()) headers['x-admin-token'] = token();
+      return fetch(path, { ...opts, headers });
+    }
+    function banner(text, on = true) {
+      const b = $('#banner'); b.textContent = text || ''; b.hidden = !on || !text;
+    }
+    function fmt(ts) { return (ts || '').replace('T', ' ').replace(/\..*/, ''); }
+
+    function resetArm() {
+      for (const b of [$('#del-selected'), $('#del-all')]) { b.dataset.armed = ''; b.classList.remove('confirming'); }
+      $('#del-selected').textContent = `删除所选${selected.size ? ` (${selected.size})` : ''}`;
+      $('#del-selected').disabled = selected.size === 0;
+      $('#del-all').textContent = '全部删除';
+    }
+
+    async function loadData() {
+      banner('加载中…');
+      let data;
+      try {
+        const res = await af('/api/admin/data');
+        if (res.status === 401) { banner('令牌不对：填写 ADMIN_TOKEN 后重试。'); return; }
+        data = await res.json();
+      } catch (e) { banner('连不上后端：' + e.message); return; }
+      banner('', false);
+      const rows = $('#rows');
+      rows.replaceChildren();
+      allIds = data.courses.map((c) => c.id);
+      if (!data.courses.length) {
+        rows.innerHTML = '<tr><td colspan="8" class="empty">没有课程。</td></tr>';
+        selected.clear(); resetArm(); return;
+      }
+      for (const c of data.courses) {
+        const tr = document.createElement('tr');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = selected.has(c.id);
+        cb.addEventListener('change', () => { cb.checked ? selected.add(c.id) : selected.delete(c.id); resetArm(); });
+        const cbtd = document.createElement('td'); cbtd.append(cb);
+
+        const title = document.createElement('td'); title.className = 'title';
+        title.textContent = c.title || '未命名课程';
+        title.addEventListener('click', () => viewCourse(c.id, c.title));
+
+        const cells = [
+          cbtd, title,
+          td(c.user_id), td(c.state_version), td(c.messages), td(c.snapshots), td(fmt(c.updated_at)),
+        ];
+        const act = document.createElement('td'); act.className = 'row-actions';
+        const dl = mkbtn('下载', () => downloadCourse(c.id));
+        const del = mkbtn('删除', () => rowDelete(del, c.id)); del.className = 'danger';
+        act.append(dl, del);
+        cells.push(act);
+        for (const el of cells) tr.append(el);
+        rows.append(tr);
+      }
+      resetArm();
+    }
+    function td(v) { const el = document.createElement('td'); el.textContent = String(v); return el; }
+    function mkbtn(label, fn) { const b = document.createElement('button'); b.textContent = label; b.addEventListener('click', fn); return b; }
+
+    async function viewCourse(id, title) {
+      $('#detail-head').textContent = `${title || id} · 完整记录`;
+      const pre = $('#detail'); pre.hidden = false; pre.textContent = '加载中…';
+      try {
+        const res = await af('/api/admin/courses/' + id);
+        const data = await res.json();
+        pre.textContent = JSON.stringify(data.course, null, 2);
+      } catch (e) { pre.textContent = '加载失败：' + e.message; }
+    }
+
+    async function downloadBlob(obj, name) {
+      const url = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' }));
+      const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
+    async function downloadCourse(id) {
+      const res = await af('/api/admin/courses/' + id);
+      const data = await res.json();
+      downloadBlob(data.course, `course-${id}.json`);
+    }
+    async function exportAll() {
+      const res = await af('/api/admin/export');
+      const data = await res.json();
+      downloadBlob(data, 'demo-data.json');
+    }
+
+    // deletes
+    async function del(ids) {
+      for (const id of ids) { await af('/api/admin/courses/' + id, { method: 'DELETE' }); }
+      selected.clear();
+      await loadData();
+      $('#detail').hidden = true; $('#detail-head').textContent = '选中一个课程查看完整记录。';
+    }
+    function rowDelete(btn, id) {
+      if (btn.dataset.armed === '1') { del([id]); }
+      else { btn.dataset.armed = '1'; btn.classList.add('confirming'); btn.textContent = '确定？';
+        setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ''; btn.classList.remove('confirming'); btn.textContent = '删除'; } }, 3000); }
+    }
+    function armBulk(btn, getIds) {
+      btn.addEventListener('click', () => {
+        const ids = getIds(); if (!ids.length) return;
+        if (btn.dataset.armed === '1') { btn.dataset.armed = ''; btn.classList.remove('confirming'); del(ids); }
+        else { resetArm(); btn.dataset.armed = '1'; btn.classList.add('confirming'); btn.textContent = `确定删除 ${ids.length} 个？`; }
+      });
+    }
+
+    $('#connect').addEventListener('click', () => { sessionStorage.setItem('admin.token', $('#token').value.trim()); loadData(); });
+    $('#refresh').addEventListener('click', loadData);
+    $('#export').addEventListener('click', exportAll);
+    armBulk($('#del-selected'), () => Array.from(selected));
+    armBulk($('#del-all'), () => allIds.slice());
+
+    $('#token').value = token();
+    loadData(); // open dev instances answer without a token; gated ones show a banner
+    $('#token').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#connect').click(); });
+  </script>
+</body>
+</html>

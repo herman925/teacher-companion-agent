@@ -204,5 +204,61 @@ export function createJsonStore() {
         return { state_version: newVersion };
       });
     },
+
+    // ---- admin console reads (all users; DATABASE.md §4 / admin.html) ----
+
+    /** Every course (all users) with message/snapshot counts, for the admin list. */
+    async adminListCourses() {
+      return withLock(async () => {
+        await ensureDir();
+        let files = [];
+        try { files = await readdir(DATA_DIR); } catch { files = []; }
+        const out = [];
+        for (const f of files) {
+          if (!f.endsWith('.json')) continue;
+          try {
+            const c = JSON.parse(await readFile(path.join(DATA_DIR, f), 'utf8'));
+            out.push({
+              id: c.id, user_id: c.user_id, title: c.title,
+              state_version: c.state_version, created_at: c.created_at, updated_at: c.updated_at,
+              messages: (c.messages || []).length, snapshots: (c.snapshots || []).length,
+            });
+          } catch { /* skip unreadable file */ }
+        }
+        out.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+        return out;
+      });
+    },
+
+    /** The full raw record for one course (state + messages + snapshots). */
+    async adminGetCourse(courseId) {
+      return withLock(async () => readCourse(courseId));
+    },
+
+    /** Delete any course regardless of owner (admin action). */
+    async adminDelete(courseId) {
+      return withLock(async () => {
+        const c = await readCourse(courseId);
+        if (!c) return false;
+        await unlink(coursePath(courseId)).catch(() => {});
+        return true;
+      });
+    },
+
+    /** Every course's full record, for a one-file export. */
+    async adminExportAll() {
+      return withLock(async () => {
+        await ensureDir();
+        let files = [];
+        try { files = await readdir(DATA_DIR); } catch { files = []; }
+        const courses = [];
+        for (const f of files) {
+          if (!f.endsWith('.json')) continue;
+          try { courses.push(JSON.parse(await readFile(path.join(DATA_DIR, f), 'utf8'))); }
+          catch { /* skip */ }
+        }
+        return courses;
+      });
+    },
   };
 }

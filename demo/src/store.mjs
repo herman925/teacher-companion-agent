@@ -11,6 +11,10 @@
 //   appendMessage(courseId, msg)               -> message row    (append-only)
 //   getMessages(courseId, { before, limit })   -> message rows   (chronological)
 //   saveState(courseId, delta, newState, ver)  -> { state_version } (optimistic lock + checkpoints)
+//   adminListCourses()                         -> all courses (all users) + message/snapshot counts
+//   adminGetCourse(courseId)                   -> full raw record | null
+//   adminDelete(courseId)                      -> boolean (delete any owner)
+//   adminExportAll()                           -> [full records] for one-file export
 
 import { createJsonStore } from './store/json-store.mjs';
 
