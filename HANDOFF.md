@@ -2,6 +2,15 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-15 (later, 2) — Settings restructure, 线路 switch, profile v2, auth design
+
+- **Settings panes make sense now** ([demo/src/ui/main.js](demo/src/ui/main.js)): 通用 leads with the **model choice** — MiniMax and GLM each appear ONCE in the dropdown, a 线路 selector underneath picks 国内/国际 (GLM has three: bigmodel / Z.AI 按量 / Z.AI Coding; choice remembered per family, `cst.channels`); then 开发者模式. 模型服务 is pure API plumbing (keys/models/custom endpoint) with **服务器地址 demoted to a 高级 corner and finally explained**: static-hosting-only (points a backend-less page at a remote proxy); via tunnel/local it must stay empty. Note in-pane records the plan: provider zoo eventually collapses to 官方服务 vs 自备密钥 (BYOK).
+- **教师档案 v2** (feeds prompt read-only via [demo/src/prompt-builder.mjs](demo/src/prompt-builder.mjs), both-directions tested): 省级 select incl. 中国香港/中国澳门/中国台湾/其他 + 区/县; 年龄段/教龄/本园年资 as intervals; 幼儿园角色 (班主任…园长/实习教师/其他); 任教班级 multi-checkbox (mirrors legacy `ageBand` when single — mock interpolation intact); 班额; 回应风格 five fixed choices.
+- **Auth/accounts design recorded** ([docs/DATABASE.md](docs/DATABASE.md) §4 + open Q4/Q5) — this gates dev→main: roles admin/teacher/visitor; login = WeChat 小程序 (`code2Session`) first, SMS fallback, **admin-created registration-free accounts** in the admin console (user-management tab planned) so Herman provisions pilot teachers from outside the mainland; display name unique + 6-month change lock + CN/EN profanity filter; real-name obligation = open question to verify during 备案 (WeChat users are platform-level real-named; do not guess our extra duty). Q5: 官方服务 = SaaS with platform-held keys + usage metered from `messages.usage`; BYOK = today's per-request key path.
+- **Wizard**: reconnect budget 5→30 ([tools/dev-access-wizard.ps1](tools/dev-access-wizard.ps1)).
+- Verified in browser: groups deduped, GLM 线路 row (3 channels) shows/persists, mock hides it; api-base only under 模型服务 高级; profile pane 6 selects + 4 checkboxes. Tests 123/123, gate green. Commits `89c0892`/`823d1f2`/`9541856`.
+- Still open for Herman: merge dev→main decision (blocked on auth or acceptance of shared-demo exposure); user console (people icon) builds when accounts land.
+
 ## 2026-07-15 (later) — Settings modal, admin redesign + password, UI cleanup
 
 - **Settings are a centered modal now** (ChatGPT-style; DESIGN.md §4): left nav 通用 / 模型服务 / 教师档案, scrim + Esc dismiss, full-sheet under 560px; all in the warm family. Panes built by `buildGeneralPane`/`buildProfilePane`/`buildProviderSections` in [demo/src/ui/main.js](demo/src/ui/main.js). Debug drawer stays right; its head is sticky now.
