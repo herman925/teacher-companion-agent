@@ -167,6 +167,7 @@ let railPinned = Boolean(load(LS.railPinned, false));
 let manageMode = false;
 const selectedIds = new Set();
 let pendingDeleteId = null; // single-row inline delete confirm
+let renameId = null;        // rail row in inline-rename mode
 /** Build an API URL against the configured base (empty = same-origin, local dev). */
 const apiUrl = (p) => `${apiBase}${p}`;
 
@@ -509,6 +510,11 @@ async function send(message, opts = {}) {
   const dispatch = (name, data) => {
     if (name === 'status') setStatus(data.text ?? '…');
     else if (name === 'turn') { gotTurn = true; handleTurn(text, data); }
+    else if (name === 'course') {
+      // server auto-titled the course (theme extracted) — update the rail row
+      const hit = coursesCache.find((c) => c.id === data.id);
+      if (hit) { hit.title = data.title; renderRail(); }
+    }
     else if (name === 'error') {
       logEvent('error', 'turn_error', { message: data.message ?? '', kind: data.kind ?? '', chain: data.chain ?? [] });
       showError(data.message || '这一轮没有走通。', data.chain);
@@ -1259,10 +1265,11 @@ function resetDeleteArm() {
   updateManageBar();
 }
 function exitManageMode() {
-  if (!manageMode) return;
+  if (!manageMode && !renameId) return;
   manageMode = false;
   selectedIds.clear();
   pendingDeleteId = null;
+  renameId = null;
   renderRail();
 }
 
@@ -1303,9 +1310,50 @@ function renderRail() {
       item.append(el('span', 'rail-item-dot'));
     }
 
-    item.append(el('span', 'rail-item-title', c.title || '未命名课程'));
+    if (renameId === c.id) {
+      // inline rename: Enter saves, Esc cancels; a human rename locks the title
+      const input = el('input', 'rail-rename');
+      input.value = c.title || '';
+      input.maxLength = 16;
+      input.setAttribute('aria-label', '课程名');
+      input.addEventListener('click', (e) => e.stopPropagation());
+      input.addEventListener('keydown', async (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+          try {
+            const res = await fetch(apiUrl(`/api/courses/${c.id}`), {
+              method: 'PATCH', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ title: input.value }),
+            });
+            const data = await res.json();
+            if (!data.ok) { showError(data.message || '改名失败'); return; }
+            const hit = coursesCache.find((x) => x.id === c.id);
+            if (hit) hit.title = data.course.title;
+            renameId = null;
+            renderRail();
+            updateHeader();
+          } catch (err2) { showError(err2?.message ?? '改名失败'); }
+        } else if (e.key === 'Escape') { renameId = null; renderRail(); }
+      });
+      item.append(input);
+      setTimeout(() => { input.focus(); input.select(); }, 0);
+    } else {
+      item.append(el('span', 'rail-item-title', c.title || '未命名课程'));
+    }
 
-    if (!manageMode) {
+    if (!manageMode && renameId !== c.id) {
+      const ed = el('button', 'rail-edit', '✎');
+      ed.type = 'button';
+      ed.title = '重命名';
+      ed.setAttribute('aria-label', `重命名 ${c.title || '未命名课程'}`);
+      ed.addEventListener('click', (e) => {
+        e.stopPropagation();
+        pendingDeleteId = null;
+        renameId = c.id;
+        renderRail();
+      });
+      item.append(ed);
+
       const arming = pendingDeleteId === c.id;
       const del = el('button', `rail-del${arming ? ' confirming' : ''}`, arming ? '确定删除？' : '✕');
       del.type = 'button';
@@ -1320,8 +1368,8 @@ function renderRail() {
     }
 
     const activate = () => {
-      if (manageMode) return;
-      if (pendingDeleteId) { pendingDeleteId = null; renderRail(); return; }
+      if (manageMode || renameId === c.id) return;
+      if (pendingDeleteId || renameId) { pendingDeleteId = null; renameId = null; renderRail(); return; }
       switchCourse(c.id);
     };
     item.addEventListener('click', activate);

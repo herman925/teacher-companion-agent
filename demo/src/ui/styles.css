@@ -708,6 +708,17 @@ body.rail-pinned .composer { left: 260px; }
   color: var(--brick); padding: 2px 6px; font-size: 15px; line-height: 1;
 }
 .rail-item:hover .rail-del, .rail-del.confirming { opacity: 1; }
+.rail-edit {
+  flex: 0 0 auto; opacity: 0; border: none; background: none; cursor: pointer;
+  color: var(--ink-faded); padding: 2px 4px; font-size: 14px; line-height: 1;
+}
+.rail-item:hover .rail-edit { opacity: 1; }
+.rail-edit:hover { color: var(--green); }
+.rail-rename {
+  flex: 1; min-width: 0; font: inherit; font-size: 14px; color: var(--ink);
+  background: #fff; border: 1px solid var(--green); border-radius: 6px; padding: 4px 8px;
+}
+.rail-rename:focus { outline: none; }
 .rail-del.confirming { font-size: 12px; font-weight: 500; }
 .rail-check { flex: 0 0 auto; }
 .rail-foot, .rail-managebar { display: flex; gap: 6px; flex-wrap: wrap; }

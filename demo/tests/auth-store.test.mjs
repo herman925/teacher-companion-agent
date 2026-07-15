@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { createJsonStore } from '../src/store/json-store.mjs';
+import { createJsonStore, deriveCourseTitle, TITLE_MAX } from '../src/store/json-store.mjs';
 import { hashPassword, verifyPassword, displayNameError, parseCookies, sessionCookie } from '../src/auth-util.mjs';
 
 const base = mkdtempSync(path.join(tmpdir(), 'cst-auth-'));
@@ -121,6 +121,37 @@ test('course scoping: users only see their own; cross-user reads miss', async ()
   assert.equal(await store.getCourse(b.user.id, courseA.id), null, 'cross-user read misses');
   assert.equal(await store.deleteCourse(b.user.id, courseA.id), false, 'cross-user delete refused');
   assert.ok(await store.deleteCourse(a.user.id, courseA.id));
+});
+
+test('course titles: theme wins, fallback trims, nothing yields null', () => {
+  assert.equal(deriveCourseTitle({ theme_resource: { name: '醒狮' } }, '我想带中班孩子做醒狮'), '醒狮');
+  assert.equal(deriveCourseTitle({}, '我想带中班孩子做醒狮，孩子们上周看了狮头'), '我想带中班孩子做醒狮，孩子们上周'.slice(0, TITLE_MAX));
+  assert.equal(deriveCourseTitle({}, '  \n  '), null);
+  assert.equal(deriveCourseTitle(null), null);
+  const long = deriveCourseTitle({ theme_resource: { name: 'x'.repeat(40) } });
+  assert.equal(long.length, TITLE_MAX, 'hard cap');
+});
+
+test('rename: human rename locks; auto-title respects the lock; owner-scoped', async () => {
+  const { user } = await store.createUser({ username: 'renamer' });
+  const { user: other } = await store.createUser({ username: 'not_owner' });
+  const c = await store.createCourse(user.id, undefined); // default 新课程
+  assert.ok(await store.isUntitled(c.id));
+
+  // auto-title works while untitled
+  await store.renameCourse(user.id, c.id, '醒狮', { auto: true });
+  assert.equal((await store.getCourse(user.id, c.id)).title, '醒狮');
+  assert.ok(!(await store.isUntitled(c.id)), 'no longer default-named');
+
+  // human rename locks
+  await store.renameCourse(user.id, c.id, '醒狮第二班');
+  const afterAuto = await store.renameCourse(user.id, c.id, '不该生效', { auto: true });
+  assert.equal(afterAuto.title, '醒狮第二班', 'auto never overwrites a human rename');
+
+  // bad inputs + cross-user rejected
+  await assert.rejects(store.renameCourse(user.id, c.id, ''), /课程名/);
+  await assert.rejects(store.renameCourse(user.id, c.id, 'x'.repeat(TITLE_MAX + 1)), /课程名/);
+  await assert.rejects(store.renameCourse(other.id, c.id, '偷改'), /课程不存在/);
 });
 
 test('audit: admin actions leave rows, newest first', async () => {

@@ -25,6 +25,23 @@ const SESSION_BUMP_MS = 60 * 60 * 1000;            // extend at most hourly
 const nowISO = () => new Date().toISOString();
 const err = (status, message) => Object.assign(new Error(message), { status });
 
+export const TITLE_MAX = 16; // a rail row, not a sentence (DESIGN.md §4)
+const DEFAULT_TITLE = '新课程';
+
+/**
+ * Short course-name-like title from state (pure; DATABASE.md §4 auto-titling).
+ * Prefers the theme the model extracted (醒狮, 龙舟…); falls back to the first
+ * teacher message, hard-trimmed. Returns null when nothing usable exists.
+ * @param {Object|null} state @param {string} [fallbackText]
+ */
+export function deriveCourseTitle(state, fallbackText) {
+  const theme = String(state?.theme_resource?.name ?? '').replace(/\s+/g, ' ').trim();
+  if (theme) return theme.slice(0, TITLE_MAX);
+  const fb = String(fallbackText ?? '').replace(/\s+/g, ' ').trim();
+  if (fb) return fb.slice(0, TITLE_MAX);
+  return null;
+}
+
 /** @param {{ baseDir?: string }} [opts] baseDir override is for tests. */
 export function createJsonStore(opts = {}) {
   const BASE = opts.baseDir ?? DEFAULT_BASE;
@@ -120,6 +137,33 @@ export function createJsonStore(opts = {}) {
           id: c.id, title: c.title, course_state: c.course_state,
           state_version: c.state_version, created_at: c.created_at, updated_at: c.updated_at,
         };
+      });
+    },
+
+    /**
+     * Rename (owner only). Human renames set title_locked so auto-titling
+     * never overwrites a person's choice; auto renames leave it unlocked.
+     */
+    async renameCourse(userId, courseId, title, { auto = false } = {}) {
+      return withLock(async () => {
+        const c = await readCourse(courseId);
+        if (!c || c.user_id !== userId) throw err(404, '课程不存在');
+        if (auto && c.title_locked) return brief(c);            // human choice wins
+        const t = String(title ?? '').replace(/\s+/g, ' ').trim();
+        if (!t || t.length > TITLE_MAX) throw err(400, `课程名需为 1–${TITLE_MAX} 个字符`);
+        c.title = t;
+        if (!auto) c.title_locked = true;
+        c.updated_at = nowISO();
+        await writeCourse(c);
+        return brief(c);
+      });
+    },
+
+    /** True when auto-titling should run: still on the default name, not human-locked. */
+    async isUntitled(courseId) {
+      return withLock(async () => {
+        const c = await readCourse(courseId);
+        return Boolean(c && !c.title_locked && c.title === DEFAULT_TITLE);
       });
     },
 
@@ -395,8 +439,13 @@ export function createJsonStore(opts = {}) {
 
     async adminListCourses() {
       return withLock(async () => {
+        // Join usernames so consoles can show people, not UUIDs (DESIGN.md clarity rules).
+        const users = await readUsers();
+        const byId = Object.fromEntries(users.map((u) => [u.id, u]));
         const out = (await allCourses()).map((c) => ({
           id: c.id, user_id: c.user_id, title: c.title,
+          username: byId[c.user_id]?.username ?? null,
+          display_name: byId[c.user_id]?.display_name ?? null,
           state_version: c.state_version, created_at: c.created_at, updated_at: c.updated_at,
           messages: (c.messages || []).length, snapshots: (c.snapshots || []).length,
         }));
