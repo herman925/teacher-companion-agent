@@ -180,6 +180,19 @@ Deletion vs append-only: §1 keeps messages/snapshots append-only so child-evide
 
 **Client change (`main.js`):** localStorage stays as an offline cache, but when `apiBase` points at a server the course list and history load from `/api/courses…`, and a turn posts `courseId + message` (server owns history) instead of shipping the whole transcript each turn.
 
+### Accounts, roles, and login (v1 design — gates the dev→main merge)
+
+Publishing the persistence tier to the public instance is blocked on auth: today it is one shared demo user, so the open internet would share (and could delete) one dataset. Design of record:
+
+- **Roles**: `admin`（Herman/运营 — full console, user management）, `teacher`（own courses only — every query already scopes by `user_id`, so history sharing disappears the moment login exists）, `visitor`（演示模式 only: mock provider, nothing persisted）. Stored as `users.role text NOT NULL DEFAULT 'teacher'`.
+- **Login paths, in priority order**:
+  1. **WeChat（小程序 + web 扫码）** — the pilot audience lives there. 小程序 gets `wx.login` → `code2Session` → stable `openid` (no password at all); phone number via the button-based phone-auth capability when we need a contact channel. Web login needs the Open Platform website app + filed domain (ARCHITECTURE.md §5).
+  2. **SMS code** — mainland-native fallback (~¥0.05/条), doubles as the phone-binding step.
+  3. **Admin-created accounts** — the admin console gets a 用户管理 tab: create/invite accounts (username + one-time password), reset passwords, disable users, assign roles. This is deliberately registration-free so Herman can provision pilot teachers from outside the mainland without touching WeChat/SMS flows.
+  4. Email is recorded as unlikely: mainland teachers rarely use it and deliverability from a mainland VM is poor — revisit only if a real cohort asks.
+- **Display name (昵称)**: system-unique; changeable once per 6 months (`users.display_name_changed_at`); filtered through a CN+EN profanity/sensitive-word list on set — a content-compliance requirement for anything user-visible in mainland deployments, not a nicety.
+- **Real-name question (open, verify before launch)**: WeChat accounts are already real-name-verified at the platform level (phone binding under the real-name rules), and the mini-program *developer subject* must be verified. Whether **we** must additionally collect user identity depends on the service category regulations for education/content services — do not assume either way; resolve during 备案/登记 with the platform checklists. Recorded as open question #4 below.
+
 ### Needed once persistence lands (v1 target)
 
 | Method + path | Purpose |
@@ -206,6 +219,8 @@ Everything under `/api/` except `login` and `healthz` requires the session and i
 
 ## 6. Open questions
 
-1. SMS login vs invite-code for pilot cohort — decide before building `POST /api/auth/login` (cost vs friction; ARCHITECTURE.md prices SMS at ~¥0.05/条).
+1. SMS login vs invite-code for pilot cohort — decide before building `POST /api/auth/login` (cost vs friction; ARCHITECTURE.md prices SMS at ~¥0.05/条). The admin-created-accounts path (§4 auth design) may make invite codes unnecessary.
 2. Does stage-5 export need server-side rendering (docx/pdf) or is client-side enough? Affects whether an export worker joins the VM.
 3. Violations table growth policy — keep forever (research value) or aggregate after N months?
+4. Real-name obligations for the 小程序 user base (see §4 auth design) — verify against WeChat platform rules and the education-service category during 备案/登记; do not guess.
+5. **官方服务 vs BYOK (planned end-state for model access).** The provider zoo in the settings modal is a dev-phase tool. Production collapses to two modes: **官方服务** — the platform provides model access as SaaS: keys live server-side in the proxy env (already the production key-custody design, §2 "what we do NOT store"), the platform pays vendors, per-teacher consumption is metered from `messages.usage` for quota/billing; **自备密钥 BYOK** — a teacher/org pastes their own vendor key, which stays per-request/localStorage exactly as today. Decision needed later: quota model (per-seat allowance vs pay-per-use) and whether BYOK survives past the pilot.
