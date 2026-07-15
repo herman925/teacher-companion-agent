@@ -674,8 +674,10 @@ body.has-history .rail-hotzone {
   padding: calc(var(--sp) * 2);
 }
 body.has-history .history-rail { display: flex; }
-.rail-hotzone:hover ~ .history-rail,
-.history-rail:hover,
+/* Peek is JS-managed (body.rail-peek, main.js): a pure CSS :hover rule kept the
+   rail visually open after a click closed it while the cursor was still inside,
+   so close-clicks (course items, 历史 toggle) looked dead. */
+body.rail-peek .history-rail,
 body.rail-open .history-rail,
 body.rail-pinned .history-rail { transform: translateX(0); }
 /* Pinned: reflow the centered column to the right of the rail. */

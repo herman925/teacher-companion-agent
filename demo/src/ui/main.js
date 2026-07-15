@@ -1243,7 +1243,13 @@ function applyRailPinned() {
   if (pin) pin.setAttribute('aria-pressed', String(railPinned));
 }
 function openRail() { document.body.classList.add('rail-open'); }
-function closeRail() { document.body.classList.remove('rail-open'); exitManageMode(); }
+function closeRail() {
+  document.body.classList.remove('rail-open');
+  // Also cancel a hover-peek: a close triggered while the cursor is still over
+  // the rail must actually close it, not leave it held open by the peek state.
+  document.body.classList.remove('rail-peek');
+  exitManageMode();
+}
 
 function resetDeleteArm() {
   const dsel = document.querySelector('#rail-del-selected');
@@ -1697,6 +1703,19 @@ function wire() {
     if (e.target.closest('#history-rail') || e.target.closest('#btn-history')) return;
     closeRail();
   });
+  // hover peek (body.rail-peek), JS-managed instead of CSS :hover so that a
+  // click that closes the rail wins over the cursor still hovering it: enter
+  // the left hot-zone to peek, leave the hot-zone/rail pair to unpeek.
+  const hotzone = document.querySelector('#rail-hotzone');
+  const railEl = document.querySelector('#history-rail');
+  const unpeek = (e) => {
+    const to = e.relatedTarget;
+    if (to && (to.closest?.('#history-rail') || to.closest?.('#rail-hotzone'))) return;
+    document.body.classList.remove('rail-peek');
+  };
+  hotzone.addEventListener('mouseenter', () => document.body.classList.add('rail-peek'));
+  hotzone.addEventListener('mouseleave', unpeek);
+  railEl.addEventListener('mouseleave', unpeek);
 
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key === '`') {
