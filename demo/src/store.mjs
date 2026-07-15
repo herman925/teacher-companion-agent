@@ -15,6 +15,9 @@
 //   adminGetCourse(courseId)                   -> full raw record | null
 //   adminDelete(courseId)                      -> boolean (delete any owner)
 //   adminExportAll()                           -> [full records] for one-file export
+// Auth (SECURITY.md): createUser/getUser/listUsers/verifyLogin/changePassword/
+//   resetPassword/setDisplayName/saveUserProfile/updateUser · createSession/
+//   getSessionUser/listSessions/revokeSession/revokeByToken · audit/listAudit
 
 import { createJsonStore } from './store/json-store.mjs';
 

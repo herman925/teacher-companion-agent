@@ -23,10 +23,16 @@ import { parseTurn, validateTurn, violationFeedback, safeTemplate } from './src/
 import { applyDelta, createInitialState, STAGE_NAMES } from './src/engine.mjs';
 import { buildSystemPrompt, stageModuleName, profileSectionText } from './src/prompt-builder.mjs';
 import { store } from './src/store.mjs';
+import { parseCookies, sessionCookie, clearSessionCookie, SESSION_COOKIE, displayNameError } from './src/auth-util.mjs';
 
-// Demo persistence tier (DATABASE.md §4): single hard-coded user, no auth.
-// Real auth + per-teacher scoping is the v1 persistence-layer build.
-const DEMO_USER = 'demo';
+// Auth (SECURITY.md): opaque session cookie → store lookup. Courses are scoped
+// to the session user; no session = visitor (演示模式 only, /api/courses* 401s).
+async function sessionUser(req) {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (!token) return null;
+  const hit = await store.getSessionUser(token);
+  return hit ? { ...hit.user, _token: token, _sid: hit.session.sid } : null;
+}
 
 // Admin console password. When ADMIN_TOKEN is set, /api/admin/* requires the
 // x-admin-token header to carry the SHA-256 hex of the password (what the
@@ -314,9 +320,11 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       ok: true,
-      // Demo persistence tier is always on when a server answers (DATABASE.md §4).
+      // Demo persistence tier is on when a server answers, but requires login
+      // (SECURITY.md §3): without a session, /api/courses* answers 401 and the
+      // client falls back to localStorage-only 演示模式.
       persistence: true,
-      user: DEMO_USER,
+      auth: true,
       providers: Object.entries(PROVIDERS)
         .filter(([, p]) => p.enabled !== false)
         .map(([id, p]) => ({ id, label: p.label, defaultModel: p.model, hasEnvKey: Boolean(ENV_KEYS[id]) })),
@@ -324,8 +332,76 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ---------- auth: login/logout, 用户中心 (SECURITY.md §2–§4) ----------
+  if (url.pathname === '/api/auth/login' || url.pathname === '/api/auth/logout'
+      || url.pathname === '/api/me' || url.pathname.startsWith('/api/me/')) {
+    const json = (status, obj, headers = {}) => {
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
+      res.end(JSON.stringify(obj));
+    };
+    const readBody = async () => {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      return body ? JSON.parse(body) : {};
+    };
+    try {
+      if (url.pathname === '/api/auth/login' && req.method === 'POST') {
+        const q = await readBody();
+        const user = await store.verifyLogin(q.username, q.password);
+        if (!user) return json(401, { ok: false, message: '用户名或密码不对，或账号已停用' });
+        const { token } = await store.createSession(user.id, req.headers['user-agent']);
+        return json(200, { ok: true, user }, { 'set-cookie': sessionCookie(token) });
+      }
+      if (url.pathname === '/api/auth/logout' && req.method === 'POST') {
+        const token = parseCookies(req)[SESSION_COOKIE];
+        if (token) await store.revokeByToken(token);
+        return json(200, { ok: true }, { 'set-cookie': clearSessionCookie() });
+      }
+      const me = await sessionUser(req);
+      if (!me) return json(401, { ok: false, need_login: true, message: '请先登录' });
+      if (url.pathname === '/api/me' && req.method === 'GET') {
+        const { _token, _sid, ...user } = me;
+        return json(200, { ok: true, user });
+      }
+      if (url.pathname === '/api/me' && req.method === 'PATCH') {
+        const q = await readBody();
+        if (q.display_name !== undefined) {
+          const ruleError = displayNameError(q.display_name, { lastChangedAt: me.display_name_changed_at });
+          if (ruleError) return json(400, { ok: false, message: ruleError });
+          try {
+            const user = await store.setDisplayName(me.id, q.display_name);
+            return json(200, { ok: true, user });
+          } catch (e) { return json(e.status ?? 500, { ok: false, message: e.message }); }
+        }
+        if (q.password) {
+          try {
+            await store.changePassword(me.id, q.password.old, q.password.new);
+            return json(200, { ok: true });
+          } catch (e) { return json(e.status ?? 500, { ok: false, message: e.message }); }
+        }
+        if (q.profile !== undefined) {
+          await store.saveUserProfile(me.id, q.profile);
+          return json(200, { ok: true });
+        }
+        return json(400, { ok: false, message: '没有可更新的字段' });
+      }
+      if (url.pathname === '/api/me/sessions' && req.method === 'GET') {
+        return json(200, { ok: true, sessions: await store.listSessions(me.id, me._token) });
+      }
+      const sidMatch = url.pathname.match(/^\/api\/me\/sessions\/([^/]+)$/);
+      if (sidMatch && req.method === 'DELETE') {
+        const gone = await store.revokeSession(me.id, decodeURIComponent(sidMatch[1]));
+        return json(gone ? 200 : 404, { ok: gone });
+      }
+      return json(405, { ok: false, message: 'method not allowed' });
+    } catch (e) {
+      return json(500, { ok: false, message: e.message });
+    }
+  }
+
   // ---------- demo persistence tier: courses + server-side chat history ----------
-  // Single demo user (DEMO_USER); no auth this tier. Maps to DATABASE.md courses/messages.
+  // Session-scoped (SECURITY.md §3): every query filters by the logged-in
+  // user's id; visitors get 401 and the client degrades to 演示模式.
   if (url.pathname === '/api/courses' || url.pathname.startsWith('/api/courses/')) {
     const rest = url.pathname.slice('/api/courses'.length); // '' | '/:id' | '/:id/messages' | '/:id/chat'
     const seg = rest.split('/').filter(Boolean).map(decodeURIComponent);
@@ -334,9 +410,12 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(obj));
     };
     try {
-      // GET /api/courses — list
+      const me = await sessionUser(req);
+      if (!me) return json(401, { ok: false, need_login: true, message: '请先登录' });
+      const uid = me.id;
+      // GET /api/courses — list (the session user's only)
       if (seg.length === 0 && req.method === 'GET') {
-        return json(200, { ok: true, courses: await store.listCourses(DEMO_USER) });
+        return json(200, { ok: true, courses: await store.listCourses(uid) });
       }
       // POST /api/courses — create (30-course quota enforced in the store)
       if (seg.length === 0 && req.method === 'POST') {
@@ -344,7 +423,7 @@ const server = http.createServer(async (req, res) => {
         for await (const chunk of req) body += chunk;
         const q = body ? JSON.parse(body) : {};
         try {
-          const course = await store.createCourse(DEMO_USER, q.title);
+          const course = await store.createCourse(uid, q.title);
           return json(200, { ok: true, course });
         } catch (e) {
           return json(e.status === 409 ? 409 : 500, { ok: false, message: e.message });
@@ -353,15 +432,20 @@ const server = http.createServer(async (req, res) => {
       const courseId = seg[0];
       // GET /api/courses/:id — course + current state document
       if (seg.length === 1 && req.method === 'GET') {
-        const course = await store.getCourse(DEMO_USER, courseId);
+        const course = await store.getCourse(uid, courseId);
         if (!course) return json(404, { ok: false, message: '课程不存在' });
         return json(200, { ok: true, course });
       }
       // DELETE /api/courses/:id — whole-course erasure (data-subject deletion)
       if (seg.length === 1 && req.method === 'DELETE') {
-        const removed = await store.deleteCourse(DEMO_USER, courseId);
+        const removed = await store.deleteCourse(uid, courseId);
         if (!removed) return json(404, { ok: false, message: '课程不存在' });
         return json(200, { ok: true, deleted: courseId });
+      }
+      // Ownership check for subresources: messages/chat must not leak across users.
+      if (seg.length === 2) {
+        const owned = await store.getCourse(uid, courseId);
+        if (!owned) return json(404, { ok: false, message: '课程不存在' });
       }
       // GET /api/courses/:id/messages?before=&limit= — paged history
       if (seg.length === 2 && seg[1] === 'messages' && req.method === 'GET') {
@@ -382,7 +466,7 @@ const server = http.createServer(async (req, res) => {
         if (accept.includes('application/json') && !accept.includes('text/event-stream')) {
           const events = [];
           const emit = (event, data) => events.push({ event, data });
-          try { await runCourseTurn(DEMO_USER, courseId, parsed, emit); }
+          try { await runCourseTurn(uid, courseId, parsed, emit); }
           catch (e) { emit('error', { kind: e.kind ?? 'internal', message: e.message, chain: e.chain ?? [] }); }
           return json(200, { events });
         }
@@ -392,7 +476,7 @@ const server = http.createServer(async (req, res) => {
           connection: 'keep-alive',
         });
         const emit = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-        try { await runCourseTurn(DEMO_USER, courseId, parsed, emit); }
+        try { await runCourseTurn(uid, courseId, parsed, emit); }
         catch (e) { emit('error', { kind: e.kind ?? 'internal', message: e.message, chain: e.chain ?? [] }); }
         res.end();
         return;
@@ -479,6 +563,49 @@ const server = http.createServer(async (req, res) => {
     try {
       if (seg[0] === 'data' && req.method === 'GET') {
         return json(200, { ok: true, token_required: Boolean(ADMIN_TOKEN), courses: await store.adminListCourses() });
+      }
+      // ---- user management (SECURITY.md §4): every action audited ----
+      if (seg[0] === 'users' && seg.length === 1 && req.method === 'GET') {
+        return json(200, { ok: true, users: await store.listUsers() });
+      }
+      if (seg[0] === 'users' && seg.length === 1 && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const q = body ? JSON.parse(body) : {};
+        try {
+          const { user, temp_password } = await store.createUser({
+            username: q.username, displayName: q.display_name, role: q.role, createdBy: 'console',
+          });
+          await store.audit('console', 'create_user', user.id, { username: user.username, role: user.role });
+          return json(200, { ok: true, user, temp_password }); // temp password appears in this response ONLY
+        } catch (e) { return json(e.status ?? 500, { ok: false, message: e.message }); }
+      }
+      if (seg[0] === 'users' && seg.length === 2 && req.method === 'PATCH') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const q = body ? JSON.parse(body) : {};
+        const targetId = seg[1];
+        try {
+          if (q.action === 'reset_password') {
+            const temp = await store.resetPassword(targetId);
+            await store.audit('console', 'reset_password', targetId, null);
+            return json(200, { ok: true, temp_password: temp });
+          }
+          if (q.action === 'disable' || q.action === 'enable') {
+            const user = await store.updateUser(targetId, { status: q.action === 'disable' ? 'disabled' : 'active' });
+            await store.audit('console', `${q.action}_user`, targetId, null);
+            return json(200, { ok: true, user });
+          }
+          if (q.action === 'set_role' && ['admin', 'teacher'].includes(q.role)) {
+            const user = await store.updateUser(targetId, { role: q.role });
+            await store.audit('console', 'set_role', targetId, { role: q.role });
+            return json(200, { ok: true, user });
+          }
+          return json(400, { ok: false, message: '未知操作' });
+        } catch (e) { return json(e.status ?? 500, { ok: false, message: e.message }); }
+      }
+      if (seg[0] === 'audit' && req.method === 'GET') {
+        return json(200, { ok: true, audit: await store.listAudit({ limit: 200 }) });
       }
       if (seg[0] === 'export' && req.method === 'GET') {
         const courses = await store.adminExportAll();

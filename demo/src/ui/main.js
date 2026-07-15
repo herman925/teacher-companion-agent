@@ -80,7 +80,21 @@ let profile = {
   role: '', classBands: [], classSize: '', stylePref: '', ageBand: '',
   ...load(LS.profile, {}),
 };
-function saveProfile() { save(LS.profile, profile); }
+let profileSyncTimer = null;
+function saveProfile() {
+  save(LS.profile, profile);
+  // Signed in → the profile follows the account (users.settings.profile).
+  if (me) {
+    clearTimeout(profileSyncTimer);
+    profileSyncTimer = setTimeout(() => {
+      fetch(apiUrl('/api/me'), {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ profile }),
+      }).catch(() => { /* offline blip — localStorage still holds it */ });
+    }, 800);
+  }
+}
 function profileIsEmpty() {
   return !Object.values(profile).some((v) => (Array.isArray(v) ? v.length : String(v ?? '').trim()));
 }
@@ -140,6 +154,10 @@ let apiBase = (load(LS.apiBase, '') || '').replace(/\/+$/, '');
 let backendOnline = false;
 /** Whether the backend offers the persistence tier (server-side chat history). */
 let persistent = false;
+/** Whether the backend requires login for persistence (SECURITY.md §3). */
+let authRequired = false;
+/** Logged-in user (GET /api/me shape) or null = visitor. */
+let me = null;
 /** Active server course id (persistence tier); null = not loaded / offline. */
 let activeCourseId = load(LS.courseId, null);
 /** Brief list of the demo user's server courses, for the history rail. */
@@ -228,6 +246,7 @@ const statusLine = $('#status-line');
 const statusText = $('#status-text');
 const subtitleEl = $('#subtitle');
 const settingsDrawer = $('#settings-drawer');
+const userModal = $('#user-modal');
 const debugDrawer = $('#debug-drawer');
 const debugBody = $('#debug-body');
 const providerBox = $('#provider-box');
@@ -269,11 +288,12 @@ function autogrow() {
 }
 
 function openDrawer(drawer) {
-  for (const d of [settingsDrawer, debugDrawer]) d.classList.toggle('open', d === drawer && !d.classList.contains('open'));
+  for (const d of [settingsDrawer, userModal, debugDrawer]) d.classList.toggle('open', d === drawer && !d.classList.contains('open'));
 }
 
 function closeDrawers() {
   settingsDrawer.classList.remove('open');
+  userModal.classList.remove('open');
   debugDrawer.classList.remove('open');
 }
 
@@ -1101,6 +1121,7 @@ async function initProviders() {
         providerInfos = health.providers;
       }
       persistent = Boolean(health.persistence);
+      authRequired = Boolean(health.auth);
       backendOnline = true;
     }
   } catch { /* offline from the API is fine — 演示模式 still works client-side */ }
@@ -1345,6 +1366,204 @@ async function deleteCourses(ids) {
   renderRail();
 }
 
+// -------------------------------------------------- 用户中心 (SECURITY.md §2–§4)
+
+async function fetchMe() {
+  try {
+    const res = await fetch(apiUrl('/api/me'));
+    if (!res.ok) return null;
+    return (await res.json()).user ?? null;
+  } catch { return null; }
+}
+
+/** Bring the persistence tier up for the signed-in user (rail, server history). */
+async function enablePersistence() {
+  await initCourseFromServer();
+  if (!persistent) return;
+  document.body.classList.add('has-history');
+  const hb = $('#btn-history');
+  if (hb) hb.hidden = false;
+  applyRailPinned();
+  renderRail();
+  replayTranscript();
+  updateHeader();
+  updateSkipLink();
+  refreshDebug();
+  scrollToEnd();
+}
+
+/** Field + button row for the account pane. */
+function actionRow(inputEl2, btnLabel, onClick) {
+  const row = el('div', 'model-row');
+  const holder = el('span', 'model-holder');
+  holder.append(inputEl2);
+  const btn = el('button', 'text-btn', btnLabel);
+  btn.type = 'button';
+  btn.addEventListener('click', () => onClick(btn));
+  row.append(holder, btn);
+  return row;
+}
+
+function paneMsg() {
+  const m = el('p', 'settings-note');
+  m.setAttribute('role', 'status');
+  return m;
+}
+
+/** Rebuild the 用户中心 modal for the current login state and open it. */
+function openUserModal(startPane, notice) {
+  const nav = $('#user-nav');
+  const panes = $('#user-panes');
+  nav.replaceChildren();
+  panes.replaceChildren();
+
+  const addPane = (key, navLabel) => {
+    const btn = el('button', '', navLabel);
+    btn.type = 'button';
+    btn.dataset.pane = key;
+    nav.append(btn);
+    const pane = el('section', 'modal-pane');
+    pane.dataset.pane = key;
+    panes.append(pane);
+    return pane;
+  };
+  const activate = (key) => {
+    for (const b of nav.querySelectorAll('button')) b.classList.toggle('on', b.dataset.pane === key);
+    for (const p of panes.querySelectorAll('.modal-pane')) p.classList.toggle('on', p.dataset.pane === key);
+  };
+  nav.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-pane]');
+    if (b) activate(b.dataset.pane);
+  });
+
+  if (!me) {
+    // ---- signed out: login pane ----
+    const pane = addPane('login', '登录');
+    const msg = paneMsg();
+    const { field: userField, input: userInput } = settingsField('用户名', 'login-username', { placeholder: '账号由管理员创建', value: '' });
+    const { field: pwField, input: pwInput } = settingsField('密码', 'login-password', { type: 'password', value: '' });
+    const btn = el('button', 'text-btn', '登录');
+    btn.type = 'button';
+    const doLogin = async () => {
+      msg.textContent = '登录中…';
+      try {
+        const res = await fetch(apiUrl('/api/auth/login'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ username: userInput.value.trim(), password: pwInput.value }),
+        });
+        const data = await res.json();
+        if (!data.ok) { msg.textContent = data.message || '登录失败'; return; }
+        me = data.user;
+        logEvent('session', 'login', { user: me.username });
+        if (me.profile) { profile = { ...profile, ...me.profile }; save(LS.profile, profile); buildProfilePane(); }
+        $('#btn-user').hidden = false;
+        await enablePersistence();
+        if (me.must_change_password) openUserModal('account', '请先修改初始密码，再开始使用。');
+        else closeDrawers();
+      } catch (err2) { msg.textContent = err2?.message ?? '连接失败'; }
+    };
+    btn.addEventListener('click', doLogin);
+    pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+    pane.append(userField, pwField, btn, msg,
+      el('p', 'settings-note', '没有账号？账号由管理员在数据管理台创建（首次登录后需要改密码）。不登录也可以用「演示模式」体验，对话只存在本机。'));
+    activate('login');
+  } else {
+    // ---- signed in: 账号 / 登录设备 ----
+    const account = addPane('account', '账号');
+    const devices = addPane('devices', '登录设备');
+
+    const noticeEl = paneMsg();
+    if (notice) noticeEl.textContent = notice;
+    account.append(el('p', 'settings-note', `已登录：${me.username}${me.role === 'admin' ? '（管理员）' : ''}`), noticeEl);
+
+    // display name (rules stated inline; server re-checks everything)
+    const dnMsg = paneMsg();
+    const dnInput = el('input', 'settings-input');
+    dnInput.value = me.display_name ?? '';
+    dnInput.id = 'account-displayname';
+    const dnField = el('div', 'settings-field');
+    const dnLabel = el('label', 'settings-label', '昵称（全站唯一，每 6 个月可改一次）');
+    dnLabel.htmlFor = dnInput.id;
+    dnField.append(dnLabel, actionRow(dnInput, '修改昵称', async () => {
+      dnMsg.textContent = '…';
+      const res = await fetch(apiUrl('/api/me'), {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ display_name: dnInput.value.trim() }),
+      });
+      const data = await res.json();
+      if (data.ok) { me = data.user; dnMsg.textContent = '已更新。'; }
+      else dnMsg.textContent = data.message || '修改失败';
+    }), dnMsg);
+    account.append(dnField);
+
+    // password change
+    const pwMsg = paneMsg();
+    const mk = (labelText, id) => {
+      const f = settingsField(labelText, id, { type: 'password', value: '' });
+      account.append(f.field);
+      return f.input;
+    };
+    const oldPw = mk(me.must_change_password ? '初始密码' : '旧密码', 'account-oldpw');
+    const newPw = mk('新密码（至少 8 位）', 'account-newpw');
+    const newPw2 = mk('再输一次新密码', 'account-newpw2');
+    const pwBtn = el('button', 'text-btn', '修改密码');
+    pwBtn.type = 'button';
+    pwBtn.addEventListener('click', async () => {
+      if (newPw.value !== newPw2.value) { pwMsg.textContent = '两次输入的新密码不一致'; return; }
+      pwMsg.textContent = '…';
+      const res = await fetch(apiUrl('/api/me'), {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ password: { old: oldPw.value, new: newPw.value } }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        pwMsg.textContent = '密码已修改。';
+        me.must_change_password = false;
+        oldPw.value = newPw.value = newPw2.value = '';
+      } else pwMsg.textContent = data.message || '修改失败';
+    });
+    account.append(pwBtn, pwMsg);
+
+    const logoutBtn = el('button', 'text-btn danger', '退出登录');
+    logoutBtn.type = 'button';
+    logoutBtn.addEventListener('click', async () => {
+      await fetch(apiUrl('/api/auth/logout'), { method: 'POST' }).catch(() => {});
+      window.location.reload(); // clean teardown of the persistent UI
+    });
+    account.append(el('p', 'settings-note', '教师档案在「设置 → 教师档案」里填写；登录后会自动同步到你的账号。'), logoutBtn);
+
+    // devices
+    devices.append(el('p', 'settings-note', '你的有效登录设备。退出某台设备后，那台设备需要重新登录。'));
+    const list = el('div', 'course-list');
+    devices.append(list);
+    fetch(apiUrl('/api/me/sessions')).then((r) => r.json()).then((data) => {
+      list.replaceChildren();
+      for (const s of data.sessions ?? []) {
+        const row = el('div', 'rail-item');
+        const label = `${s.current ? '本设备 · ' : ''}${(s.user_agent || '未知设备').slice(0, 40)}｜最近 ${String(s.last_seen_at).slice(0, 16).replace('T', ' ')}`;
+        row.append(el('span', 'rail-item-title', label));
+        if (!s.current) {
+          const out = el('button', 'rail-del', '退出');
+          out.style.opacity = 1;
+          out.type = 'button';
+          out.addEventListener('click', async () => {
+            await fetch(apiUrl(`/api/me/sessions/${encodeURIComponent(s.sid)}`), { method: 'DELETE' });
+            row.remove();
+          });
+          row.append(out);
+        }
+        list.append(row);
+      }
+      if (!(data.sessions ?? []).length) list.append(el('p', 'settings-note', '没有其他设备。'));
+    }).catch(() => list.append(el('p', 'settings-note', '设备列表加载失败。')));
+
+    activate(startPane === 'devices' ? 'devices' : 'account');
+  }
+
+  openDrawer(userModal);
+}
+
 // ------------------------------------------------------------ new course
 
 async function resetCourse() {
@@ -1434,6 +1653,11 @@ function wire() {
   });
   document.querySelector('[data-close-settings]').addEventListener('click', closeDrawers);
 
+  // 用户中心
+  $('#btn-user').addEventListener('click', () => openUserModal());
+  $('#close-user').addEventListener('click', closeDrawers);
+  document.querySelector('[data-close-user]').addEventListener('click', closeDrawers);
+
   // history rail: 历史 is a true toggle — pinned means "keep open", so
   // toggling while pinned unpins and closes rather than doing nothing.
   $('#btn-history').addEventListener('click', () => {
@@ -1516,19 +1740,16 @@ function boot() {
   // Detect the backend, then (if it offers persistence) load server-side history
   // and re-render — the localStorage cache above kept first paint instant.
   initProviders().then(async () => {
+    if (authRequired && backendOnline) {
+      $('#btn-user').hidden = false;          // people icon: login or account
+      me = await fetchMe();
+      if (me?.profile) { profile = { ...profile, ...me.profile }; save(LS.profile, profile); buildProfilePane(); }
+      logEvent('session', 'auth_state', { signed_in: Boolean(me), user: me?.username ?? null });
+    }
     if (!persistent) return;
-    await initCourseFromServer();
-    if (!persistent) return; // init may have downgraded us on failure
-    document.body.classList.add('has-history'); // reveals the rail + its hot-zone
-    const hb = $('#btn-history');
-    if (hb) hb.hidden = false;
-    applyRailPinned();
-    renderRail();
-    replayTranscript();
-    updateHeader();
-    updateSkipLink();
-    refreshDebug();
-    scrollToEnd();
+    if (authRequired && !me) return;          // visitor: localStorage-only 演示模式
+    await enablePersistence();
+    if (me?.must_change_password) openUserModal('account', '请先修改初始密码，再开始使用。');
   });
 }
 

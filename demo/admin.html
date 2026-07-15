@@ -21,6 +21,7 @@
       --sp: 8px;
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; } /* explicit display rules must not beat the hidden attribute */
     body {
       margin: 0; background: var(--paper); color: var(--ink);
       font-family: var(--font-sans); font-size: 14px; line-height: 1.7;
@@ -75,6 +76,8 @@
     button.confirming { background: var(--brick); border-color: var(--brick); color: #fff; }
     button.confirming:hover { color: #fff; }
     button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.tab { border-radius: 8px; }
+    button.tab.on { background: var(--green-wash); border-color: var(--green); color: var(--green); font-weight: 500; }
     .spacer { flex: 1; }
 
     .banner {
@@ -124,6 +127,7 @@
       <li><b>看数据：</b>点课程名 → 右侧显示完整记录：<code>course_state</code>（课程状态）、<code>messages</code>（逐条对话）、<code>snapshots</code>（每一步的状态快照）。</li>
       <li><b>导出：</b>「下载」存单个课程，「导出全部」把所有数据存成一个 <code>demo-data.json</code>。</li>
       <li><b>删除：</b>所有删除都要点两次确认（按钮会先变成「确定？」）。<span class="guide-warn">删除不可恢复。</span>勾选多行后用「删除所选」，或「全部删除」清空。</li>
+      <li><b>账号管理（用户页）：</b>右上角切到「用户」，填用户名点「创建账号」——系统生成一次性初始密码，<span class="guide-warn">只显示一次</span>，复制发给对方即可（对方在聊天页右上角人形图标登录，首次登录会被要求改密码）。忘记密码用「重置密码」；停用会立刻踢下线。所有操作都有审计记录。</li>
       <li><b>连不上？</b>向导窗口要一直开着（关窗即断线）。提示失败就再运行一次向导——线路偶尔会慢，第二次通常就好。</li>
     </ol>
   </details>
@@ -133,14 +137,20 @@
     <button id="connect" class="primary">连接</button>
     <button id="refresh">刷新</button>
     <span class="spacer"></span>
+    <button id="tab-data" class="tab on">数据</button>
+    <button id="tab-users" class="tab">用户</button>
+  </div>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <div class="bar" id="data-actions">
+    <span class="spacer"></span>
     <button id="export">导出全部 (.json)</button>
     <button id="del-selected" class="danger" disabled>删除所选</button>
     <button id="del-all" class="danger">全部删除</button>
   </div>
 
-  <div id="banner" class="banner" hidden></div>
-
-  <div class="wrap">
+  <div class="wrap" id="view-data">
     <div class="list">
       <table>
         <thead><tr>
@@ -154,6 +164,29 @@
         <div class="detail-head" id="detail-head">完整记录</div>
         <div class="detail-hint" id="detail-hint">点左侧课程名查看 course_state · messages · snapshots。</div>
         <pre id="detail" hidden></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- 用户 tab: registration-free account management, every action audited (SECURITY.md §4) -->
+  <div id="view-users" hidden>
+    <div class="bar">
+      <input type="text" id="new-username" placeholder="用户名（3–24 位小写字母数字_-）" autocomplete="off">
+      <input type="text" id="new-displayname" placeholder="昵称（可选）" autocomplete="off">
+      <button id="create-user" class="primary">创建账号</button>
+      <span class="spacer"></span>
+      <button id="refresh-users">刷新</button>
+    </div>
+    <div class="banner" id="temp-box" hidden></div>
+    <div class="wrap">
+      <div class="list" style="flex:1 1 100%">
+        <table>
+          <thead><tr>
+            <th>用户名</th><th>昵称</th><th>角色</th><th>状态</th><th>最近登录</th><th></th>
+          </tr></thead>
+          <tbody id="user-rows"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+        </table>
+        <p class="detail-hint" style="margin-top:8px">创建账号会生成一次性初始密码（只显示一次）；用户首次登录后必须改密码。停用会立刻踢下线并退出其所有设备。所有操作都会写入审计记录。</p>
       </div>
     </div>
   </div>
@@ -334,11 +367,102 @@
       sessionStorage.setItem('admin.tokenHash', hash);
       loadData();
     });
-    $('#refresh').addEventListener('click', loadData);
+    $('#refresh').addEventListener('click', () => { $('#view-users').hidden ? loadData() : loadUsers(); });
     $('#export').addEventListener('click', exportAll);
     armBulk($('#del-selected'), () => Array.from(selected));
     armBulk($('#del-all'), () => allIds.slice());
     $('#token').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#connect').click(); });
+
+    // ---- tabs: 数据 / 用户 ----
+    function showView(which) {
+      $('#view-data').hidden = which !== 'data';
+      $('#data-actions').hidden = which !== 'data';
+      $('#view-users').hidden = which !== 'users';
+      $('#tab-data').classList.toggle('on', which === 'data');
+      $('#tab-users').classList.toggle('on', which === 'users');
+      if (which === 'users') loadUsers();
+    }
+    $('#tab-data').addEventListener('click', () => showView('data'));
+    $('#tab-users').addEventListener('click', () => showView('users'));
+
+    // ---- 用户 tab (SECURITY.md §4): create/reset/disable/role, all audited ----
+    function tempBox(username, temp) {
+      const b = $('#temp-box');
+      b.hidden = false;
+      b.replaceChildren();
+      b.append(`账号 ${username} 的一次性初始密码：`);
+      const code = document.createElement('b');
+      code.textContent = temp;
+      b.append(code, '　（只显示这一次——请立刻复制发给对方）　');
+      b.append(mkbtn('复制', () => navigator.clipboard?.writeText(temp)));
+    }
+
+    async function userAction(id, body) {
+      const res = await af('/api/admin/users/' + id, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      });
+      return res.json();
+    }
+
+    async function loadUsers() {
+      let data;
+      try {
+        const res = await af('/api/admin/users');
+        if (res.status === 401) { banner('需要密码：填入左上角后点「连接」。'); return; }
+        data = await res.json();
+      } catch (e) { banner('连不上后端：' + e.message); return; }
+      banner('', false);
+      const rows = $('#user-rows');
+      rows.replaceChildren();
+      if (!data.users.length) {
+        rows.innerHTML = '<tr><td colspan="6" class="empty">还没有账号——在上方创建第一个。</td></tr>';
+        return;
+      }
+      for (const u of data.users) {
+        const tr = document.createElement('tr');
+        const act = document.createElement('td');
+        const wrap = document.createElement('div'); wrap.className = 'row-actions';
+        wrap.append(mkbtn('重置密码', async () => {
+          const r = await userAction(u.id, { action: 'reset_password' });
+          if (r.ok) tempBox(u.username, r.temp_password); else banner(r.message || '重置失败');
+        }));
+        const tog = mkbtn(u.status === 'active' ? '停用' : '启用', async () => {
+          if (u.status === 'active' && tog.dataset.armed !== '1') {
+            tog.dataset.armed = '1'; tog.classList.add('confirming'); tog.textContent = '确定停用？';
+            setTimeout(() => { if (tog.isConnected) { tog.dataset.armed = ''; tog.classList.remove('confirming'); tog.textContent = '停用'; } }, 3000);
+            return;
+          }
+          const r = await userAction(u.id, { action: u.status === 'active' ? 'disable' : 'enable' });
+          if (r.ok) loadUsers(); else banner(r.message || '操作失败');
+        });
+        if (u.status === 'active') tog.className = 'danger';
+        wrap.append(tog);
+        wrap.append(mkbtn(u.role === 'admin' ? '设为教师' : '设为管理员', async () => {
+          const r = await userAction(u.id, { action: 'set_role', role: u.role === 'admin' ? 'teacher' : 'admin' });
+          if (r.ok) loadUsers(); else banner(r.message || '操作失败');
+        }));
+        act.append(wrap);
+        for (const cell of [td(u.username), td(u.display_name), td(u.role === 'admin' ? '管理员' : '教师'),
+          td(u.status === 'active' ? '正常' : '已停用'), td(fmt(u.last_login_at) || '从未'), act]) tr.append(cell);
+        rows.append(tr);
+      }
+    }
+
+    $('#create-user').addEventListener('click', async () => {
+      const username = $('#new-username').value.trim();
+      if (!username) { banner('先填用户名'); return; }
+      const res = await af('/api/admin/users', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, display_name: $('#new-displayname').value.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!data.ok) { banner(data.message || '创建失败'); return; }
+      banner('', false);
+      $('#new-username').value = ''; $('#new-displayname').value = '';
+      tempBox(data.user.username, data.temp_password);
+      loadUsers();
+    });
+    $('#refresh-users').addEventListener('click', loadUsers);
 
     loadData(); // tunnel/localhost instances answer without a password
   </script>

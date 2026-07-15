@@ -52,6 +52,12 @@
           </svg>
         </button>
         <button type="button" class="text-btn" id="btn-new">新课程</button>
+        <button type="button" class="icon-btn" id="btn-user" hidden title="用户中心" aria-label="用户中心">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="8" r="4"></circle>
+            <path d="M4 20c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5"></path>
+          </svg>
+        </button>
         <button type="button" class="icon-btn" id="btn-settings" title="设置（模型与密钥）" aria-label="设置">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="3"></circle>
@@ -116,6 +122,25 @@
           </section>
           <section class="modal-pane" id="pane-profile" data-pane="profile"></section>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 用户中心 (SECURITY.md §2–§4): login when signed out; 账号/教师档案说明/登录设备 when signed in. -->
+  <div class="modal" id="user-modal" role="dialog" aria-modal="true" aria-label="用户中心">
+    <div class="modal-backdrop" data-close-user></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 class="drawer-title" id="user-modal-title">用户中心</h2>
+        <button type="button" class="icon-btn" id="close-user" aria-label="关闭用户中心">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18"></path>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <nav class="modal-nav" id="user-nav" aria-label="用户中心分区"></nav>
+        <div class="modal-panes" id="user-panes"></div>
       </div>
     </div>
   </div>
