@@ -2,6 +2,12 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-15 (later, 7) — Admin tables: sort, filters, toggleable columns (dev only)
+
+- `0bdc647`: admin console tables became real instruments. **Sort** on every header (↑/↓ indicator, zh collation, default 更新时间 ↓). **列 ▾ column picker** per tab, persisted in localStorage (恢复默认 resets) — includes teacher-demographic columns joined from profiles (地区/园内角色/教龄/任教班级/班额) and an off-by-default **用户ID** column (answers Herman's "uuid not displayed anymore?" — it's a toggle now, plus hover-tooltip). **数据 tab advanced filter row**: 更新时间 date range + 地区/园内角色/教龄/任教班级 dropdowns built from values actually present; all AND with text search; export/delete-all/count follow the combined filter. `adminListCourses` now joins the owner's `profile`.
+- Verified in browser on seeded demographic data: sort flip, 园长 role filter →1/3 with re-scoped export label, future date range →0/3, 清除筛选, column toggle persists across both tabs. Gate + tests green.
+- Still dev-only along with (later, 6); merge to main when Herman signs off.
+
 ## 2026-07-15 (later, 6) — Course titles + admin console clarity (dev only, not merged)
 
 - **Auto course titles** (`f32aa2f`): a course names itself from `course_state.theme_resource.name` — the theme the model already extracts through the normal `state_delta` pipeline, zero extra LLM calls — capped at `TITLE_MAX=16`; first-teacher-message fallback. Server emits a `course` SSE event so the rail row renames mid-turn (browser-verified: first mock turn → row became 醒狮).
