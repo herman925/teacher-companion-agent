@@ -89,24 +89,39 @@
     </div>
   </div>
 
-  <aside class="drawer settings-drawer" id="settings-drawer" aria-label="设置">
-    <div class="drawer-head">
-      <h2 class="drawer-title">设置</h2>
-      <button type="button" class="icon-btn" id="close-settings" aria-label="关闭设置">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-          <path d="M6 6l12 12M18 6L6 18"></path>
-        </svg>
-      </button>
-    </div>
-    <div class="drawer-body">
-      <div class="settings-field">
-        <label class="settings-label" for="provider-select">模型服务</label>
-        <select class="settings-select" id="provider-select"></select>
+  <!-- Settings: centered modal (DESIGN.md §4), left nav + one pane at a time. -->
+  <div class="modal" id="settings-drawer" role="dialog" aria-modal="true" aria-label="设置">
+    <div class="modal-backdrop" data-close-settings></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 class="drawer-title">设置</h2>
+        <button type="button" class="icon-btn" id="close-settings" aria-label="关闭设置">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18"></path>
+          </svg>
+        </button>
       </div>
-      <div id="provider-box"></div>
-      <p class="settings-note">密钥和模型选择只保存在这台设备的浏览器里；只有在「服务器地址」填写后，才会随请求发送到你指定的服务，否则不外传。选「演示模式」可以不填密钥、离线直接体验完整流程；要接真实模型，请在「服务器地址」填写代理地址（见 docs/DEPLOY.md）。</p>
+      <div class="modal-body">
+        <nav class="modal-nav" id="settings-nav" aria-label="设置分区">
+          <button type="button" class="on" data-pane="general">通用</button>
+          <button type="button" data-pane="providers">模型服务</button>
+          <button type="button" data-pane="profile">教师档案</button>
+        </nav>
+        <div class="modal-panes">
+          <section class="modal-pane on" id="pane-general" data-pane="general"></section>
+          <section class="modal-pane" id="pane-providers" data-pane="providers">
+            <div class="settings-field">
+              <label class="settings-label" for="provider-select">模型服务</label>
+              <select class="settings-select" id="provider-select"></select>
+            </div>
+            <div id="provider-box"></div>
+            <p class="settings-note">密钥和模型选择只保存在这台设备的浏览器里；只有在「服务器地址」填写后，才会随请求发送到你指定的服务，否则不外传。选「演示模式」可以不填密钥、离线直接体验完整流程；要接真实模型，请在「服务器地址」填写代理地址（见 docs/DEPLOY.md）。</p>
+          </section>
+          <section class="modal-pane" id="pane-profile" data-pane="profile"></section>
+        </div>
+      </div>
     </div>
-  </aside>
+  </div>
 
   <aside class="drawer debug-drawer" id="debug-drawer" aria-label="调试">
     <div class="drawer-head">

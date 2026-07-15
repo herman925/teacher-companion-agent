@@ -826,18 +826,17 @@ function devModeField() {
   return field;
 }
 
-/** 教师档案 section — optional, local-only (PRD §7.4 v1 personalization). */
-function profileSection() {
-  const details = el('details', 'provider-config');
-  details.dataset.id = 'profile';
-  details.append(el('summary', '', '教师档案（可选，只存本机）'));
+/** 教师档案 pane — optional, local-only (PRD §7.4 v1 personalization). */
+function buildProfilePane() {
+  const pane = $('#pane-profile');
+  pane.replaceChildren();
 
   const { field: regionField } = settingsField('地区', 'profile-region', {
     placeholder: '如 广州市番禺区',
     value: profile.region ?? '',
     onInput: (v) => { profile.region = v.trim(); saveProfile(); },
   });
-  details.append(regionField);
+  pane.append(regionField);
 
   const ageField = el('div', 'settings-field');
   const ageLabel = el('label', 'settings-label', '年段');
@@ -852,7 +851,7 @@ function profileSection() {
   ageSelect.value = profile.ageBand ?? '';
   ageSelect.addEventListener('change', () => { profile.ageBand = ageSelect.value; saveProfile(); });
   ageField.append(ageLabel, ageSelect);
-  details.append(ageField);
+  pane.append(ageField);
 
   const { field: sizeField } = settingsField('班额', 'profile-classsize', {
     type: 'number',
@@ -860,24 +859,22 @@ function profileSection() {
     value: profile.classSize ?? '',
     onInput: (v) => { profile.classSize = v.trim(); saveProfile(); },
   });
-  details.append(sizeField);
+  pane.append(sizeField);
 
   const { field: styleField } = settingsField('风格偏好', 'profile-style', {
     placeholder: '如 喜欢户外和动手类活动',
     value: profile.stylePref ?? '',
     onInput: (v) => { profile.stylePref = v.trim(); saveProfile(); },
   });
-  details.append(styleField);
+  pane.append(styleField);
 
-  details.append(el('p', 'settings-note', '档案只保存在这台设备；只有在填写了服务器地址后才会随请求发送；不会写入课程状态。'));
-  return details;
+  pane.append(el('p', 'settings-note', '档案只保存在这台设备；只有在填写了服务器地址后才会随请求发送；不会写入课程状态。'));
 }
 
-/** Rebuild the provider config sections; open the selected provider's one. */
-function buildProviderSections() {
-  providerBox.replaceChildren();
-  providerBox.append(devModeField());
-  providerBox.append(profileSection());
+/** 通用 pane — server address + developer mode. */
+function buildGeneralPane() {
+  const pane = $('#pane-general');
+  pane.replaceChildren();
   const { field: apiField } = settingsField(
     '服务器地址（可选）',
     'api-base',
@@ -889,12 +886,21 @@ function buildProviderSections() {
       onInput: (v) => { apiBase = v.replace(/\/+$/, ''); save(LS.apiBase, apiBase); },
     },
   );
-  providerBox.append(apiField);
+  pane.append(apiField);
+  pane.append(devModeField());
+  pane.append(el('p', 'settings-note', '服务器地址留空＝本机。开发者模式会在对话里显示工作流节点，并在调试抽屉展示状态机与 API 往返。'));
+}
+
+/** Rebuild all three settings panes; open the selected provider's section. */
+function buildProviderSections() {
+  providerBox.replaceChildren();
   for (const info of providerInfos) {
     providerBox.append(providerSection(info));
   }
   providerBox.append(customSection());
   syncOpenSection();
+  buildGeneralPane();
+  buildProfilePane();
 }
 
 function syncOpenSection() {
@@ -1238,8 +1244,25 @@ function wire() {
   $('#close-settings').addEventListener('click', closeDrawers);
   $('#close-debug').addEventListener('click', closeDrawers);
 
-  // history rail
+  // settings modal: left-nav pane switching + scrim click closes
+  $('#settings-nav').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-pane]');
+    if (!btn) return;
+    for (const b of document.querySelectorAll('#settings-nav button')) b.classList.toggle('on', b === btn);
+    for (const p of document.querySelectorAll('.modal-pane')) p.classList.toggle('on', p.dataset.pane === btn.dataset.pane);
+  });
+  document.querySelector('[data-close-settings]').addEventListener('click', closeDrawers);
+
+  // history rail: 历史 is a true toggle — pinned means "keep open", so
+  // toggling while pinned unpins and closes rather than doing nothing.
   $('#btn-history').addEventListener('click', () => {
+    if (railPinned) {
+      railPinned = false;
+      save(LS.railPinned, false);
+      applyRailPinned();
+      closeRail();
+      return;
+    }
     document.body.classList.toggle('rail-open');
     if (!document.body.classList.contains('rail-open')) exitManageMode();
   });

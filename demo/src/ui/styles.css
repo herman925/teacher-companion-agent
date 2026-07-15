@@ -575,8 +575,56 @@ html, body {
 
 .drawer-body { padding: 0 calc(var(--sp) * 3) calc(var(--sp) * 4); }
 
-/* settings: stays in the warm world */
-.settings-drawer { background: var(--paper); border-left: 1px solid var(--border-warm); }
+/* ---------------------------------------------------- settings modal (DESIGN.md §4) */
+/* Centered paper card over an ink scrim; left nav, one pane at a time. */
+.modal { position: fixed; inset: 0; z-index: 50; display: none; }
+.modal.open { display: block; }
+.modal-backdrop { position: absolute; inset: 0; background: rgba(45, 42, 38, 0.35); }
+.modal-card {
+  position: relative;
+  margin: 7vh auto 0;
+  width: min(720px, 94vw);
+  max-height: 84vh;
+  background: var(--paper);
+  border: 1px solid var(--border-warm);
+  border-radius: 14px;
+  box-shadow: 0 12px 48px rgba(45, 42, 38, 0.22);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: calc(var(--sp) * 2) calc(var(--sp) * 3);
+  border-bottom: 1px solid var(--border-warm);
+  flex: 0 0 auto;
+}
+.modal-body { display: flex; flex: 1 1 auto; min-height: 0; }
+.modal-nav {
+  flex: 0 0 150px;
+  border-right: 1px solid var(--border-warm);
+  padding: calc(var(--sp) * 2);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.modal-nav button {
+  font: inherit; font-size: 14px; color: var(--ink);
+  background: none; border: 1px solid transparent; border-radius: 8px;
+  padding: 8px 12px; min-height: 40px; text-align: left; cursor: pointer;
+}
+.modal-nav button:hover { background: var(--cream); }
+.modal-nav button.on { background: var(--green-wash); color: var(--green); border-color: var(--green); font-weight: 500; }
+.modal-panes { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding: calc(var(--sp) * 2) calc(var(--sp) * 3) calc(var(--sp) * 3); }
+.modal-pane { display: none; }
+.modal-pane.on { display: block; }
+@media (max-width: 560px) {
+  .modal-card { margin: 0; width: 100vw; max-height: 100dvh; height: 100dvh; border-radius: 0; border: none; }
+  .modal-body { flex-direction: column; }
+  .modal-nav { flex: 0 0 auto; flex-direction: row; border-right: none; border-bottom: 1px solid var(--border-warm); overflow-x: auto; }
+  .modal-nav button { white-space: nowrap; }
+}
+
+/* When the history rail exists, course actions live there — no duplicate header 新课程. */
+body.has-history #btn-new { display: none; }
 
 .settings-field { margin-bottom: calc(var(--sp) * 2); }
 
@@ -738,6 +786,12 @@ body.rail-pinned .composer { left: 260px; }
 }
 
 .debug-drawer .drawer-title { color: var(--slate-text); font-family: var(--font-mono); font-size: 14px; }
+/* keep the head visible while scrolling long API round-trips */
+.debug-drawer .drawer-head {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--slate);
+  border-bottom: 1px solid rgba(201, 209, 217, 0.16);
+}
 .debug-drawer .icon-btn { color: var(--slate-text); }
 .debug-drawer .icon-btn:hover { background: rgba(201, 209, 217, 0.12); color: var(--slate-text); }
 
