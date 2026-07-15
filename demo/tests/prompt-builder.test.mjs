@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { buildSystemPrompt, profileSectionText, stageModuleName, STAGE_MODULE } from '../src/prompt-builder.mjs';
+import { buildSystemPrompt, profileSectionText, stageModuleName, STAGE_MODULE, STYLE_DIRECTIVES } from '../src/prompt-builder.mjs';
 import { createInitialState, applyDelta } from '../src/engine.mjs';
 import { mockTurn } from '../src/mock.mjs';
 
@@ -83,6 +83,17 @@ test('profile v2 fields: injected when present, absent when empty (both directio
   assert.ok(profileSectionText({ ageBand: '中班' }).includes('年段：中班'));
   // absent direction: empty arrays/blank strings inject nothing
   assert.equal(profileSectionText({ province: ' ', classBands: [], role: '' }), '');
+});
+
+test('回应风格: known styles inject their exact directive; free text falls back to 偏好 (both directions)', () => {
+  for (const [label, directive] of Object.entries(STYLE_DIRECTIVES)) {
+    const text = profileSectionText({ stylePref: label });
+    assert.ok(text.includes(`回应风格：${directive}`), label);
+    assert.ok(!text.includes('偏好：'), 'directive replaces the raw label');
+  }
+  const free = profileSectionText({ stylePref: '喜欢户外和动手类活动' });
+  assert.ok(free.includes('偏好：喜欢户外和动手类活动') && !free.includes('回应风格：'));
+  assert.equal(profileSectionText({ stylePref: ' ' }), '');
 });
 
 test('byte-parity with the legacy serve.mjs assembly (real prompt files, no profile)', async () => {

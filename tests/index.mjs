@@ -13,3 +13,6 @@ import '../demo/tests/session-log.test.mjs';
 import '../demo/tests/adapter-failover.test.mjs';
 import '../demo/tests/node-failover.test.mjs';
 import '../demo/tests/auth-store.test.mjs';
+import '../demo/tests/prompt-builder.test.mjs';
+import '../demo/tests/awaiting-escalation.test.mjs';
+import '../demo/tests/flow-crawler.test.mjs';
