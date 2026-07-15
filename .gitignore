@@ -50,3 +50,6 @@ secrets/
 .understand-anything/.trash-*/
 .understand-anything/tmp/
 .gstack/
+
+# Playwright MCP scratch
+.playwright-mcp/

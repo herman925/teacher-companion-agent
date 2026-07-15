@@ -223,6 +223,11 @@ export class AdapterError extends Error {
   }
 }
 
+// Node's global fetch (undici) sends no User-Agent; Z.AI's coding endpoint
+// rejects UA-less requests with a misleading 429 code 1305 ("temporarily
+// overloaded"). Any honest UA passes, so always send one.
+const USER_AGENT = 'teacher-platform-demo/0.1';
+
 /** One POST to a node's /chat/completions; throws AdapterError on any failure. */
 async function callNode(p, base, apiKey, body, timeoutMs) {
   const ctl = new AbortController();
@@ -231,7 +236,7 @@ async function callNode(p, base, apiKey, body, timeoutMs) {
   try {
     res = await fetch(`${base}/chat/completions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}`, 'user-agent': USER_AGENT },
       body: JSON.stringify(body),
       signal: ctl.signal,
     });
@@ -286,7 +291,7 @@ export async function listModels(p, apiKey, { timeoutMs = 20000 } = {}) {
   let res;
   try {
     res = await fetch(`${p.baseURL}/models`, {
-      headers: { authorization: `Bearer ${apiKey}` },
+      headers: { authorization: `Bearer ${apiKey}`, 'user-agent': USER_AGENT },
       signal: ctl.signal,
     });
   } catch (e) {
