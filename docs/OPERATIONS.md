@@ -52,8 +52,9 @@ Rules of thumb: `server` is the deploy truth, `origin` (GitHub) is the mirror; n
 
 ## Dev access for teammates (no SSH knowledge needed)
 
-- Teammate double-clicks `tools/dev-access-wizard.bat` (Windows). It creates their key, puts the public key on their clipboard, and tells them to send it to Herman. After approval it opens the tunnel and the browser at `http://localhost:3001`.
-- Herman authorizes a key with `tools/grant-dev-access.ps1 "<pasted public key>"`.
+- Teammate double-clicks `tools/dev-access-wizard.bat` (Windows). It creates their key, puts the public key on their clipboard, and tells them to send it to Herman. After approval it opens the tunnel and the browser at `http://localhost:3001` (a picker offers the platform, the admin console, or both).
+- Herman manages access with **`tools/dev-access-manager.bat`** — a small GUI listing every authorized machine, with paste-to-add and select-to-remove (changes apply immediately; the key file travels base64-encoded so non-ASCII comments survive). The old CLI `tools/grant-dev-access.ps1 "<pasted public key>"` still works for one-liners.
+- The **public** instance needs no tunnel: `tools/open-public-site.bat` opens http://43.136.113.129/ and/or its admin console (which asks for the admin password).
 - Security model: teammates authenticate as the `devtunnel` user, which has **no shell** and can forward **only** to `127.0.0.1:3001` (`/etc/ssh/sshd_config.d/60-devtunnel.conf`). They can use the dev instance (and any server-seeded model keys in its `.env`) but can never read keys, touch the DB, or reach the public instance.
 - Revoke: delete their line from `/home/devtunnel/.ssh/authorized_keys` on the server.
 
