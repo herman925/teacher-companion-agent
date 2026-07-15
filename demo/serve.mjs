@@ -23,6 +23,7 @@ import { parseTurn, validateTurn, violationFeedback, safeTemplate } from './src/
 import { applyDelta, createInitialState, STAGE_NAMES } from './src/engine.mjs';
 import { buildSystemPrompt, stageModuleName, profileSectionText } from './src/prompt-builder.mjs';
 import { store } from './src/store.mjs';
+import { deriveCourseTitle, TITLE_MAX } from './src/store/json-store.mjs';
 import { parseCookies, sessionCookie, clearSessionCookie, SESSION_COOKIE, displayNameError } from './src/auth-util.mjs';
 
 // Auth (SECURITY.md): opaque session cookie → store lookup. Courses are scoped
@@ -294,6 +295,17 @@ async function runCourseTurn(userId, courseId, body, emit) {
     try {
       await store.saveState(courseId, captured.turn.state_delta ?? {}, captured.state, course.state_version);
     } catch { /* optimistic-lock conflict (not expected single-user); messages kept, state left */ }
+    // Auto-title (DATABASE.md §4): the model's own theme extraction names the
+    // course; a human rename (title_locked) always wins and is never overwritten.
+    try {
+      if (await store.isUntitled(courseId)) {
+        const t = deriveCourseTitle(captured.state, body.message);
+        if (t) {
+          const renamed = await store.renameCourse(userId, courseId, t, { auto: true });
+          emit('course', { id: courseId, title: renamed.title }); // client refreshes its rail row
+        }
+      }
+    } catch { /* naming is cosmetic — never fail the turn over it */ }
   }
 }
 
@@ -435,6 +447,18 @@ const server = http.createServer(async (req, res) => {
         const course = await store.getCourse(uid, courseId);
         if (!course) return json(404, { ok: false, message: '课程不存在' });
         return json(200, { ok: true, course });
+      }
+      // PATCH /api/courses/:id — rename (owner; human rename locks the title)
+      if (seg.length === 1 && req.method === 'PATCH') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const q = body ? JSON.parse(body) : {};
+        try {
+          const course = await store.renameCourse(uid, courseId, q.title);
+          return json(200, { ok: true, course });
+        } catch (e) {
+          return json(e.status ?? 500, { ok: false, message: e.message });
+        }
       }
       // DELETE /api/courses/:id — whole-course erasure (data-subject deletion)
       if (seg.length === 1 && req.method === 'DELETE') {
