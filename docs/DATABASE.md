@@ -193,6 +193,63 @@ Publishing the persistence tier to the public instance is blocked on auth: today
 - **Display name (昵称)**: system-unique; changeable once per 6 months (`users.display_name_changed_at`); filtered through a CN+EN profanity/sensitive-word list on set — a content-compliance requirement for anything user-visible in mainland deployments, not a nicety.
 - **Real-name question (open, verify before launch)**: WeChat accounts are already real-name-verified at the platform level (phone binding under the real-name rules), and the mini-program *developer subject* must be verified. Whether **we** must additionally collect user identity depends on the service category regulations for education/content services — do not assume either way; resolve during 备案/登记 with the platform checklists. Recorded as open question #4 below.
 
+**Schema (build spec).** Extends §2 `users`; visitor is not a row — it is the absence of a session (演示模式 only, nothing persisted).
+
+```sql
+ALTER TABLE users
+  ADD COLUMN role text NOT NULL DEFAULT 'teacher' CHECK (role IN ('admin','teacher')),
+  ADD COLUMN status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
+  ADD COLUMN wechat_openid text UNIQUE,          -- code2Session identity (小程序)
+  ADD COLUMN display_name_changed_at timestamptz,-- 6-month change lock
+  ADD COLUMN must_change_password boolean NOT NULL DEFAULT false, -- admin-created accounts
+  ADD COLUMN created_by uuid REFERENCES users(id);
+CREATE UNIQUE INDEX idx_users_display_name ON users (display_name);
+
+-- Server-side sessions: opaque 128-bit id in an httpOnly SameSite=Lax cookie.
+-- Chosen over JWT because revocation (lost phone, disabled account) matters
+-- more than statelessness on a single VM.
+CREATE TABLE sessions (
+  id           text PRIMARY KEY,                 -- random, url-safe
+  user_id      uuid NOT NULL REFERENCES users(id),
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now(),
+  expires_at   timestamptz NOT NULL,             -- 30-day rolling
+  revoked_at   timestamptz,
+  user_agent   text                              -- 用户中心 device list
+);
+CREATE INDEX idx_sessions_user ON sessions (user_id);
+
+-- Every admin action on another user is auditable (no admin backdoor without a trail, §1).
+CREATE TABLE admin_audit (
+  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  admin_id    uuid NOT NULL REFERENCES users(id),
+  action      text NOT NULL,                     -- create_user | reset_password | disable_user | enable_user | set_role
+  target_user uuid REFERENCES users(id),
+  detail      jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+```
+
+Passwords: hashed with `scrypt` from `node:crypto` (per-user salt, cost recorded in the hash string) — zero-dep; §2's argon2id note upgrades to a real dependency decision only if one is ever accepted. Admin-created accounts get a one-time temporary password (shown once in the console) plus `must_change_password`.
+
+**Auth endpoints (extends the v1 table below).**
+
+| Method + path | Purpose |
+|---|---|
+| `POST /api/auth/login` | username/phone + password → session cookie |
+| `POST /api/auth/wechat` | 小程序 `code` → `code2Session` (appid/secret server-side) → find-or-create by `wechat_openid` → session |
+| `POST /api/auth/logout` | revoke the session |
+| `GET /api/me` | current user, role, teacher profile |
+| `PATCH /api/me` | display name (uniqueness + 6-month lock + profanity list, server-checked), password change, teacher profile |
+| `GET /api/me/sessions` · `DELETE /api/me/sessions/:id` | 用户中心 device list + revoke |
+| `GET /api/admin/users` | list users (admin) |
+| `POST /api/admin/users` | create account; returns the one-time temp password (admin) |
+| `PATCH /api/admin/users/:id` | reset password / disable / enable / set role (admin; all writes → `admin_audit`) |
+
+The teacher profile moves server-side into `users.settings.profile` so it follows the account across devices; the demo's localStorage profile remains the visitor/offline path. The CN+EN profanity wordlist is a bundled data file checked server-side on every display-name write.
+
+**Build order** (each step shippable): ① sessions + password login + per-user scoping on `/api/courses*` — this alone unblocks dev→main; ② 用户中心 (people icon); ③ admin console 用户 tab + audit; ④ WeChat 小程序 login; ⑤ SMS.
+
 ### Needed once persistence lands (v1 target)
 
 | Method + path | Purpose |
