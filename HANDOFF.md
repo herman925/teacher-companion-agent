@@ -2,11 +2,19 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-16 — 用户中心 gets 教师档案; 回应风格 becomes real directives; lost tests recovered
+
+- `503f303` (dev only, not merged): **教师档案 pane joins 用户中心** (账号 / 教师档案 / 登录设备) when signed in; settings hides its 档案 tab and points there — one editing home. Signed out, settings keeps the local-only pane (no duplicate DOM ids: only one instance ever builds).
+- **回应风格 now actually shapes the prompt**: it always reached the prompt but only as a raw label (偏好：提问引导…); each of the five styles now maps to an explicit directive (`STYLE_DIRECTIVES` in [demo/src/prompt-builder.mjs](demo/src/prompt-builder.mjs), single source) injected as 回应风格：…, and the UI shows the exact directive as a live note under the select + per-option tooltips. Free-text prefs still fall back to 偏好：. Tested both directions.
+- **Key-custody documented** (SECURITY.md §6, answering Herman): BYOK keys are never stored server-side — browser localStorage → per-request → vendor call, never persisted/logged; platform keys = `.env` chmod 600 (permission-protected, not encrypted at rest; encrypting on the box that must read them adds nothing — cloud disk encryption/secrets manager are the real post-pilot upgrades).
+- **Test-suite hole found and fixed**: `tests/index.mjs` had silently dropped three demo test files (prompt-builder, awaiting-escalation, flow-crawler) — they never ran under `npm test`. Registered: suite 133 → **156**, all green, ~6s.
+- Verified in browser: login → 用户中心 three panes, profile editable there, option tooltip + live 会这样要求陪跑智能体：… note, settings 档案 tab hidden when signed in. Tools commit `eebb243` (public launcher + access-manager GUI) went to main earlier; this batch awaits Herman's merge call.
+
 ## 2026-07-15 (later, 7) — Admin tables: sort, filters, toggleable columns (dev only)
 
 - `0bdc647`: admin console tables became real instruments. **Sort** on every header (↑/↓ indicator, zh collation, default 更新时间 ↓). **列 ▾ column picker** per tab, persisted in localStorage (恢复默认 resets) — includes teacher-demographic columns joined from profiles (地区/园内角色/教龄/任教班级/班额) and an off-by-default **用户ID** column (answers Herman's "uuid not displayed anymore?" — it's a toggle now, plus hover-tooltip). **数据 tab advanced filter row**: 更新时间 date range + 地区/园内角色/教龄/任教班级 dropdowns built from values actually present; all AND with text search; export/delete-all/count follow the combined filter. `adminListCourses` now joins the owner's `profile`.
 - Verified in browser on seeded demographic data: sort flip, 园长 role filter →1/3 with re-scoped export label, future date range →0/3, 清除筛选, column toggle persists across both tabs. Gate + tests green.
-- Still dev-only along with (later, 6); merge to main when Herman signs off.
+- Herman signed off → merged to main and deployed public together with (later, 6); main/dev/GitHub/both instances aligned at the same head.
 
 ## 2026-07-15 (later, 6) — Course titles + admin console clarity (dev only, not merged)
 
