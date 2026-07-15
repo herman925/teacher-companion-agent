@@ -128,27 +128,53 @@ if ($LocalPort -ne $PortCandidates[0]) {
     Write-Host "  (Port $($PortCandidates[0]) was busy on this PC - using $LocalPort instead.)" -ForegroundColor Yellow
 }
 Write-Host "  Tunnel is running." -ForegroundColor Green
-Write-Host "    DEV platform:        http://localhost:$LocalPort/" -ForegroundColor Green
-Write-Host "    Admin data console:  http://localhost:$LocalPort/admin" -ForegroundColor Green
+Write-Host "    [1] DEV platform:        http://localhost:$LocalPort/" -ForegroundColor Green
+Write-Host "    [2] Admin data console:  http://localhost:$LocalPort/admin" -ForegroundColor Green
+Write-Host ""
+$choice = Read-Host "  Open which page? 1 = platform (default), 2 = admin console, 3 = both"
+if ($choice -eq '2' -or $choice -eq '3') { Start-Process "http://localhost:$LocalPort/admin" }
+if ($choice -ne '2') { Start-Process "http://localhost:$LocalPort/" }
 Write-Host ""
 Write-Host "  IMPORTANT: keep this window open while you work." -ForegroundColor Yellow
 Write-Host "  Closing it closes the tunnel (the page will stop loading)."
 Write-Host "  When you are done, just close this window."
 Write-Host ""
-Start-Process "http://localhost:$LocalPort/"
 
-# The background ssh ($tunnel) keeps the session alive; closing this window (or
-# Ctrl+C) triggers the finally block, which stops only that ssh process.
+# Watchdog with self-healing: the mainland link stalls now and then, so one
+# slow probe must NOT kill a healthy session. Declare trouble only after the
+# ssh process died or 3 consecutive probe misses, then quietly reconnect
+# (up to 5 times in a row) instead of telling the human to start over.
 Write-Host "  Press Ctrl+C or close this window to disconnect."
+$failStreak = 0
+$reconnects = 0
 try {
-    while (-not $tunnel.HasExited) {
-        Start-Sleep -Seconds 30
-        try {
-            $null = Invoke-WebRequest -Uri "http://127.0.0.1:$LocalPort/" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-        } catch {
-            Write-Host "  Tunnel dropped (network change?). Run the wizard again." -ForegroundColor Red
+    while ($true) {
+        Start-Sleep -Seconds 20
+        $ok = $false
+        if (-not $tunnel.HasExited) {
+            try {
+                $null = Invoke-WebRequest -Uri "http://127.0.0.1:$LocalPort/" -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop
+                $ok = $true
+            } catch { }
+        }
+        if ($ok) {
+            if ($reconnects -gt 0) { Write-Host "  Connection healthy again." -ForegroundColor Green }
+            $failStreak = 0; $reconnects = 0
+            continue
+        }
+        $failStreak++
+        if (-not $tunnel.HasExited -and $failStreak -lt 3) { continue }   # slow link - tolerate two misses
+        if ($reconnects -ge 5) {
+            Write-Host "  Could not keep the tunnel up (5 reconnect attempts failed)." -ForegroundColor Red
+            Write-Host "  Check your internet connection, then run the wizard again."
             break
         }
+        $reconnects++
+        Write-Host "  Tunnel hiccup - reconnecting ($reconnects/5)..." -ForegroundColor Yellow
+        if (-not $tunnel.HasExited) { Stop-Process -Id $tunnel.Id -Force -ErrorAction SilentlyContinue }
+        $tunnel = Start-Process ssh -ArgumentList $sshArgs -WindowStyle Hidden -PassThru
+        Start-Sleep -Seconds 8
+        $failStreak = 0
     }
 } finally {
     if ($tunnel -and -not $tunnel.HasExited) { Stop-Process -Id $tunnel.Id -Force -ErrorAction SilentlyContinue }
