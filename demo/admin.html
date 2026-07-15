@@ -78,6 +78,33 @@
     button:disabled { opacity: 0.45; cursor: not-allowed; }
     button.tab { border-radius: 8px; }
     button.tab.on { background: var(--green-wash); border-color: var(--green); color: var(--green); font-weight: 500; }
+    .count { color: var(--ink-faded); font-size: 13px; white-space: nowrap; }
+    th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+    th.sortable:hover { color: var(--green); }
+    .colpick { position: relative; }
+    .colpick summary {
+      list-style: none; cursor: pointer; font-size: 14px; color: var(--ink);
+      background: #fff; border: 1px solid var(--border-warm); border-radius: 999px;
+      padding: 8px 16px; min-height: 40px; display: inline-flex; align-items: center;
+    }
+    .colpick summary::-webkit-details-marker { display: none; }
+    .colpick summary:hover { border-color: var(--green); color: var(--green); }
+    .colpick-menu {
+      position: absolute; right: 0; top: calc(100% + 6px); z-index: 6;
+      background: #fff; border: 1px solid var(--border-warm); border-radius: 10px;
+      box-shadow: var(--shadow-card); padding: 10px 12px;
+      display: flex; flex-direction: column; gap: 6px; min-width: 150px;
+    }
+    .colpick-menu label { display: flex; gap: 8px; align-items: center; white-space: nowrap; font-size: 13px; cursor: pointer; }
+    #data-filters { padding-top: 0; }
+    #data-filters select {
+      font-family: var(--font-sans); font-size: 13px; color: var(--ink);
+      background: #fff; border: 1px solid var(--border-warm); border-radius: 8px;
+      padding: 6px 8px; min-height: 36px;
+    }
+    #data-filters input[type=date] { min-width: 0; min-height: 36px; padding: 4px 8px; font-size: 13px; }
+    .frange { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-faded); }
+    td.mono { font-family: var(--font-mono); font-size: 12px; }
     .spacer { flex: 1; }
 
     .banner {
@@ -144,18 +171,28 @@
   <div id="banner" class="banner" hidden></div>
 
   <div class="bar" id="data-actions">
+    <input type="text" id="data-search" placeholder="搜索：课程名 / 用户名 / 昵称 / 地区 / id…" autocomplete="off">
+    <span class="count" id="data-count"></span>
     <span class="spacer"></span>
+    <details class="colpick"><summary>列 ▾</summary><div class="colpick-menu" id="data-colmenu"></div></details>
     <button id="export">导出全部 (.json)</button>
     <button id="del-selected" class="danger" disabled>删除所选</button>
     <button id="del-all" class="danger">全部删除</button>
   </div>
 
+  <div class="bar" id="data-filters">
+    <label class="frange">更新时间 <input type="date" id="f-from"> – <input type="date" id="f-to"></label>
+    <select id="f-province"></select>
+    <select id="f-role"></select>
+    <select id="f-teach"></select>
+    <select id="f-bands"></select>
+    <button id="f-clear">清除筛选</button>
+  </div>
+
   <div class="wrap" id="view-data">
     <div class="list">
       <table>
-        <thead><tr>
-          <th></th><th>课程</th><th>用户</th><th>版本</th><th>消息</th><th>快照</th><th>更新时间</th><th></th>
-        </tr></thead>
+        <thead id="data-head"></thead>
         <tbody id="rows"><tr><td colspan="8" class="empty">加载中…</td></tr></tbody>
       </table>
     </div>
@@ -175,15 +212,16 @@
       <input type="text" id="new-displayname" placeholder="昵称（可选）" autocomplete="off">
       <button id="create-user" class="primary">创建账号</button>
       <span class="spacer"></span>
+      <input type="text" id="user-search" placeholder="筛选：用户名 / 昵称 / 状态 / 地区…" autocomplete="off">
+      <span class="count" id="user-count"></span>
+      <details class="colpick"><summary>列 ▾</summary><div class="colpick-menu" id="user-colmenu"></div></details>
       <button id="refresh-users">刷新</button>
     </div>
     <div class="banner" id="temp-box" hidden></div>
     <div class="wrap">
       <div class="list" style="flex:1 1 100%">
         <table>
-          <thead><tr>
-            <th>用户名</th><th>昵称</th><th>角色</th><th>状态</th><th>最近登录</th><th></th>
-          </tr></thead>
+          <thead id="user-head"></thead>
           <tbody id="user-rows"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
         </table>
         <p class="detail-hint" style="margin-top:8px">创建账号会生成一次性初始密码（只显示一次）；用户首次登录后必须改密码。停用会立刻踢下线并退出其所有设备。所有操作都会写入审计记录。</p>
@@ -194,7 +232,8 @@
   <script>
     const $ = (s) => document.querySelector(s);
     const selected = new Set();
-    let allIds = [];
+    let dataRows = [];   // full course list; the filter derives the visible view
+    let userRows = [];
 
     // ---- password → SHA-256 (the plaintext never leaves this page) ----
     // crypto.subtle exists only in secure contexts (https / localhost). The
@@ -265,46 +304,201 @@
     }
     function fmt(ts) { return (ts || '').replace('T', ' ').replace(/\..*/, ''); }
 
+    // ---- table engine: sortable headers + toggleable columns (persisted per browser) ----
+    function colPrefs(key, defaults) {
+      let saved = null;
+      try { saved = JSON.parse(localStorage.getItem(key) || 'null'); } catch { }
+      return { key, visible: new Set(Array.isArray(saved) ? saved : defaults), defaults };
+    }
+    function saveColPrefs(p) { localStorage.setItem(p.key, JSON.stringify([...p.visible])); }
+    function buildColMenu(menu, cols, prefs, rerender) {
+      menu.replaceChildren();
+      for (const c of cols) {
+        const lab = document.createElement('label');
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = prefs.visible.has(c.key);
+        box.addEventListener('change', () => {
+          box.checked ? prefs.visible.add(c.key) : prefs.visible.delete(c.key);
+          saveColPrefs(prefs);
+          rerender();
+        });
+        lab.append(box, c.label);
+        menu.append(lab);
+      }
+      menu.append(mkbtn('恢复默认', () => {
+        prefs.visible = new Set(prefs.defaults);
+        saveColPrefs(prefs);
+        buildColMenu(menu, cols, prefs, rerender);
+        rerender();
+      }));
+    }
+    function renderHead(thead, visCols, sortState, onSort, leadBlank) {
+      const tr = document.createElement('tr');
+      if (leadBlank) tr.append(document.createElement('th'));
+      for (const c of visCols) {
+        const th = document.createElement('th');
+        th.textContent = c.label + (sortState.key === c.key ? (sortState.dir === 1 ? ' ↑' : ' ↓') : '');
+        th.className = 'sortable';
+        th.addEventListener('click', () => onSort(c));
+        tr.append(th);
+      }
+      tr.append(document.createElement('th')); // actions
+      thead.replaceChildren(tr);
+    }
+    function sortRows(rows, cols, sortState) {
+      const col = cols.find((c) => c.key === sortState.key);
+      if (!col) return rows;
+      return rows.sort((a, b) => {
+        const va = col.get(a), vb = col.get(b);
+        const cmp = col.num
+          ? (Number(va || 0) - Number(vb || 0))
+          : String(va ?? '').localeCompare(String(vb ?? ''), 'zh');
+        return cmp * sortState.dir;
+      });
+    }
+    const flipSort = (state, col) => (state.key === col.key
+      ? { key: col.key, dir: -state.dir }
+      : { key: col.key, dir: (col.num || col.key.endsWith('_at')) ? -1 : 1 });
+
+    // ---- 数据 tab: columns (incl. teacher demographics joined from profiles) ----
+    const pf = (c, k) => c.profile?.[k] ?? '';
+    const DATA_COLS = [
+      { key: 'title', label: '课程', get: (c) => c.title || '未命名课程' },
+      { key: 'user', label: '用户', get: (c) => (c.username ? `${c.username}（${c.display_name ?? ''}）` : '（无账号/旧数据）'), tip: (c) => c.user_id },
+      { key: 'user_id', label: '用户ID', get: (c) => c.user_id, mono: true },
+      { key: 'region', label: '地区', get: (c) => [pf(c, 'province'), pf(c, 'region')].filter(Boolean).join('') },
+      { key: 'role', label: '园内角色', get: (c) => pf(c, 'role') },
+      { key: 'teachYears', label: '教龄', get: (c) => pf(c, 'teachYears') },
+      { key: 'bands', label: '任教班级', get: (c) => (Array.isArray(c.profile?.classBands) ? c.profile.classBands.join('、') : '') },
+      { key: 'classSize', label: '班额', get: (c) => pf(c, 'classSize'), num: true },
+      { key: 'state_version', label: '版本', get: (c) => c.state_version, num: true },
+      { key: 'messages', label: '消息', get: (c) => c.messages, num: true },
+      { key: 'snapshots', label: '快照', get: (c) => c.snapshots, num: true },
+      { key: 'created_at', label: '创建时间', get: (c) => fmt(c.created_at) },
+      { key: 'updated_at', label: '更新时间', get: (c) => fmt(c.updated_at) },
+    ];
+    const dataPrefs = colPrefs('admin.cols.data', ['title', 'user', 'region', 'state_version', 'messages', 'snapshots', 'updated_at']);
+    let dataSort = { key: 'updated_at', dir: -1 };
+
+    const DEMO_FILTERS = [
+      { id: 'f-province', label: '地区（省）', get: (c) => pf(c, 'province') },
+      { id: 'f-role', label: '园内角色', get: (c) => pf(c, 'role') },
+      { id: 'f-teach', label: '教龄', get: (c) => pf(c, 'teachYears') },
+      { id: 'f-bands', label: '任教班级', multi: true, get: (c) => c.profile?.classBands ?? [] },
+    ];
+    /** Dropdown options come from the values actually present in the data. */
+    function buildFilterSelects() {
+      for (const f of DEMO_FILTERS) {
+        const sel = $('#' + f.id);
+        const cur = sel.value;
+        const vals = new Set();
+        for (const c of dataRows) {
+          const v = f.get(c);
+          if (Array.isArray(v)) v.forEach((x) => x && vals.add(x));
+          else if (v) vals.add(v);
+        }
+        sel.replaceChildren();
+        const all = document.createElement('option');
+        all.value = ''; all.textContent = `${f.label}：全部`;
+        sel.append(all);
+        for (const v of [...vals].sort((a, b) => String(a).localeCompare(String(b), 'zh'))) {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = v;
+          sel.append(o);
+        }
+        if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+      }
+    }
+
+    function dataQuery() { return ($('#data-search')?.value ?? '').trim().toLowerCase(); }
+    function anyDataFilter() {
+      return Boolean(dataQuery() || $('#f-from').value || $('#f-to').value
+        || DEMO_FILTERS.some((f) => $('#' + f.id).value));
+    }
+    function matchesFilters(c) {
+      const q = dataQuery();
+      if (q) {
+        const hay = [c.id, c.user_id, c.username, c.display_name, ...DATA_COLS.map((col) => col.get(c))]
+          .join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      const from = $('#f-from').value, to = $('#f-to').value;   // updated_at is ISO — date prefix compares
+      if (from && String(c.updated_at).slice(0, 10) < from) return false;
+      if (to && String(c.updated_at).slice(0, 10) > to) return false;
+      for (const f of DEMO_FILTERS) {
+        const want = $('#' + f.id).value;
+        if (!want) continue;
+        const v = f.get(c);
+        if (f.multi ? !v.includes(want) : String(v || '') !== want) return false;
+      }
+      return true;
+    }
+    function visibleRows() {
+      return sortRows(dataRows.filter(matchesFilters), DATA_COLS, dataSort);
+    }
+
     function resetArm() {
+      const vis = visibleRows();
+      const filtered = anyDataFilter();
       for (const b of [$('#del-selected'), $('#del-all')]) { b.dataset.armed = ''; b.classList.remove('confirming'); }
       $('#del-selected').textContent = `删除所选${selected.size ? ` (${selected.size})` : ''}`;
       $('#del-selected').disabled = selected.size === 0;
-      $('#del-all').textContent = '全部删除';
+      $('#del-all').textContent = filtered ? `删除筛选结果 (${vis.length})` : '全部删除';
+      $('#export').textContent = filtered ? `导出筛选结果 (${vis.length})` : '导出全部 (.json)';
+      $('#data-count').textContent = `显示 ${vis.length} / 共 ${dataRows.length}`;
     }
 
     async function loadData() {
-      let data;
       try {
         const res = await af('/api/admin/data');
         if (res.status === 401) { banner('需要密码：填入左上角后点「连接」。（通过隧道访问 localhost 时无需密码。）'); return; }
-        data = await res.json();
+        dataRows = (await res.json()).courses;
       } catch (e) { banner('连不上后端：' + e.message); return; }
       banner('', false);
+      buildFilterSelects();
+      renderData();
+    }
+
+    function renderData() {
       const rows = $('#rows');
       rows.replaceChildren();
-      allIds = data.courses.map((c) => c.id);
-      if (!data.courses.length) {
-        rows.innerHTML = '<tr><td colspan="8" class="empty">还没有课程数据。到聊天页发一轮消息就会出现。</td></tr>';
-        selected.clear(); resetArm(); return;
+      const visCols = DATA_COLS.filter((c) => dataPrefs.visible.has(c.key));
+      renderHead($('#data-head'), visCols, dataSort, (col) => { dataSort = flipSort(dataSort, col); renderData(); }, true);
+      const vis = visibleRows();
+      // what you see is what you act on: selections outside the filter drop
+      for (const id of [...selected]) if (!vis.some((c) => c.id === id)) selected.delete(id);
+      if (!vis.length) {
+        rows.innerHTML = `<tr><td colspan="${visCols.length + 2}" class="empty">${dataRows.length ? '没有匹配的课程——调整筛选条件试试。' : '还没有课程数据。到聊天页发一轮消息就会出现。'}</td></tr>`;
+        resetArm(); return;
       }
-      for (const c of data.courses) {
+      for (const c of vis) {
         const tr = document.createElement('tr');
         const cb = document.createElement('input');
         cb.type = 'checkbox'; cb.checked = selected.has(c.id);
         cb.addEventListener('change', () => { cb.checked ? selected.add(c.id) : selected.delete(c.id); resetArm(); });
         const cbtd = document.createElement('td'); cbtd.append(cb);
+        tr.append(cbtd);
 
-        const title = document.createElement('td'); title.className = 'title';
-        title.textContent = c.title || '未命名课程';
-        title.addEventListener('click', () => viewCourse(c.id, c.title));
+        for (const col of visCols) {
+          const cell = document.createElement('td');
+          const v = col.get(c);
+          cell.textContent = (v === '' || v == null) ? '—' : String(v);
+          if (col.tip) cell.title = col.tip(c);
+          if (col.mono) cell.className = 'mono';
+          if (col.key === 'title') {
+            cell.className = 'title';
+            cell.addEventListener('click', () => viewCourse(c.id, c.title));
+          }
+          tr.append(cell);
+        }
 
         const act = document.createElement('td');
         const actWrap = document.createElement('div'); actWrap.className = 'row-actions';
         const dl = mkbtn('下载', () => downloadCourse(c.id));
         const del = mkbtn('删除', () => rowDelete(del, c.id)); del.className = 'danger';
         actWrap.append(dl, del); act.append(actWrap);
-
-        for (const el of [cbtd, title, td(c.user_id), td(c.state_version), td(c.messages), td(c.snapshots), td(fmt(c.updated_at)), act]) tr.append(el);
+        tr.append(act);
         rows.append(tr);
       }
       resetArm();
@@ -332,9 +526,19 @@
       const res = await af('/api/admin/courses/' + id);
       downloadBlob((await res.json()).course, `course-${id}.json`);
     }
-    async function exportAll() {
-      const res = await af('/api/admin/export');
-      downloadBlob(await res.json(), 'demo-data.json');
+    /** Export follows the filter: no filter → server-side full export; filtered → exactly the visible rows. */
+    async function exportData() {
+      if (!dataQuery()) {
+        const res = await af('/api/admin/export');
+        downloadBlob(await res.json(), 'demo-data.json');
+        return;
+      }
+      const courses = [];
+      for (const r of visibleRows()) {
+        const res = await af('/api/admin/courses/' + r.id);
+        courses.push((await res.json()).course);
+      }
+      downloadBlob({ exported_at: new Date().toISOString(), filter: dataQuery(), courses }, 'demo-data-filtered.json');
     }
 
     async function del(ids) {
@@ -368,15 +572,28 @@
       loadData();
     });
     $('#refresh').addEventListener('click', () => { $('#view-users').hidden ? loadData() : loadUsers(); });
-    $('#export').addEventListener('click', exportAll);
+    $('#export').addEventListener('click', exportData);
     armBulk($('#del-selected'), () => Array.from(selected));
-    armBulk($('#del-all'), () => allIds.slice());
+    armBulk($('#del-all'), () => visibleRows().map((c) => c.id));
     $('#token').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#connect').click(); });
+    $('#data-search').addEventListener('input', renderData);
+    $('#user-search').addEventListener('input', renderUsers);
+    for (const id of ['f-from', 'f-to', 'f-province', 'f-role', 'f-teach', 'f-bands']) {
+      $('#' + id).addEventListener('change', renderData);
+    }
+    $('#f-clear').addEventListener('click', () => {
+      $('#data-search').value = '';
+      $('#f-from').value = ''; $('#f-to').value = '';
+      for (const f of DEMO_FILTERS) $('#' + f.id).value = '';
+      renderData();
+    });
+    buildColMenu($('#data-colmenu'), DATA_COLS, dataPrefs, renderData);
 
     // ---- tabs: 数据 / 用户 ----
     function showView(which) {
       $('#view-data').hidden = which !== 'data';
       $('#data-actions').hidden = which !== 'data';
+      $('#data-filters').hidden = which !== 'data';
       $('#view-users').hidden = which !== 'users';
       $('#tab-data').classList.toggle('on', which === 'data');
       $('#tab-users').classList.toggle('on', which === 'users');
@@ -405,20 +622,48 @@
     }
 
     async function loadUsers() {
-      let data;
       try {
         const res = await af('/api/admin/users');
         if (res.status === 401) { banner('需要密码：填入左上角后点「连接」。'); return; }
-        data = await res.json();
+        userRows = (await res.json()).users;
       } catch (e) { banner('连不上后端：' + e.message); return; }
       banner('', false);
+      renderUsers();
+    }
+
+    // 用户 tab columns: account fields + the demographics teachers filled in
+    const upf = (u, k) => u.profile?.[k] ?? '';
+    const USER_COLS = [
+      { key: 'username', label: '用户名', get: (u) => u.username },
+      { key: 'display_name', label: '昵称', get: (u) => u.display_name },
+      { key: 'id', label: '用户ID', get: (u) => u.id, mono: true },
+      { key: 'role', label: '角色', get: (u) => (u.role === 'admin' ? '管理员' : '教师') },
+      { key: 'status', label: '状态', get: (u) => (u.status === 'active' ? '正常' : '已停用') },
+      { key: 'region', label: '地区', get: (u) => [upf(u, 'province'), upf(u, 'region')].filter(Boolean).join('') },
+      { key: 'kgrole', label: '园内角色', get: (u) => upf(u, 'role') },
+      { key: 'teachYears', label: '教龄', get: (u) => upf(u, 'teachYears') },
+      { key: 'bands', label: '任教班级', get: (u) => (Array.isArray(u.profile?.classBands) ? u.profile.classBands.join('、') : '') },
+      { key: 'classSize', label: '班额', get: (u) => upf(u, 'classSize'), num: true },
+      { key: 'last_login_at', label: '最近登录', get: (u) => fmt(u.last_login_at) || '从未' },
+    ];
+    const userPrefs = colPrefs('admin.cols.users', ['username', 'display_name', 'role', 'status', 'region', 'last_login_at']);
+    let userSort = { key: 'username', dir: 1 };
+
+    function renderUsers() {
       const rows = $('#user-rows');
       rows.replaceChildren();
-      if (!data.users.length) {
-        rows.innerHTML = '<tr><td colspan="6" class="empty">还没有账号——在上方创建第一个。</td></tr>';
+      const visCols = USER_COLS.filter((c) => userPrefs.visible.has(c.key));
+      renderHead($('#user-head'), visCols, userSort, (col) => { userSort = flipSort(userSort, col); renderUsers(); }, false);
+      const q = ($('#user-search')?.value ?? '').trim().toLowerCase();
+      const filtered = !q ? userRows.slice() : userRows.filter((u) =>
+        [u.id, ...USER_COLS.map((c) => c.get(u))].join(' ').toLowerCase().includes(q));
+      const vis = sortRows(filtered, USER_COLS, userSort);
+      $('#user-count').textContent = `显示 ${vis.length} / 共 ${userRows.length}`;
+      if (!vis.length) {
+        rows.innerHTML = `<tr><td colspan="${visCols.length + 1}" class="empty">${userRows.length ? '没有匹配的账号。' : '还没有账号——在上方创建第一个。'}</td></tr>`;
         return;
       }
-      for (const u of data.users) {
+      for (const u of vis) {
         const tr = document.createElement('tr');
         const act = document.createElement('td');
         const wrap = document.createElement('div'); wrap.className = 'row-actions';
@@ -442,8 +687,14 @@
           if (r.ok) loadUsers(); else banner(r.message || '操作失败');
         }));
         act.append(wrap);
-        for (const cell of [td(u.username), td(u.display_name), td(u.role === 'admin' ? '管理员' : '教师'),
-          td(u.status === 'active' ? '正常' : '已停用'), td(fmt(u.last_login_at) || '从未'), act]) tr.append(cell);
+        for (const col of visCols) {
+          const cell = document.createElement('td');
+          const v = col.get(u);
+          cell.textContent = (v === '' || v == null) ? '—' : String(v);
+          if (col.mono) cell.className = 'mono';
+          tr.append(cell);
+        }
+        tr.append(act);
         rows.append(tr);
       }
     }
@@ -464,6 +715,7 @@
     });
     $('#refresh-users').addEventListener('click', loadUsers);
 
+    buildColMenu($('#user-colmenu'), USER_COLS, userPrefs, renderUsers); // (defined above by now)
     loadData(); // tunnel/localhost instances answer without a password
   </script>
 </body>
