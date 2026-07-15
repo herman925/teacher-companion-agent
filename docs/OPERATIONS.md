@@ -73,7 +73,14 @@ Model API keys: edit `/home/app/platform/.env` (or `platform-dev/.env`), then `s
 
 The demo persistence tier stores chat history as JSON files on each instance's disk (`<checkout>/demo/.data/courses/<id>.json`), one file per course, owned by the `app` service user — not in PostgreSQL yet ([DATABASE.md](DATABASE.md) §4). Two ways to look:
 
-**Admin console (GUI).** Each running instance serves a token-gated data console at `/admin`: courses with message/snapshot counts, full-record view, per-course download and whole-export, plus delete / multi-delete. On dev it is reached through the tunnel at `http://localhost:3001/admin` (the dev-access wizard prints this URL on connect). Gate it by setting `ADMIN_TOKEN` in the instance `.env`; unset = open, which is acceptable only because dev sits behind the SSH tunnel. Do not expose `/admin` on the public instance without a token.
+**Admin console (GUI).** Each running instance serves a data console at `/admin`: courses with message/snapshot counts, full-record view, per-course download and whole-export, plus delete / multi-delete. It carries an in-page 使用指南 for teammates.
+
+Access model (two doors, one console):
+
+1. **Authorized machine (the wizard).** A teammate whose SSH key Herman approved runs `tools/dev-access-wizard.bat`; the tunnel itself is the authentication. The dev instance's `.env` deliberately leaves `ADMIN_TOKEN` unset, so inside the tunnel `http://localhost:3001/admin` needs **no password** — machine auth already happened.
+2. **Password (unauthorized device — a phone, a borrowed PC).** The public instance sets `ADMIN_TOKEN` in `/home/app/platform/.env` (server-side only — passwords never enter the repo, same rule as model keys). The console page sends the SHA-256 of the entered password in the `x-admin-token` header, never the plaintext and never in a URL. Honest limit: until 备案 unlocks HTTPS, bare-IP HTTP means an on-path observer could replay the hash — the hash protects the password itself, not the session. Real transport secrecy arrives with TLS.
+
+**Planned feature (recorded 2026-07-15): retire the password path entirely** — admin access becomes authorized-machine only (wizard/tunnel), and `ADMIN_TOKEN` support is removed. Keep until teammates stop needing phone access.
 
 **CLI (files are `app`-owned → `sudo`).**
 ```bash
