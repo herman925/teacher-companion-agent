@@ -2,6 +2,14 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-15 (later, 5) — dev→main merged; PUBLIC instance is live with the full app
+
+- **Merge shipped**: `main` = `dev` = `08233c3` everywhere — GitHub (`origin/main`, `origin/dev`), the VM bare repo, both instances (`dev deployed: 08233c3`, `public deployed: 08233c3`). ff-only; Herman's other-session commits (`7ecdc63`, `ab45abe`) untouched. The uncommitted 预设/生成 doc set (source-docs pair, AGENTS/PRD pointers) was committed first as `08233c3` — pointers only, adoption still ADR-gated.
+- **Public http://43.136.113.129/ now runs everything**: history rail, auth (login required for persistence; visitor = 演示模式 + 401s), 用户中心, `/admin` password-gated (`ADMIN_TOKEN` was pre-set in the public `.env`). Verified over HTTP: health `auth:true persistence:true`, admin api 401 without token, visitor courses 401, new assets served.
+- **No accounts exist on public yet** — create teacher accounts at `/admin` → 用户 (password = the admin password). Known pre-pilot gap unchanged: login rate-limiting/lockout + origin check (SECURITY.md §7).
+- **The deploy fought two environment demons, documented for next time**: (1) the Herman↔VM route degraded into a packet-size blackhole — TCP/auth/small packets fine, bulk data stalls at 0% (git push/scp die; `curl :80` fine). Workaround that worked: `git bundle` (62KB) + scp when the link briefly healed + tiny SSH commands (`git fetch <bundle>` + `update-ref` + manual `/usr/local/bin/deploy-*`); TAT console is the fallback if SSH is fully dead. (2) **Google Drive fought git mid-merge**: stale `.git/index` restored (fixed: `git reset`), then `docs/PRD.md` became an undeletable/uncreatable ghost (O_EXCL create → EEXIST while stat says missing; plain writes → permission denied). Merge was completed in a clean clone outside Drive; the ghost was finally beaten by write-to-temp + `mv` over it. **Recommendation: move the working copy out of Google Drive.**
+- Repo state: clean; local `main`/`dev` both `08233c3` + this handoff commit on dev. Untracked leftovers: `.playwright-mcp/` (other session's browser artifacts), `demo/.data/` (now gitignored).
+
 ## 2026-07-15 (later, 4) — Two demo fixes shipped; 预设/生成 rebalance discussion opened
 
 - **z.ai fake-429 root-caused and fixed** (`7ecdc63`): Z.AI's coding endpoint rejects requests with a missing User-Agent header (or UA exactly `node`) as `429 {"code":"1305","message":"…temporarily overloaded"}` — Node's global fetch (undici) sends no UA, so every real `/api/chat` turn on `zai-coding` failed while curl passed and quota showed 0%. Fix: explicit `USER_AGENT` on both fetches in [demo/src/adapter.mjs](demo/src/adapter.mjs). Verified: full turn on zai-coding returns a real structured reply; failover tests pass. Diagnostic lesson: provider "overloaded" errors that reproduce at 0% quota and fail in <1s are transport filtering — diff curl vs Node fetch, not the payload.
