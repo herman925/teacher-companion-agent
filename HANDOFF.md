@@ -2,6 +2,15 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-15 (later, 3) — Auth built (steps 1–3) + SECURITY.md + district picker
+
+- **[docs/SECURITY.md](docs/SECURITY.md) (new)** — the whole posture in one place: layer table, sessions-over-JWT rationale, sid-vs-bearer-token separation, scrypt params, two-door admin console, registration-free provisioning, display-name compliance, honest gap list (no TLS until 备案, no rate limiting yet, starter profanity list ≠ compliance).
+- **Auth steps 1–3 live on dev** (`5a97c7e`): ① scrypt passwords + server-side sessions (opaque httpOnly cookie, 30-day rolling, revocable; device list exposes public `sid`s, never bearer tokens) + `/api/courses*` session-scoped with subresource ownership checks — visitors 401 and the client degrades to localStorage 演示模式. ② **用户中心** (people icon): login pane signed-out; signed-in 账号 (昵称 unique/6-month/profanity server-enforced; password change; must-change-first-login flow) + 登录设备 per-device revoke; teacher profile syncs to `users.settings.profile`. ③ admin console **用户 tab**: create account → one-time temp password shown once (copy button), reset password, disable (kicks sessions)/enable, role change — all → `admin_audit`. Store: users/sessions/audit JSON under `.data/auth/`, `createJsonStore({baseDir})` for tests.
+- **Verified**: 131/131 tests (8 new auth tests, both directions); full HTTP flow via curl (visitor 401 → console-create → login → must_change → password change → scoped courses → profanity/6-month-lock rejections → sid-only device list → audit rows → logout kills session); browser UI flow (login → rail appears with own courses → 账号/设备 panes; users tab create + temp box). Fixed a `[hidden]`-vs-explicit-display CSS bug in admin tabs.
+- **Herman's dev account exists**: username `herman` (admin), temp password delivered in-session; first login forces a change. Dev `/admin` stays tunnel-gated (no ADMIN_TOKEN); visitor chat = 演示模式 only.
+- **District-precise 地区 picker** (`96799c7`): both levels type-to-search datalists; 3,034 county-level entries vendored from province-city-china (`demo/src/data/china-regions.json`, 港澳台 renamed 中国香港/中国澳门/中国台湾); pilot target 广州市番禺区 confirmed present.
+- **dev→main is now technically unblocked** (scoping exists). Remaining before merge: rate limiting/lockout on login + origin check (SECURITY.md §7), and Herman's go decision.
+
 ## 2026-07-15 (later, 2) — Settings restructure, 线路 switch, profile v2, auth design
 
 - **Settings panes make sense now** ([demo/src/ui/main.js](demo/src/ui/main.js)): 通用 leads with the **model choice** — MiniMax and GLM each appear ONCE in the dropdown, a 线路 selector underneath picks 国内/国际 (GLM has three: bigmodel / Z.AI 按量 / Z.AI Coding; choice remembered per family, `cst.channels`); then 开发者模式. 模型服务 is pure API plumbing (keys/models/custom endpoint) with **服务器地址 demoted to a 高级 corner and finally explained**: static-hosting-only (points a backend-less page at a remote proxy); via tunnel/local it must stay empty. Note in-pane records the plan: provider zoo eventually collapses to 官方服务 vs 自备密钥 (BYOK).
