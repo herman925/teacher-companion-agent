@@ -65,13 +65,19 @@ User-visible names in a mainland deployment are a compliance surface, not a cosm
 - Charset and length: 2–20 chars, CJK/latin/digits/`_-·` only (blocks zero-width and homoglyph tricks).
 - Filtering: checked server-side on every write against a bundled starter wordlist (CN + EN profanity). **The starter list is not a compliance guarantee** — production must use a maintained lexicon or Tencent 内容安全 text moderation (same API family already noted in ARCHITECTURE.md §6), because the politically-sensitive vocabulary changes and should not be hand-maintained in this repo.
 
-## 6. Data protection (recap of stricter rules that live elsewhere)
+## 6. Model API keys — custody, exactly
+
+- **Teacher-supplied keys (BYOK) are never stored server-side**, dev or public. The key lives in that browser's localStorage, travels inside each `/api/chat` request, is used for the single vendor call, and is never written to the store or the logs (the session-log redacts key-shaped values at append time). Nothing to encrypt because nothing persists. Caveats: localStorage is plaintext on the teacher's own machine (client-side encryption would be theater — the page must be able to read it), and until TLS lands the per-request transit is bare HTTP like everything else.
+- **Platform keys** (the 官方服务 path) live in the VM's `.env` files, chmod 600, readable only by the service user — permission-protected, not encrypted at rest. Encrypting them at rest on the same box that must read them adds no real barrier; the meaningful upgrades are disk encryption at the cloud layer and a secrets manager, both deferred until past the pilot.
+- Rejected alternative (recorded in DATABASE.md §2): storing teacher keys server-side "for convenience" — an encryption-at-rest liability for near-zero benefit.
+
+## 7. Data protection (recap of stricter rules that live elsewhere)
 
 - Child observations/photos are sensitive PI: mainland residency, minimal retention, COS with signed URLs, tombstoned deletion — DATABASE.md §5, ARCHITECTURE.md §6.
 - Messages/snapshots are append-only (fabrication resistance); whole-course deletion is data-subject erasure and is allowed — DATABASE.md §4.
 - Model keys: server `.env` or the teacher's own browser; never the repo, never the DB.
 
-## 7. Known gaps and planned work
+## 8. Known gaps and planned work
 
 | Gap | Plan |
 |---|---|
