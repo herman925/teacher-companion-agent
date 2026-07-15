@@ -4,7 +4,7 @@ Canonical source of truth for how humans and coding agents work in this reposito
 
 ## What this repository is
 
-The spec, governance, and demo home of the **教师资源发展平台 (China Teacher Resources Development Platform)** — a web-based 陪跑智能体 (companion agent) that accompanies kindergarten teachers through local-culture theme-inquiry courses. The behavioral contract is the V1.3 workflow spec at [source-docs/workflow-v1.3.zh-CN.md](source-docs/workflow-v1.3.zh-CN.md); the product thesis is in [docs/PRD.md](docs/PRD.md).
+The spec, governance, and demo home of the **教师资源发展平台 (China Teacher Resources Development Platform)** — a web-based 陪跑智能体 (companion agent) that accompanies kindergarten teachers through local-culture theme-inquiry courses. The behavioral contract is the V1.3 workflow spec at [source-docs/workflow-v1.3.zh-CN.md](source-docs/workflow-v1.3.zh-CN.md); an upstream revision proposal ([source-docs/workflow-v1.3-contradictions.zh-CN.md](source-docs/workflow-v1.3-contradictions.zh-CN.md), 2026-07 讨论稿) argues for rebalancing 预设/生成 — under discussion, not yet adopted (adoption goes through an ADR). The product thesis is in [docs/PRD.md](docs/PRD.md).
 
 Two harnesses live here — do not confuse them:
 
@@ -35,7 +35,7 @@ Two harnesses live here — do not confuse them:
 
 | Path | What | Owner-ish |
 |---|---|---|
-| `source-docs/` | V1.3 spec (docx + faithful markdown extraction) | Upstream — read-only |
+| `source-docs/` | V1.3 spec + 2026-07 调整建议 discussion doc (docx + faithful markdown extractions) | Upstream — read-only |
 | `docs/` | PRD (EN/zh), ARCHITECTURE, MODEL-APIS, glossary, ADRs | Product |
 | `harness/` | Dev harness: gate, checks, judges, config | Governance |
 | `demo/` | Web demo: chat UI, runtime harness, model adapter, DESIGN.md | Engineering |
