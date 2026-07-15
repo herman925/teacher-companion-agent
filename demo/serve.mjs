@@ -10,6 +10,7 @@
 //         GLM_API_KEY, OPENROUTER_API_KEY, FREEMODEL_API_KEY, KILO_API_KEY, …).
 
 import http from 'node:http';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -27,10 +28,21 @@ import { store } from './src/store.mjs';
 // Real auth + per-teacher scoping is the v1 persistence-layer build.
 const DEMO_USER = 'demo';
 
-// Admin console token. When ADMIN_TOKEN is set, /api/admin/* requires the
-// x-admin-token header to match. Unset = open (dev convenience) — the dev
-// instance is already gated behind the SSH tunnel (OPERATIONS.md).
+// Admin console password. When ADMIN_TOKEN is set, /api/admin/* requires the
+// x-admin-token header to carry the SHA-256 hex of the password (what the
+// console page sends — the plaintext never travels from the page) or the
+// plaintext itself (curl convenience). Unset = open, which is correct ONLY on
+// the dev instance: it is reachable solely through the SSH tunnel, and the
+// tunnel is the (machine) authentication. Planned: retire the password path,
+// authorized-machine access only (OPERATIONS.md). The password itself lives in
+// the server .env — never in the repo (AGENTS.md non-negotiable 5).
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+const ADMIN_TOKEN_SHA256 = ADMIN_TOKEN ? createHash('sha256').update(ADMIN_TOKEN).digest('hex') : '';
+function adminAuthorized(req) {
+  if (!ADMIN_TOKEN) return true;
+  const supplied = String(req.headers['x-admin-token'] || '');
+  return supplied === ADMIN_TOKEN || supplied.toLowerCase() === ADMIN_TOKEN_SHA256;
+}
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 // Port precedence: FC_SERVER_PORT (Alibaba FC web function) > --port > 8787; FC needs 0.0.0.0.
@@ -460,8 +472,8 @@ const server = http.createServer(async (req, res) => {
       } catch { res.writeHead(404); res.end('admin.html missing'); }
       return;
     }
-    if (ADMIN_TOKEN && (req.headers['x-admin-token'] || '') !== ADMIN_TOKEN) {
-      return json(401, { ok: false, message: '需要管理令牌（x-admin-token）' });
+    if (!adminAuthorized(req)) {
+      return json(401, { ok: false, message: '密码不对，或还没有输入密码' });
     }
     const seg = url.pathname.slice('/api/admin/'.length).split('/').filter(Boolean).map(decodeURIComponent);
     try {

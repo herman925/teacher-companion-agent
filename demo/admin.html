@@ -3,78 +3,158 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>数据管理台 · 陪跑智能体（dev）</title>
+  <title>数据管理台 · 陪跑智能体</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&display=swap">
   <style>
+    /* Same design language as the teacher UI (demo/DESIGN.md): paper, ink, banyan
+       green, cream cards, brick for destructive. Mono only for the JSON record. */
     :root {
-      --slate: #23282E; --slate-2: #2c333b; --text: #C9D1D9; --muted: #8a93a0;
-      --green: #6fae9c; --brick: #d17a63; --border: #3a424c; --gold: #c9a86a;
+      --paper: #FAF6EF; --ink: #2D2A26; --ink-faded: #6B645B;
+      --green: #2F5D50; --green-wash: #E8EFEB;
+      --cream: #F3EAD8; --brick: #A8503C; --border-warm: #E5DED2;
+      --shadow-card: 0 2px 12px rgba(45, 42, 38, 0.08);
+      --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif;
+      --font-sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+      --font-mono: "JetBrains Mono", Consolas, monospace;
+      --sp: 8px;
     }
     * { box-sizing: border-box; }
     body {
-      margin: 0; background: var(--slate); color: var(--text);
-      font-family: "JetBrains Mono", Consolas, monospace; font-size: 13px; line-height: 1.6;
+      margin: 0; background: var(--paper); color: var(--ink);
+      font-family: var(--font-sans); font-size: 14px; line-height: 1.7;
     }
-    header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
-    header h1 { font-size: 15px; margin: 0; font-weight: 600; }
-    header .note { color: var(--muted); font-size: 12px; }
-    .bar { padding: 10px 18px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    input[type=text], input[type=password] {
-      background: var(--slate-2); border: 1px solid var(--border); color: var(--text);
-      padding: 6px 8px; border-radius: 6px; font: inherit; min-width: 180px;
+    header {
+      padding: calc(var(--sp) * 2) calc(var(--sp) * 3);
+      border-bottom: 1px solid var(--border-warm);
+      display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+      background: rgba(250, 246, 239, 0.94);
     }
+    header h1 { font-family: var(--font-serif); font-weight: 700; font-size: 19px; margin: 0; letter-spacing: 0.02em; }
+    header .note { color: var(--ink-faded); font-size: 13px; }
+
+    /* teammate guide */
+    details.guide {
+      margin: calc(var(--sp) * 2) calc(var(--sp) * 3) 0;
+      background: var(--cream); border: 1px solid var(--border-warm);
+      border-radius: 10px; box-shadow: var(--shadow-card);
+      padding: calc(var(--sp) * 1.5) calc(var(--sp) * 2);
+    }
+    details.guide summary {
+      font-family: var(--font-serif); font-weight: 600; cursor: pointer; list-style: none;
+    }
+    details.guide summary::-webkit-details-marker { display: none; }
+    details.guide summary::before { content: "▸ "; color: var(--ink-faded); }
+    details.guide[open] summary::before { content: "▾ "; }
+    details.guide ol { margin: 8px 0 4px; padding-left: 1.4em; }
+    details.guide li { margin-bottom: 6px; }
+    details.guide code { font-family: var(--font-mono); font-size: 12px; background: #fff; border: 1px solid var(--border-warm); border-radius: 4px; padding: 1px 5px; }
+    .guide-warn { color: var(--brick); font-weight: 500; }
+
+    .bar {
+      padding: calc(var(--sp) * 1.5) calc(var(--sp) * 3);
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    }
+    input[type=password], input[type=text] {
+      font-family: var(--font-sans); font-size: 14px; color: var(--ink);
+      background: #fff; border: 1px solid var(--border-warm); border-radius: 8px;
+      padding: 8px 12px; min-height: 40px; min-width: 210px;
+    }
+    input:focus { outline: none; border-color: var(--green); }
     button {
-      background: var(--slate-2); border: 1px solid var(--border); color: var(--text);
-      padding: 6px 10px; border-radius: 6px; font: inherit; cursor: pointer;
+      font-family: var(--font-sans); font-size: 14px; color: var(--ink);
+      background: #fff; border: 1px solid var(--border-warm); border-radius: 999px;
+      padding: 8px 16px; min-height: 40px; cursor: pointer;
     }
     button:hover { border-color: var(--green); color: var(--green); }
+    button.primary { background: var(--green); border-color: var(--green); color: #fff; }
+    button.primary:hover { color: #fff; opacity: 0.92; }
+    button.danger { color: var(--brick); }
     button.danger:hover { border-color: var(--brick); color: var(--brick); }
     button.confirming { background: var(--brick); border-color: var(--brick); color: #fff; }
-    button:disabled { opacity: .45; cursor: not-allowed; }
-    .wrap { display: flex; gap: 0; align-items: stretch; min-height: calc(100vh - 108px); }
-    .list { flex: 1 1 55%; padding: 12px 18px; overflow: auto; }
-    .detail { flex: 1 1 45%; padding: 12px 18px; border-left: 1px solid var(--border); overflow: auto; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-    th { color: var(--muted); font-weight: 500; }
-    td.title { white-space: normal; cursor: pointer; }
+    button.confirming:hover { color: #fff; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .spacer { flex: 1; }
+
+    .banner {
+      margin: 0 calc(var(--sp) * 3); padding: 8px 14px;
+      border-top: 2px solid var(--brick); background: #fff;
+      border-radius: 0 0 8px 8px; color: var(--ink); font-size: 13px;
+    }
+
+    .wrap { display: flex; align-items: stretch; gap: calc(var(--sp) * 2); padding: calc(var(--sp) * 2) calc(var(--sp) * 3) calc(var(--sp) * 4); }
+    .list { flex: 1 1 58%; min-width: 0; }
+    .detail { flex: 1 1 42%; min-width: 0; }
+
+    table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--border-warm); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow-card); }
+    th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border-warm); white-space: nowrap; }
+    th { color: var(--ink-faded); font-weight: 500; font-size: 13px; background: var(--paper); }
+    tbody tr:hover { background: var(--cream); }
+    tbody tr:last-child td { border-bottom: none; }
+    td.title { white-space: normal; cursor: pointer; font-weight: 500; }
     td.title:hover { color: var(--green); }
-    .row-actions button { padding: 2px 6px; font-size: 12px; }
-    pre { background: var(--slate-2); border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
-    .msg { color: var(--gold); padding: 8px 18px; }
-    .empty { color: var(--muted); padding: 20px 0; }
-    .pill { color: var(--muted); }
+    .row-actions { display: flex; gap: 6px; }
+    .row-actions button { padding: 3px 10px; min-height: 30px; font-size: 13px; }
+    .empty { color: var(--ink-faded); padding: 18px 12px; }
+
+    .detail-card { background: #fff; border: 1px solid var(--border-warm); border-radius: 10px; box-shadow: var(--shadow-card); padding: calc(var(--sp) * 2); }
+    .detail-head { font-family: var(--font-serif); font-weight: 600; margin-bottom: 8px; }
+    .detail-hint { color: var(--ink-faded); font-size: 13px; }
+    pre {
+      font-family: var(--font-mono); font-size: 12px; line-height: 1.6;
+      background: var(--paper); border: 1px solid var(--border-warm); border-radius: 8px;
+      padding: 12px; overflow: auto; max-height: 70vh;
+      white-space: pre-wrap; word-break: break-word; margin: 8px 0 0;
+    }
+    @media (max-width: 900px) { .wrap { flex-direction: column; } }
   </style>
 </head>
 <body>
   <header>
     <h1>数据管理台</h1>
-    <span class="note">dev 数据检视 · 只读 + 删除 + 导出 · 测试数据，勿存真实儿童信息</span>
+    <span class="note">课程与对话数据的查看、导出与删除 · 测试环境，请勿存放真实儿童信息</span>
   </header>
 
+  <details class="guide">
+    <summary>使用指南（给队友）</summary>
+    <ol>
+      <li><b>连接服务器：</b>双击仓库里的 <code>tools\dev-access-wizard.bat</code>。第一次使用会把你的「公钥」放进剪贴板——发给 Herman，等他回复「added」后再运行一次。成功后浏览器会自动打开平台，本页地址是 <code>http://localhost:3001/admin</code>。</li>
+      <li><b>密码：</b>通过向导（隧道）进来的<b>不需要密码</b>——你的电脑已经被授权。只有在未授权设备（手机、临时电脑）上访问公网版才需要向 Herman 要密码，填入左上角后点「连接」。密码不会明文发送（页面只发送它的散列值）。</li>
+      <li><b>看数据：</b>点课程名 → 右侧显示完整记录：<code>course_state</code>（课程状态）、<code>messages</code>（逐条对话）、<code>snapshots</code>（每一步的状态快照）。</li>
+      <li><b>导出：</b>「下载」存单个课程，「导出全部」把所有数据存成一个 <code>demo-data.json</code>。</li>
+      <li><b>删除：</b>所有删除都要点两次确认（按钮会先变成「确定？」）。<span class="guide-warn">删除不可恢复。</span>勾选多行后用「删除所选」，或「全部删除」清空。</li>
+      <li><b>连不上？</b>向导窗口要一直开着（关窗即断线）。提示失败就再运行一次向导——线路偶尔会慢，第二次通常就好。</li>
+    </ol>
+  </details>
+
   <div class="bar">
-    <label>管理令牌 <input type="password" id="token" placeholder="ADMIN_TOKEN（未设置可留空）"></label>
-    <button id="connect">连接</button>
+    <input type="password" id="token" placeholder="密码（隧道内免密，可留空）" autocomplete="off">
+    <button id="connect" class="primary">连接</button>
     <button id="refresh">刷新</button>
-    <span style="flex:1"></span>
+    <span class="spacer"></span>
     <button id="export">导出全部 (.json)</button>
     <button id="del-selected" class="danger" disabled>删除所选</button>
     <button id="del-all" class="danger">全部删除</button>
   </div>
 
-  <div id="banner" class="msg" hidden></div>
+  <div id="banner" class="banner" hidden></div>
 
   <div class="wrap">
     <div class="list">
       <table>
         <thead><tr>
-          <th></th><th>课程</th><th>user</th><th>ver</th><th>消息</th><th>快照</th><th>更新时间</th><th></th>
+          <th></th><th>课程</th><th>用户</th><th>版本</th><th>消息</th><th>快照</th><th>更新时间</th><th></th>
         </tr></thead>
-        <tbody id="rows"><tr><td colspan="8" class="empty">点「连接」加载数据。</td></tr></tbody>
+        <tbody id="rows"><tr><td colspan="8" class="empty">加载中…</td></tr></tbody>
       </table>
     </div>
     <div class="detail">
-      <div class="pill" id="detail-head">选中一个课程查看完整记录（course_state · messages · snapshots）。</div>
-      <pre id="detail" hidden></pre>
+      <div class="detail-card">
+        <div class="detail-head" id="detail-head">完整记录</div>
+        <div class="detail-hint" id="detail-hint">点左侧课程名查看 course_state · messages · snapshots。</div>
+        <pre id="detail" hidden></pre>
+      </div>
     </div>
   </div>
 
@@ -83,10 +163,68 @@
     const selected = new Set();
     let allIds = [];
 
-    function token() { return sessionStorage.getItem('admin.token') || ''; }
+    // ---- password → SHA-256 (the plaintext never leaves this page) ----
+    // crypto.subtle exists only in secure contexts (https / localhost). The
+    // tunnel path IS localhost; for bare-IP HTTP fall back to a small pure-JS
+    // SHA-256 so hashing still happens (see OPERATIONS.md for the TLS caveat).
+    async function sha256Hex(text) {
+      if (crypto?.subtle) {
+        const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+        return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+      }
+      return sha256Fallback(text);
+    }
+    function sha256Fallback(ascii) { // public-domain style compact SHA-256
+      const rr = (v, n) => (v >>> n) | (v << (32 - n));
+      let maxWord = 2 ** 32, result = '';
+      const words = [], asciiBitLength = ascii.length * 8;
+      let hash = sha256Fallback.h = sha256Fallback.h || [];
+      const k = sha256Fallback.k = sha256Fallback.k || [];
+      let primeCounter = k.length;
+      const isComposite = {};
+      for (let candidate = 2; primeCounter < 64; candidate++) {
+        if (!isComposite[candidate]) {
+          for (let i = 0; i < 313; i += candidate) isComposite[i] = candidate;
+          hash[primeCounter] = (candidate ** 0.5) * maxWord | 0;
+          k[primeCounter++] = (candidate ** (1 / 3)) * maxWord | 0;
+        }
+      }
+      ascii += '\x80';
+      while ((ascii.length % 64) - 56) ascii += '\x00';
+      for (let i = 0; i < ascii.length; i++) {
+        const j = ascii.charCodeAt(i);
+        if (j >> 8) return ''; // non-ASCII password: require secure context
+        words[i >> 2] |= j << ((3 - i) % 4) * 8;
+      }
+      words[words.length] = (asciiBitLength / maxWord) | 0;
+      words[words.length] = asciiBitLength;
+      for (let j = 0; j < words.length;) {
+        const w = words.slice(j, j += 16), oldHash = hash.slice(0, 8);
+        for (let i = 0; i < 64; i++) {
+          const w15 = w[i - 15], w2 = w[i - 2];
+          const a = hash[0], e = hash[4];
+          const temp1 = hash[7]
+            + (rr(e, 6) ^ rr(e, 11) ^ rr(e, 25))
+            + ((e & hash[5]) ^ (~e & hash[6])) + k[i]
+            + (w[i] = (i < 16) ? w[i] : (w[i - 16] + (rr(w15, 7) ^ rr(w15, 18) ^ (w15 >>> 3))
+              + w[i - 7] + (rr(w2, 17) ^ rr(w2, 19) ^ (w2 >>> 10))) | 0);
+          const temp2 = (rr(a, 2) ^ rr(a, 13) ^ rr(a, 22)) + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+          hash = [(temp1 + temp2) | 0].concat(hash);
+          hash[4] = (hash[4] + temp1) | 0;
+        }
+        for (let i = 0; i < 8; i++) hash[i] = (hash[i] + oldHash[i]) | 0;
+      }
+      for (let i = 0; i < 8; i++) for (let j = 3; j + 1; j--) {
+        const b = (hash[i] >> (j * 8)) & 255;
+        result += ((b < 16) ? 0 : '') + b.toString(16);
+      }
+      return result;
+    }
+
+    function tokenHash() { return sessionStorage.getItem('admin.tokenHash') || ''; }
     async function af(path, opts = {}) {
       const headers = { ...(opts.headers || {}) };
-      if (token()) headers['x-admin-token'] = token();
+      if (tokenHash()) headers['x-admin-token'] = tokenHash();
       return fetch(path, { ...opts, headers });
     }
     function banner(text, on = true) {
@@ -102,11 +240,10 @@
     }
 
     async function loadData() {
-      banner('加载中…');
       let data;
       try {
         const res = await af('/api/admin/data');
-        if (res.status === 401) { banner('令牌不对：填写 ADMIN_TOKEN 后重试。'); return; }
+        if (res.status === 401) { banner('需要密码：填入左上角后点「连接」。（通过隧道访问 localhost 时无需密码。）'); return; }
         data = await res.json();
       } catch (e) { banner('连不上后端：' + e.message); return; }
       banner('', false);
@@ -114,7 +251,7 @@
       rows.replaceChildren();
       allIds = data.courses.map((c) => c.id);
       if (!data.courses.length) {
-        rows.innerHTML = '<tr><td colspan="8" class="empty">没有课程。</td></tr>';
+        rows.innerHTML = '<tr><td colspan="8" class="empty">还没有课程数据。到聊天页发一轮消息就会出现。</td></tr>';
         selected.clear(); resetArm(); return;
       }
       for (const c of data.courses) {
@@ -128,16 +265,13 @@
         title.textContent = c.title || '未命名课程';
         title.addEventListener('click', () => viewCourse(c.id, c.title));
 
-        const cells = [
-          cbtd, title,
-          td(c.user_id), td(c.state_version), td(c.messages), td(c.snapshots), td(fmt(c.updated_at)),
-        ];
-        const act = document.createElement('td'); act.className = 'row-actions';
+        const act = document.createElement('td');
+        const actWrap = document.createElement('div'); actWrap.className = 'row-actions';
         const dl = mkbtn('下载', () => downloadCourse(c.id));
         const del = mkbtn('删除', () => rowDelete(del, c.id)); del.className = 'danger';
-        act.append(dl, del);
-        cells.push(act);
-        for (const el of cells) tr.append(el);
+        actWrap.append(dl, del); act.append(actWrap);
+
+        for (const el of [cbtd, title, td(c.user_id), td(c.state_version), td(c.messages), td(c.snapshots), td(fmt(c.updated_at)), act]) tr.append(el);
         rows.append(tr);
       }
       resetArm();
@@ -147,6 +281,7 @@
 
     async function viewCourse(id, title) {
       $('#detail-head').textContent = `${title || id} · 完整记录`;
+      $('#detail-hint').hidden = true;
       const pre = $('#detail'); pre.hidden = false; pre.textContent = '加载中…';
       try {
         const res = await af('/api/admin/courses/' + id);
@@ -155,33 +290,34 @@
       } catch (e) { pre.textContent = '加载失败：' + e.message; }
     }
 
-    async function downloadBlob(obj, name) {
+    function downloadBlob(obj, name) {
       const url = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' }));
       const a = document.createElement('a'); a.href = url; a.download = name; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     }
     async function downloadCourse(id) {
       const res = await af('/api/admin/courses/' + id);
-      const data = await res.json();
-      downloadBlob(data.course, `course-${id}.json`);
+      downloadBlob((await res.json()).course, `course-${id}.json`);
     }
     async function exportAll() {
       const res = await af('/api/admin/export');
-      const data = await res.json();
-      downloadBlob(data, 'demo-data.json');
+      downloadBlob(await res.json(), 'demo-data.json');
     }
 
-    // deletes
     async function del(ids) {
       for (const id of ids) { await af('/api/admin/courses/' + id, { method: 'DELETE' }); }
       selected.clear();
       await loadData();
-      $('#detail').hidden = true; $('#detail-head').textContent = '选中一个课程查看完整记录。';
+      $('#detail').hidden = true;
+      $('#detail-hint').hidden = false;
+      $('#detail-head').textContent = '完整记录';
     }
     function rowDelete(btn, id) {
       if (btn.dataset.armed === '1') { del([id]); }
-      else { btn.dataset.armed = '1'; btn.classList.add('confirming'); btn.textContent = '确定？';
-        setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ''; btn.classList.remove('confirming'); btn.textContent = '删除'; } }, 3000); }
+      else {
+        btn.dataset.armed = '1'; btn.classList.add('confirming'); btn.textContent = '确定？';
+        setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ''; btn.classList.remove('confirming'); btn.textContent = '删除'; } }, 3000);
+      }
     }
     function armBulk(btn, getIds) {
       btn.addEventListener('click', () => {
@@ -191,15 +327,20 @@
       });
     }
 
-    $('#connect').addEventListener('click', () => { sessionStorage.setItem('admin.token', $('#token').value.trim()); loadData(); });
+    $('#connect').addEventListener('click', async () => {
+      const pw = $('#token').value.trim();
+      const hash = pw ? await sha256Hex(pw) : '';
+      if (pw && !hash) { banner('这个环境不支持中文密码的本地散列——请改用纯英文数字密码。'); return; }
+      sessionStorage.setItem('admin.tokenHash', hash);
+      loadData();
+    });
     $('#refresh').addEventListener('click', loadData);
     $('#export').addEventListener('click', exportAll);
     armBulk($('#del-selected'), () => Array.from(selected));
     armBulk($('#del-all'), () => allIds.slice());
-
-    $('#token').value = token();
-    loadData(); // open dev instances answer without a token; gated ones show a banner
     $('#token').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#connect').click(); });
+
+    loadData(); // tunnel/localhost instances answer without a password
   </script>
 </body>
 </html>
