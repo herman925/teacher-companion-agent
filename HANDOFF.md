@@ -2,6 +2,15 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-15 (later) — Settings modal, admin redesign + password, UI cleanup
+
+- **Settings are a centered modal now** (ChatGPT-style; DESIGN.md §4): left nav 通用 / 模型服务 / 教师档案, scrim + Esc dismiss, full-sheet under 560px; all in the warm family. Panes built by `buildGeneralPane`/`buildProfilePane`/`buildProviderSections` in [demo/src/ui/main.js](demo/src/ui/main.js). Debug drawer stays right; its head is sticky now.
+- **Rail owns course actions**: header 新课程 hides when the rail exists (`body.has-history #btn-new`), rail footer keeps ＋新课程/管理; 历史 is a true toggle — pinned state unpins+closes on toggle.
+- **Admin console redesigned in the teacher UI design language** (paper/serif/green/cream/brick — slate stays debug-only) with an in-page 使用指南 for teammates: connect via wizard, password rules, view/export/delete, reconnect tips.
+- **Admin auth model (two doors)**: wizard tunnel = machine auth → dev `.env` has NO `ADMIN_TOKEN` (console passwordless inside the tunnel; verified live: dev `/admin` 200, data 200). Public `.env` HAS `ADMIN_TOKEN` set server-side (Herman's password, never in repo; `chmod 600`; service restarted) — public runs `main` which has no `/admin` route yet (404 verified), so when this merges it is gated from day one. Page sends **SHA-256 of the password** (WebCrypto on localhost, pure-JS fallback verified byte-identical to node:crypto), only the hash travels/persists; server accepts hash or plaintext (curl). No-TLS replay caveat documented in OPERATIONS.md. **Planned feature recorded: retire the password path, authorized-machine only.**
+- **SSH stall question answered**: devtunnel key was always authorized (fingerprint matched); the handshake stall is intermittent mainland-link flakiness (3-attempt retest: fail, fail, 200) — same flakiness that times out GitHub pushes. Wizard's retry loop covers it.
+- Verified: auth matrix 401/200/200/401 (none/plaintext/hash/wrong); browser: modal panes + rail toggle/dedupe + admin table/detail/password flow (wrong pw rejected, right pw loads, sessionStorage holds hash only). Gate green; commits `e760b01`/`9c46a46`/`e71c1bd`; `dev deployed: e71c1bd`.
+
 ## 2026-07-15 — Server-side chat history: persistence tier + rail + admin console
 
 - **Design first** ([docs/DATABASE.md](docs/DATABASE.md)): `course_snapshots` now checkpoint-based — `state_delta` every version + full document only every 20th version and on stage change (~1/20 the storage of full-doc-per-turn, audit/replay intact); `state_delta` de-duplicated to snapshots (not also in `messages.turn_contract`); sizing section now counts snapshots and pins the load-last-10 prompt window. Then the **demo persistence tier** section: the runnable bridge to server-side chat history ahead of the unbuilt Postgres layer.
