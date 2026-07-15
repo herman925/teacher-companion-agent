@@ -86,12 +86,17 @@ function profileIsEmpty() {
 }
 
 /** Fixed choice lists for the 教师档案 pane (DESIGN.md §4). */
-const PROVINCES = [
-  '北京', '天津', '上海', '重庆', '河北', '山西', '内蒙古', '辽宁', '吉林', '黑龙江',
-  '江苏', '浙江', '安徽', '福建', '江西', '山东', '河南', '湖北', '湖南', '广东',
-  '广西', '海南', '四川', '贵州', '云南', '西藏', '陕西', '甘肃', '青海', '宁夏',
-  '新疆', '中国香港', '中国澳门', '中国台湾', '其他',
-];
+// 省→区县 dataset (vendored from province-city-china, MCA-derived; 港澳台 renamed
+// 中国香港/中国澳门/中国台湾). Lazy-loaded; the pilot needs district precision (番禺区).
+let REGIONS = null;
+async function loadRegions() {
+  if (REGIONS) return REGIONS;
+  try {
+    const res = await fetch('src/data/china-regions.json');
+    REGIONS = res.ok ? await res.json() : {};
+  } catch { REGIONS = {}; }
+  return REGIONS;
+}
 const AGE_RANGES = ['25岁以下', '26–30岁', '31–40岁', '41–50岁', '50岁以上'];
 const TEACH_YEARS = ['0–2年', '3–5年', '6–10年', '11–20年', '20年以上'];
 const TENURE_YEARS = ['1年以内', '1–3年', '4–6年', '7–10年', '10年以上'];
@@ -879,14 +884,49 @@ function buildProfilePane() {
   const pane = $('#pane-profile');
   pane.replaceChildren();
 
-  pane.append(selectField('地区（省级）', 'profile-province', PROVINCES, profile.province ?? '', (v) => { profile.province = v; saveProfile(); }));
+  // 地区: two type-to-search inputs (native datalist) — the pilot targets
+  // district precision (e.g. 广州市番禺区), so both levels are searchable.
+  const provList = el('datalist', '');
+  provList.id = 'province-options';
+  const distList = el('datalist', '');
+  distList.id = 'district-options';
+  pane.append(provList, distList);
 
-  const { field: regionField } = settingsField('区/县', 'profile-region', {
-    placeholder: '如 番禺区',
+  const { field: provField, input: provInput } = settingsField('地区（省级，可输入搜索）', 'profile-province', {
+    placeholder: '如 广东省 / 中国香港',
+    value: profile.province ?? '',
+    onInput: (v) => { profile.province = v.trim(); saveProfile(); fillDistricts(); },
+  });
+  provInput.setAttribute('list', 'province-options');
+  pane.append(provField);
+
+  const { field: regionField, input: distInput } = settingsField('市／区县（可输入搜索）', 'profile-region', {
+    placeholder: '如 广州市番禺区',
     value: profile.region ?? '',
     onInput: (v) => { profile.region = v.trim(); saveProfile(); },
   });
+  distInput.setAttribute('list', 'district-options');
   pane.append(regionField);
+
+  const fillDistricts = () => {
+    if (!REGIONS) return;
+    distList.replaceChildren();
+    const entries = REGIONS[profile.province] ?? [];
+    for (const name of entries) {
+      const o = el('option', '');
+      o.value = name;
+      distList.append(o);
+    }
+  };
+  loadRegions().then((regions) => {
+    provList.replaceChildren();
+    for (const name of Object.keys(regions)) {
+      const o = el('option', '');
+      o.value = name;
+      provList.append(o);
+    }
+    fillDistricts();
+  });
 
   pane.append(selectField('年龄段（可选）', 'profile-agerange', AGE_RANGES, profile.ageRange ?? '', (v) => { profile.ageRange = v; saveProfile(); }));
   pane.append(selectField('教龄（总）', 'profile-teachyears', TEACH_YEARS, profile.teachYears ?? '', (v) => { profile.teachYears = v; saveProfile(); }));
