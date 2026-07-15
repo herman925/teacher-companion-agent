@@ -143,7 +143,7 @@ Write-Host ""
 # Watchdog with self-healing: the mainland link stalls now and then, so one
 # slow probe must NOT kill a healthy session. Declare trouble only after the
 # ssh process died or 3 consecutive probe misses, then quietly reconnect
-# (up to 5 times in a row) instead of telling the human to start over.
+# (up to 30 times in a row) instead of telling the human to start over.
 Write-Host "  Press Ctrl+C or close this window to disconnect."
 $failStreak = 0
 $reconnects = 0
@@ -164,13 +164,13 @@ try {
         }
         $failStreak++
         if (-not $tunnel.HasExited -and $failStreak -lt 3) { continue }   # slow link - tolerate two misses
-        if ($reconnects -ge 5) {
-            Write-Host "  Could not keep the tunnel up (5 reconnect attempts failed)." -ForegroundColor Red
+        if ($reconnects -ge 30) {
+            Write-Host "  Could not keep the tunnel up (30 reconnect attempts failed)." -ForegroundColor Red
             Write-Host "  Check your internet connection, then run the wizard again."
             break
         }
         $reconnects++
-        Write-Host "  Tunnel hiccup - reconnecting ($reconnects/5)..." -ForegroundColor Yellow
+        Write-Host "  Tunnel hiccup - reconnecting ($reconnects/30)..." -ForegroundColor Yellow
         if (-not $tunnel.HasExited) { Stop-Process -Id $tunnel.Id -Force -ErrorAction SilentlyContinue }
         $tunnel = Start-Process ssh -ArgumentList $sshArgs -WindowStyle Hidden -PassThru
         Start-Sleep -Seconds 8
