@@ -30,6 +30,7 @@ const LS = {
   logcfg: 'cst.logcfg',
   courseId: 'cst.courseId',   // pointer to the active server course (persistence tier)
   railPinned: 'cst.railPinned', // history rail pinned-open preference
+  channels: 'cst.channels',   // per-family 线路 choice (国内/国际), {group: providerId}
 };
 
 function load(key, fallback) {
@@ -72,13 +73,34 @@ const logStore = createLogStore({
 });
 const logEvent = (cat, event, data) => logStore.log(cat, event, data);
 
-/** 教师档案 (PRD §7.4 v1, local-only): read-only context, never model-writable. */
-let profile = { region: '', ageBand: '', classSize: '', stylePref: '', ...load(LS.profile, {}) };
+/** 教师档案 (PRD §7.4 v1, local-only): read-only context, never model-writable.
+ * ageBand mirrors classBands when exactly one band is chosen (mock uses it). */
+let profile = {
+  province: '', region: '', ageRange: '', teachYears: '', tenureYears: '',
+  role: '', classBands: [], classSize: '', stylePref: '', ageBand: '',
+  ...load(LS.profile, {}),
+};
 function saveProfile() { save(LS.profile, profile); }
 function profileIsEmpty() {
-  return !(String(profile.region || '').trim() || String(profile.ageBand || '').trim()
-    || String(profile.classSize || '').trim() || String(profile.stylePref || '').trim());
+  return !Object.values(profile).some((v) => (Array.isArray(v) ? v.length : String(v ?? '').trim()));
 }
+
+/** Fixed choice lists for the 教师档案 pane (DESIGN.md §4). */
+const PROVINCES = [
+  '北京', '天津', '上海', '重庆', '河北', '山西', '内蒙古', '辽宁', '吉林', '黑龙江',
+  '江苏', '浙江', '安徽', '福建', '江西', '山东', '河南', '湖北', '湖南', '广东',
+  '广西', '海南', '四川', '贵州', '云南', '西藏', '陕西', '甘肃', '青海', '宁夏',
+  '新疆', '中国香港', '中国澳门', '中国台湾', '其他',
+];
+const AGE_RANGES = ['25岁以下', '26–30岁', '31–40岁', '41–50岁', '50岁以上'];
+const TEACH_YEARS = ['0–2年', '3–5年', '6–10年', '11–20年', '20年以上'];
+const TENURE_YEARS = ['1年以内', '1–3年', '4–6年', '7–10年', '10年以上'];
+const KG_ROLES = ['班主任', '配班教师', '保育员', '年级组长', '保教主任', '园内教研员', '副园长', '园长', '实习教师', '其他'];
+const CLASS_BANDS = ['小班', '中班', '大班', '混龄'];
+const RESPONSE_STYLES = [
+  '简洁要点（直接给做法）', '温和鼓励（多肯定、慢慢来）', '详细讲解（讲清为什么）',
+  '案例参照（多给真实例子）', '提问引导（先问再建议）',
+];
 /** The profile as sent with requests (undefined when empty). */
 function profileForRequest() { return profileIsEmpty() ? undefined : { ...profile }; }
 
@@ -138,6 +160,27 @@ const LOCAL_LABELS = {
   custom: '自定义端点（OpenAI 兼容）',
 };
 
+/** Provider families that appear ONCE in the model dropdown; the mainland/
+ * international channel is a separate 线路 selector (DESIGN.md §4). Planned
+ * end-state per DATABASE.md open Q5: this whole zoo collapses to 官方服务
+ * vs 自备密钥 (BYOK). */
+const PROVIDER_GROUPS = {
+  minimax: {
+    label: 'MiniMax',
+    channels: [['minimax', '国内（minimaxi.com）'], ['minimax-intl', '国际（minimax.io）']],
+  },
+  glm: {
+    label: 'GLM（智谱 / Z.AI）',
+    channels: [['glm', '国内（bigmodel.cn）'], ['zai', '国际·按量（Z.AI）'], ['zai-coding', '国际·Coding 订阅（Z.AI）']],
+  },
+};
+/** Family a raw provider id belongs to, or null. */
+function groupOf(id) {
+  return Object.keys(PROVIDER_GROUPS).find((g) => PROVIDER_GROUPS[g].channels.some(([cid]) => cid === id)) ?? null;
+}
+/** Remembered 线路 per family, {group: providerId}. */
+let channelChoice = load(LS.channels, {});
+
 /** Offline fallback when /api/health is unreachable (e.g. static hosting).
  * Must mirror the enabled providers in adapter.mjs PROVIDERS, so the dropdown
  * offers the same choices with or without a backend. */
@@ -182,7 +225,6 @@ const subtitleEl = $('#subtitle');
 const settingsDrawer = $('#settings-drawer');
 const debugDrawer = $('#debug-drawer');
 const debugBody = $('#debug-body');
-const providerSelect = $('#provider-select');
 const providerBox = $('#provider-box');
 
 // ---------------------------------------------------------------- helpers
@@ -603,16 +645,22 @@ function saveKeys() { save(LS.keys, apiKeys); }
 function saveModels() { save(LS.models, modelChoices); }
 function saveCustom() { save(LS.custom, customCfg); }
 
-function providerOptions() {
-  const ids = ['mock', ...providerInfos.map((p) => p.id), 'custom'];
-  providerSelect.replaceChildren();
-  for (const id of ids) {
-    const opt = el('option', '', LOCAL_LABELS[id] ?? providerInfo(id)?.label ?? id);
-    opt.value = id;
-    providerSelect.append(opt);
+/** Labeled <select> field factory (fixed choice lists; '' = 未选择). */
+function selectField(labelText, id, options, value, onChange) {
+  const field = el('div', 'settings-field');
+  const label = el('label', 'settings-label', labelText);
+  const sel = el('select', 'settings-select');
+  sel.id = id;
+  label.htmlFor = id;
+  for (const opt of ['', ...options]) {
+    const o = el('option', '', opt || '未选择');
+    o.value = opt;
+    sel.append(o);
   }
-  if (!ids.includes(provider)) provider = 'mock';
-  providerSelect.value = provider;
+  sel.value = options.includes(value) ? value : '';
+  sel.addEventListener('change', () => onChange(sel.value));
+  field.append(label, sel);
+  return field;
 }
 
 /** Labeled input factory for the settings drawer. */
@@ -826,32 +874,48 @@ function devModeField() {
   return field;
 }
 
-/** 教师档案 pane — optional, local-only (PRD §7.4 v1 personalization). */
+/** 教师档案 pane — optional, local-only (PRD §7.4 v1; field list DESIGN.md §4). */
 function buildProfilePane() {
   const pane = $('#pane-profile');
   pane.replaceChildren();
 
-  const { field: regionField } = settingsField('地区', 'profile-region', {
-    placeholder: '如 广州市番禺区',
+  pane.append(selectField('地区（省级）', 'profile-province', PROVINCES, profile.province ?? '', (v) => { profile.province = v; saveProfile(); }));
+
+  const { field: regionField } = settingsField('区/县', 'profile-region', {
+    placeholder: '如 番禺区',
     value: profile.region ?? '',
     onInput: (v) => { profile.region = v.trim(); saveProfile(); },
   });
   pane.append(regionField);
 
-  const ageField = el('div', 'settings-field');
-  const ageLabel = el('label', 'settings-label', '年段');
-  const ageSelect = el('select', 'settings-select');
-  ageSelect.id = 'profile-ageband';
-  ageLabel.htmlFor = ageSelect.id;
-  for (const band of ['', '小班', '中班', '大班', '混龄']) {
-    const opt = el('option', '', band || '未选择');
-    opt.value = band;
-    ageSelect.append(opt);
+  pane.append(selectField('年龄段（可选）', 'profile-agerange', AGE_RANGES, profile.ageRange ?? '', (v) => { profile.ageRange = v; saveProfile(); }));
+  pane.append(selectField('教龄（总）', 'profile-teachyears', TEACH_YEARS, profile.teachYears ?? '', (v) => { profile.teachYears = v; saveProfile(); }));
+  pane.append(selectField('本园年资', 'profile-tenure', TENURE_YEARS, profile.tenureYears ?? '', (v) => { profile.tenureYears = v; saveProfile(); }));
+  pane.append(selectField('角色', 'profile-role', KG_ROLES, profile.role ?? '', (v) => { profile.role = v; saveProfile(); }));
+
+  // 任教班级 — checkboxes, multiple allowed; ageBand mirrors a single choice
+  // so the mock's light-touch 年段 interpolation keeps working.
+  const bandsField = el('div', 'settings-field');
+  bandsField.append(el('label', 'settings-label', '任教班级（可多选）'));
+  const bandsRow = el('div', 'checkbox-row');
+  const bands = Array.isArray(profile.classBands) ? profile.classBands : [];
+  for (const band of CLASS_BANDS) {
+    const lab = el('label', '');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = bands.includes(band);
+    box.addEventListener('change', () => {
+      const next = new Set(Array.isArray(profile.classBands) ? profile.classBands : []);
+      if (box.checked) next.add(band); else next.delete(band);
+      profile.classBands = CLASS_BANDS.filter((b) => next.has(b));
+      profile.ageBand = profile.classBands.length === 1 ? profile.classBands[0] : '';
+      saveProfile();
+    });
+    lab.append(box, document.createTextNode(band));
+    bandsRow.append(lab);
   }
-  ageSelect.value = profile.ageBand ?? '';
-  ageSelect.addEventListener('change', () => { profile.ageBand = ageSelect.value; saveProfile(); });
-  ageField.append(ageLabel, ageSelect);
-  pane.append(ageField);
+  bandsField.append(bandsRow);
+  pane.append(bandsField);
 
   const { field: sizeField } = settingsField('班额', 'profile-classsize', {
     type: 'number',
@@ -861,34 +925,111 @@ function buildProfilePane() {
   });
   pane.append(sizeField);
 
-  const { field: styleField } = settingsField('风格偏好', 'profile-style', {
-    placeholder: '如 喜欢户外和动手类活动',
-    value: profile.stylePref ?? '',
-    onInput: (v) => { profile.stylePref = v.trim(); saveProfile(); },
-  });
-  pane.append(styleField);
+  pane.append(selectField('回应风格', 'profile-style', RESPONSE_STYLES, profile.stylePref ?? '', (v) => { profile.stylePref = v; saveProfile(); }));
 
-  pane.append(el('p', 'settings-note', '档案只保存在这台设备；只有在填写了服务器地址后才会随请求发送；不会写入课程状态。'));
+  pane.append(el('p', 'settings-note', '档案只保存在这台设备，作为只读背景提供给陪跑智能体（不会写入课程状态）。将来有账号后，这一页会搬进「用户中心」。'));
 }
 
-/** 通用 pane — server address + developer mode. */
+/** 通用 pane — the model choice leads (线路 switch for 国内/国际 families), then 开发者模式. */
 function buildGeneralPane() {
   const pane = $('#pane-general');
   pane.replaceChildren();
+
+  const modelField = el('div', 'settings-field');
+  const label = el('label', 'settings-label', '模型');
+  const select = el('select', 'settings-select');
+  select.id = 'provider-select';
+  label.htmlFor = select.id;
+  const options = [['mock', LOCAL_LABELS.mock]];
+  const seenGroups = new Set();
+  for (const info of providerInfos) {
+    const g = groupOf(info.id);
+    if (g) {
+      if (!seenGroups.has(g)) { seenGroups.add(g); options.push([`group:${g}`, PROVIDER_GROUPS[g].label]); }
+    } else {
+      options.push([info.id, info.label]);
+    }
+  }
+  options.push(['custom', LOCAL_LABELS.custom]);
+  for (const [v, l] of options) {
+    const o = el('option', '', l);
+    o.value = v;
+    select.append(o);
+  }
+  const currentGroup = groupOf(provider);
+  const wanted = currentGroup ? `group:${currentGroup}` : provider;
+  if (options.some(([v]) => v === wanted)) select.value = wanted;
+  else { provider = 'mock'; select.value = 'mock'; }
+  modelField.append(label, select);
+  pane.append(modelField);
+
+  // 线路: shown only for families with mainland/international variants.
+  const channelField = el('div', 'settings-field');
+  const chLabel = el('label', 'settings-label', '线路');
+  const chSelect = el('select', 'settings-select');
+  chSelect.id = 'channel-select';
+  chLabel.htmlFor = chSelect.id;
+  channelField.append(chLabel, chSelect);
+  pane.append(channelField);
+  const renderChannels = () => {
+    const g = groupOf(provider);
+    channelField.hidden = !g;
+    if (!g) return;
+    chSelect.replaceChildren();
+    for (const [id, l] of PROVIDER_GROUPS[g].channels) {
+      const o = el('option', '', l);
+      o.value = id;
+      chSelect.append(o);
+    }
+    chSelect.value = provider;
+  };
+  renderChannels();
+
+  select.addEventListener('change', () => {
+    const v = select.value;
+    const next = v.startsWith('group:')
+      ? (channelChoice[v.slice(6)] ?? PROVIDER_GROUPS[v.slice(6)].channels[0][0])
+      : v;
+    logEvent('session', 'provider_change', { from: provider, to: next });
+    provider = next;
+    save(LS.provider, provider);
+    renderChannels();
+    syncOpenSection();
+  });
+  chSelect.addEventListener('change', () => {
+    const g = groupOf(provider);
+    logEvent('session', 'provider_change', { from: provider, to: chSelect.value, channel: true });
+    provider = chSelect.value;
+    if (g) { channelChoice[g] = provider; save(LS.channels, channelChoice); }
+    save(LS.provider, provider);
+    syncOpenSection();
+  });
+
+  pane.append(devModeField());
+  pane.append(el('p', 'settings-note', '「演示模式」不联网、不填密钥即可体验完整流程。密钥与接口配置在「模型服务」页。规划中：将来这里只保留「官方服务」（平台代管）与「自备密钥」两种方式。'));
+}
+
+/** 高级 corner of 模型服务 — the static-hosting-only server address. */
+function buildProviderAdvanced() {
+  const host = $('#provider-advanced');
+  host.replaceChildren();
+  const details = el('details', 'provider-config');
+  details.dataset.id = 'advanced';
+  details.append(el('summary', '', '高级：服务器地址'));
   const { field: apiField } = settingsField(
-    '服务器地址（可选）',
+    '服务器地址',
     'api-base',
     {
       type: 'text',
-      hint: backendOnline ? '本地服务在线' : '留空＝本机；填服务器地址可接真实模型',
+      hint: backendOnline ? '当前后端在线（同源直连）' : '',
       placeholder: '如 https://xxxx.cn-shenzhen.fcapp.run',
       value: apiBase,
       onInput: (v) => { apiBase = v.replace(/\/+$/, ''); save(LS.apiBase, apiBase); },
     },
   );
-  pane.append(apiField);
-  pane.append(devModeField());
-  pane.append(el('p', 'settings-note', '服务器地址留空＝本机。开发者模式会在对话里显示工作流节点，并在调试抽屉展示状态机与 API 往返。'));
+  details.append(apiField);
+  details.append(el('p', 'settings-note', '只有把界面放在静态托管（如 GitHub Pages）上时才需要填——告诉页面把请求发到哪个远程代理。通过隧道访问或在本机运行时请留空，页面会直接连同源后端。'));
+  host.append(details);
 }
 
 /** Rebuild all three settings panes; open the selected provider's section. */
@@ -899,6 +1040,7 @@ function buildProviderSections() {
   }
   providerBox.append(customSection());
   syncOpenSection();
+  buildProviderAdvanced();
   buildGeneralPane();
   buildProfilePane();
 }
@@ -922,7 +1064,6 @@ async function initProviders() {
       backendOnline = true;
     }
   } catch { /* offline from the API is fine — 演示模式 still works client-side */ }
-  providerOptions();
   buildProviderSections();
 }
 
@@ -1304,12 +1445,7 @@ function wire() {
     }
   });
 
-  providerSelect.addEventListener('change', () => {
-    logEvent('session', 'provider_change', { from: provider, to: providerSelect.value });
-    provider = providerSelect.value;
-    save(LS.provider, provider);
-    syncOpenSection();
-  });
+  // model + 线路 change handlers live in buildGeneralPane (the select is built there)
 }
 
 // -------------------------------------------------------------------- boot

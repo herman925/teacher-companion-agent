@@ -69,6 +69,22 @@ test('profile section: injected iff the profile has content (both directions)', 
   assert.equal(without.split('\n\n---\n\n').length, 4);
 });
 
+test('profile v2 fields: injected when present, absent when empty (both directions)', () => {
+  const full = profileSectionText({
+    province: '广东', region: '番禺区', ageRange: '26–30岁', teachYears: '3–5年',
+    tenureYears: '1–3年', role: '班主任', classBands: ['中班', '大班'], classSize: 28,
+    stylePref: '提问引导（先问再建议）',
+  });
+  assert.ok(full.includes('地区：广东番禺区'));
+  assert.ok(full.includes('年龄段：26–30岁') && full.includes('教龄：3–5年') && full.includes('本园年资：1–3年'));
+  assert.ok(full.includes('角色：班主任') && full.includes('任教班级：中班、大班'));
+  assert.ok(!full.includes('年段：'), 'classBands supersedes legacy ageBand');
+  // legacy ageBand still renders when classBands is absent
+  assert.ok(profileSectionText({ ageBand: '中班' }).includes('年段：中班'));
+  // absent direction: empty arrays/blank strings inject nothing
+  assert.equal(profileSectionText({ province: ' ', classBands: [], role: '' }), '');
+});
+
 test('byte-parity with the legacy serve.mjs assembly (real prompt files, no profile)', async () => {
   for (const [stage, awaiting] of [[0, false], [1, true], [4, false], [5, true]]) {
     const state = createInitialState('parity');

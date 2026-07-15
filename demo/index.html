@@ -110,12 +110,9 @@
         <div class="modal-panes">
           <section class="modal-pane on" id="pane-general" data-pane="general"></section>
           <section class="modal-pane" id="pane-providers" data-pane="providers">
-            <div class="settings-field">
-              <label class="settings-label" for="provider-select">模型服务</label>
-              <select class="settings-select" id="provider-select"></select>
-            </div>
             <div id="provider-box"></div>
-            <p class="settings-note">密钥和模型选择只保存在这台设备的浏览器里；只有在「服务器地址」填写后，才会随请求发送到你指定的服务，否则不外传。选「演示模式」可以不填密钥、离线直接体验完整流程；要接真实模型，请在「服务器地址」填写代理地址（见 docs/DEPLOY.md）。</p>
+            <p class="settings-note">密钥和模型 id 只保存在这台设备的浏览器里，随请求直接发给所选服务，不经过第三方。规划中：未来这里会简化为「官方服务」（平台代管密钥与用量）与「自备密钥」两种方式。</p>
+            <div id="provider-advanced"></div>
           </section>
           <section class="modal-pane" id="pane-profile" data-pane="profile"></section>
         </div>

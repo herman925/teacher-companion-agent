@@ -652,6 +652,10 @@ body.has-history #btn-new { display: none; }
 
 .settings-note { color: var(--ink-faded); font-size: 13px; max-width: 30em; }
 
+/* 任教班级 multi-select row (settings modal, 教师档案 pane) */
+.checkbox-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.checkbox-row label { display: flex; align-items: center; gap: 6px; font-size: 14px; min-height: 32px; cursor: pointer; }
+
 /* ------------------------------------------------------ history rail (历史课程) */
 /* Shown only on the persistence tier (body.has-history). Collapsed by default;
    hover the hot-zone to peek, or pin to keep open + reflow the column. DESIGN.md §4/§5. */
