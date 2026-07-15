@@ -2,6 +2,14 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-15 (later, 6) — Course titles + admin console clarity (dev only, not merged)
+
+- **Auto course titles** (`f32aa2f`): a course names itself from `course_state.theme_resource.name` — the theme the model already extracts through the normal `state_delta` pipeline, zero extra LLM calls — capped at `TITLE_MAX=16`; first-teacher-message fallback. Server emits a `course` SSE event so the rail row renames mid-turn (browser-verified: first mock turn → row became 醒狮).
+- **Inline rename in the rail**: hover ✎ → input (Enter saves via new `PATCH /api/courses/:id`, Esc cancels). Human rename sets `title_locked`; auto-titling never overwrites it (store-tested both directions). Verified live: 醒狮 → 醒狮·中一班 persisted server-side.
+- **Admin console clarity** (Herman's ask — "I can't recognize UUIDs"): 数据 tab 用户 column now shows `username（昵称）` (UUID only on hover + in the record pane; `adminListCourses` joins users). Both tabs have **live filter boxes** with `显示 x / 共 y` counts; **export and delete-all follow the filter** (导出筛选结果 (n) / 删除筛选结果 (n)); selections prune to the visible set. Verified: filter narrows 3→1 on username fragment, labels re-scope, empty state graceful.
+- 133/133 tests. **On dev branch only — NOT merged to main yet**; Herman should eyeball via tunnel, then merge (the bundle+update-ref path in the previous entry works when pushes stall).
+- Environment note: stale `.git/index.lock` (0 bytes) appeared mid-commit with 3 external git processes running (editor watchers); cleared + retry loop worked. Same Drive-hosted-repo weirdness family.
+
 ## 2026-07-15 (later, 5) — dev→main merged; PUBLIC instance is live with the full app
 
 - **Merge shipped**: `main` = `dev` = `08233c3` everywhere — GitHub (`origin/main`, `origin/dev`), the VM bare repo, both instances (`dev deployed: 08233c3`, `public deployed: 08233c3`). ff-only; Herman's other-session commits (`7ecdc63`, `ab45abe`) untouched. The uncommitted 预设/生成 doc set (source-docs pair, AGENTS/PRD pointers) was committed first as `08233c3` — pointers only, adoption still ADR-gated.

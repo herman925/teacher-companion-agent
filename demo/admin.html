@@ -78,7 +78,6 @@
     button:disabled { opacity: 0.45; cursor: not-allowed; }
     button.tab { border-radius: 8px; }
     button.tab.on { background: var(--green-wash); border-color: var(--green); color: var(--green); font-weight: 500; }
-    .count { color: var(--ink-faded); font-size: 13px; white-space: nowrap; }
     .spacer { flex: 1; }
 
     .banner {
@@ -145,8 +144,6 @@
   <div id="banner" class="banner" hidden></div>
 
   <div class="bar" id="data-actions">
-    <input type="text" id="data-search" placeholder="筛选：课程名 / 用户名 / 昵称 / id…" autocomplete="off">
-    <span class="count" id="data-count"></span>
     <span class="spacer"></span>
     <button id="export">导出全部 (.json)</button>
     <button id="del-selected" class="danger" disabled>删除所选</button>
@@ -178,8 +175,6 @@
       <input type="text" id="new-displayname" placeholder="昵称（可选）" autocomplete="off">
       <button id="create-user" class="primary">创建账号</button>
       <span class="spacer"></span>
-      <input type="text" id="user-search" placeholder="筛选：用户名 / 昵称 / 状态…" autocomplete="off">
-      <span class="count" id="user-count"></span>
       <button id="refresh-users">刷新</button>
     </div>
     <div class="banner" id="temp-box" hidden></div>
@@ -199,8 +194,7 @@
   <script>
     const $ = (s) => document.querySelector(s);
     const selected = new Set();
-    let dataRows = [];   // full course list; the filter derives the visible view
-    let userRows = [];
+    let allIds = [];
 
     // ---- password → SHA-256 (the plaintext never leaves this page) ----
     // crypto.subtle exists only in secure contexts (https / localhost). The
@@ -271,47 +265,29 @@
     }
     function fmt(ts) { return (ts || '').replace('T', ' ').replace(/\..*/, ''); }
 
-    function dataQuery() { return ($('#data-search')?.value ?? '').trim().toLowerCase(); }
-    /** Rows matching the live filter — title/username/昵称/ids all searchable. */
-    function visibleRows() {
-      const q = dataQuery();
-      if (!q) return dataRows;
-      return dataRows.filter((c) =>
-        [c.title, c.username, c.display_name, c.user_id, c.id].some((v) => String(v ?? '').toLowerCase().includes(q)));
-    }
-
     function resetArm() {
-      const vis = visibleRows();
-      const filtered = Boolean(dataQuery());
       for (const b of [$('#del-selected'), $('#del-all')]) { b.dataset.armed = ''; b.classList.remove('confirming'); }
       $('#del-selected').textContent = `删除所选${selected.size ? ` (${selected.size})` : ''}`;
       $('#del-selected').disabled = selected.size === 0;
-      $('#del-all').textContent = filtered ? `删除筛选结果 (${vis.length})` : '全部删除';
-      $('#export').textContent = filtered ? `导出筛选结果 (${vis.length})` : '导出全部 (.json)';
-      $('#data-count').textContent = `显示 ${vis.length} / 共 ${dataRows.length}`;
+      $('#del-all').textContent = '全部删除';
     }
 
     async function loadData() {
+      let data;
       try {
         const res = await af('/api/admin/data');
         if (res.status === 401) { banner('需要密码：填入左上角后点「连接」。（通过隧道访问 localhost 时无需密码。）'); return; }
-        dataRows = (await res.json()).courses;
+        data = await res.json();
       } catch (e) { banner('连不上后端：' + e.message); return; }
       banner('', false);
-      renderData();
-    }
-
-    function renderData() {
       const rows = $('#rows');
       rows.replaceChildren();
-      const vis = visibleRows();
-      // what you see is what you act on: selections outside the filter drop
-      for (const id of [...selected]) if (!vis.some((c) => c.id === id)) selected.delete(id);
-      if (!vis.length) {
-        rows.innerHTML = `<tr><td colspan="8" class="empty">${dataRows.length ? '没有匹配的课程——换个关键词。' : '还没有课程数据。到聊天页发一轮消息就会出现。'}</td></tr>`;
-        resetArm(); return;
+      allIds = data.courses.map((c) => c.id);
+      if (!data.courses.length) {
+        rows.innerHTML = '<tr><td colspan="8" class="empty">还没有课程数据。到聊天页发一轮消息就会出现。</td></tr>';
+        selected.clear(); resetArm(); return;
       }
-      for (const c of vis) {
+      for (const c of data.courses) {
         const tr = document.createElement('tr');
         const cb = document.createElement('input');
         cb.type = 'checkbox'; cb.checked = selected.has(c.id);
@@ -322,18 +298,13 @@
         title.textContent = c.title || '未命名课程';
         title.addEventListener('click', () => viewCourse(c.id, c.title));
 
-        // people, not UUIDs (uuid stays on hover + in the record pane)
-        const who = document.createElement('td');
-        who.textContent = c.username ? `${c.username}（${c.display_name ?? ''}）` : '（无账号/旧数据）';
-        who.title = c.user_id;
-
         const act = document.createElement('td');
         const actWrap = document.createElement('div'); actWrap.className = 'row-actions';
         const dl = mkbtn('下载', () => downloadCourse(c.id));
         const del = mkbtn('删除', () => rowDelete(del, c.id)); del.className = 'danger';
         actWrap.append(dl, del); act.append(actWrap);
 
-        for (const el of [cbtd, title, who, td(c.state_version), td(c.messages), td(c.snapshots), td(fmt(c.updated_at)), act]) tr.append(el);
+        for (const el of [cbtd, title, td(c.user_id), td(c.state_version), td(c.messages), td(c.snapshots), td(fmt(c.updated_at)), act]) tr.append(el);
         rows.append(tr);
       }
       resetArm();
@@ -361,19 +332,9 @@
       const res = await af('/api/admin/courses/' + id);
       downloadBlob((await res.json()).course, `course-${id}.json`);
     }
-    /** Export follows the filter: no filter → server-side full export; filtered → exactly the visible rows. */
-    async function exportData() {
-      if (!dataQuery()) {
-        const res = await af('/api/admin/export');
-        downloadBlob(await res.json(), 'demo-data.json');
-        return;
-      }
-      const courses = [];
-      for (const r of visibleRows()) {
-        const res = await af('/api/admin/courses/' + r.id);
-        courses.push((await res.json()).course);
-      }
-      downloadBlob({ exported_at: new Date().toISOString(), filter: dataQuery(), courses }, 'demo-data-filtered.json');
+    async function exportAll() {
+      const res = await af('/api/admin/export');
+      downloadBlob(await res.json(), 'demo-data.json');
     }
 
     async function del(ids) {
@@ -407,12 +368,10 @@
       loadData();
     });
     $('#refresh').addEventListener('click', () => { $('#view-users').hidden ? loadData() : loadUsers(); });
-    $('#export').addEventListener('click', exportData);
+    $('#export').addEventListener('click', exportAll);
     armBulk($('#del-selected'), () => Array.from(selected));
-    armBulk($('#del-all'), () => visibleRows().map((c) => c.id));
+    armBulk($('#del-all'), () => allIds.slice());
     $('#token').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#connect').click(); });
-    $('#data-search').addEventListener('input', renderData);
-    $('#user-search').addEventListener('input', renderUsers);
 
     // ---- tabs: 数据 / 用户 ----
     function showView(which) {
@@ -446,28 +405,20 @@
     }
 
     async function loadUsers() {
+      let data;
       try {
         const res = await af('/api/admin/users');
         if (res.status === 401) { banner('需要密码：填入左上角后点「连接」。'); return; }
-        userRows = (await res.json()).users;
+        data = await res.json();
       } catch (e) { banner('连不上后端：' + e.message); return; }
       banner('', false);
-      renderUsers();
-    }
-
-    function renderUsers() {
       const rows = $('#user-rows');
       rows.replaceChildren();
-      const q = ($('#user-search')?.value ?? '').trim().toLowerCase();
-      const vis = !q ? userRows : userRows.filter((u) =>
-        [u.username, u.display_name, u.role === 'admin' ? '管理员' : '教师',
-          u.status === 'active' ? '正常' : '已停用', u.id].some((v) => String(v ?? '').toLowerCase().includes(q)));
-      $('#user-count').textContent = `显示 ${vis.length} / 共 ${userRows.length}`;
-      if (!vis.length) {
-        rows.innerHTML = `<tr><td colspan="6" class="empty">${userRows.length ? '没有匹配的账号。' : '还没有账号——在上方创建第一个。'}</td></tr>`;
+      if (!data.users.length) {
+        rows.innerHTML = '<tr><td colspan="6" class="empty">还没有账号——在上方创建第一个。</td></tr>';
         return;
       }
-      for (const u of vis) {
+      for (const u of data.users) {
         const tr = document.createElement('tr');
         const act = document.createElement('td');
         const wrap = document.createElement('div'); wrap.className = 'row-actions';
