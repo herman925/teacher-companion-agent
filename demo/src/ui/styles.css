@@ -1103,7 +1103,7 @@ body.rail-pinned .composer { left: 260px; }
   .app-header-inner { padding-left: 16px; padding-right: 16px; gap: var(--sp); flex-wrap: wrap; }
   /* header must never widen the page: subtitle gives way first, actions may wrap */
   .app-subtitle { display: none; }
-  .header-center { flex-wrap: wrap; justify-content: flex-end; }
+  .header-right { flex-wrap: wrap; justify-content: flex-end; }
   .teacher-msg { max-width: 85%; }
 
   /* chips become a horizontal scroll row (§5) */
@@ -1352,9 +1352,11 @@ body.rail-pinned .composer { left: 260px; }
 .welcome-title { font-family: "ZCOOL KuaiLe", var(--font-serif); font-weight: 400; font-size: 26px; }
 
 /* ----------------------------------------- header v2 (taller, full lockup) */
+/* The header is FULL-BLEED (ChatGPT-style): hamburger hugs the screen's left
+   edge, the spanner its right; only the conversation column stays at --col. */
 .app-header-inner {
-  padding-top: calc(var(--sp) * 1.75);
-  padding-bottom: calc(var(--sp) * 1.75);
+  max-width: none;
+  padding: calc(var(--sp) * 1.75) calc(var(--sp) * 2.5);
   gap: calc(var(--sp) * 1.5);
 }
 .app-logo svg { width: 48px; height: 48px; }
@@ -1368,11 +1370,21 @@ body.rail-pinned .composer { left: 260px; }
   letter-spacing: 0.14em;
   white-space: nowrap;
 }
-/* center cluster sits mid-bar; spanner hugs the right edge */
-.header-center { display: flex; align-items: center; gap: var(--sp); margin: 0 auto; }
-.header-right { display: flex; align-items: center; flex: none; }
-.app-subtitle { flex: 0 1 auto; }
+/* center = chat title pinned to the TRUE viewport center (syncs with the
+   sidebar's active course); ALL actions hug the right edge as one unit. */
+.app-header-inner { position: relative; }
+.header-center {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  max-width: 38vw;
+}
+.header-center .app-subtitle { flex: none; max-width: 100%; text-align: center; }
+.header-right { display: flex; align-items: center; gap: var(--sp); flex: none; margin-left: auto; }
 
+@media (max-width: 900px) {
+  /* narrow: exact centering yields — title flows inline between lockup and actions */
+  .header-center { position: static; transform: none; margin: 0 auto; max-width: none; min-width: 0; }
+  .header-center .app-subtitle { max-width: 32vw; }
+}
 @media (max-width: 640px) {
   .app-platform-sub { display: none; }
   .app-title { font-size: 20px; }

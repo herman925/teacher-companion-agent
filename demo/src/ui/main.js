@@ -291,6 +291,18 @@ function refreshDebug() {
   renderDebug(debugBody, { lastEvent, state: courseState });
 }
 
+/** Dev instruments (the debug spanner + Ctrl+`) are role-gated, not channel-forked:
+ * dev/local channels always show them; the PUBLIC channel shows them only to a
+ * signed-in role above teacher (admin) — so public and dev run identical code.
+ * UI-gating only: the drawer reveals client-side state, never server secrets. */
+function devInstrumentsAllowed() {
+  return backendChannel !== 'public' || me?.role === 'admin';
+}
+
+function applyDevInstruments() {
+  $('#btn-debug').hidden = !devInstrumentsAllowed();
+}
+
 function scrollToEnd() {
   requestAnimationFrame(() => {
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
@@ -1617,7 +1629,8 @@ function openUserModal(startPane, notice) {
         me = data.user;
         logEvent('session', 'login', { user: me.username });
         if (me.profile) { profile = { ...profile, ...me.profile }; save(LS.profile, profile); }
-        buildProviderSections(); // settings 档案 tab flips to the pointer note
+        buildProviderSections();
+        applyDevInstruments(); // an admin logging in on public gains the spanner
         await enablePersistence();
         if (me.must_change_password) openUserModal('account', '请先修改初始密码，再开始使用。');
         else closeDrawers();
@@ -1879,7 +1892,7 @@ function wire() {
 
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key === '`') {
-      if (backendChannel === 'public') return; // dev instrument — not on the public channel
+      if (!devInstrumentsAllowed()) return; // role-gated dev instrument
       e.preventDefault();
       refreshDebug();
       openDrawer(debugDrawer);
@@ -1920,13 +1933,12 @@ function boot() {
   // Detect the backend, then (if it offers persistence) load server-side history
   // and re-render — the localStorage cache above kept first paint instant.
   initProviders().then(async () => {
-    // The spanner is a dev-channel instrument only: hide it on the public channel.
-    if (backendChannel === 'public') $('#btn-debug').hidden = true;
     if (authRequired && backendOnline) {
       me = await fetchMe();
       if (me?.profile) { profile = { ...profile, ...me.profile }; save(LS.profile, profile); }
       logEvent('session', 'auth_state', { signed_in: Boolean(me), user: me?.username ?? null });
     }
+    applyDevInstruments(); // spanner: dev channels always; public = admin-only
     if (!persistent) return;
     if (authRequired && !me) return;          // visitor: localStorage-only 演示模式
     await enablePersistence();
