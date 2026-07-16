@@ -1,5 +1,6 @@
 // motion.js — GSAP choreography per DESIGN.md §6: "settling paper, morning
-// light". Base ease power2.out, durations 280–420ms, stagger 60–80ms; nothing
+// light". Base ease power2.out, durations 600–900ms (unhurried — a colleague
+// laying things on the desk, not an app rushing), stagger 80–160ms; nothing
 // overshoots. prefers-reduced-motion collapses everything to simple fades.
 //
 // Degrades gracefully: all animations use gsap.from/fromTo, so elements sit in
@@ -19,18 +20,23 @@ function reducedMotion() {
 }
 
 /**
- * New message (agent or teacher): rise 12px + fade in.
+ * New message: slides in from its speaker's side — teacher from the right,
+ * agent from the left — plus a small rise. Direction makes the exchange read
+ * as two people passing notes across the desk (DESIGN.md §6 register 1).
  * @param {Element} node
  * @param {number} [delay] seconds
+ * @param {{from?: 'left'|'right'|'up'}} [opts] slide origin (default 'up')
  */
-export function messageIn(node, delay = 0) {
+export function messageIn(node, delay = 0, opts = {}) {
   const gsap = gsapOrNull();
   if (!gsap || !node) return;
   if (reducedMotion()) {
     gsap.from(node, { opacity: 0, duration: 0.28, delay });
     return;
   }
-  gsap.from(node, { opacity: 0, y: 12, duration: 0.36, ease: 'power2.out', delay });
+  const x = opts.from === 'left' ? -32 : opts.from === 'right' ? 32 : 0;
+  const y = opts.from === 'up' || !opts.from ? 18 : 8;
+  gsap.from(node, { opacity: 0, x, y, duration: 0.8, ease: 'power2.out', delay });
 }
 
 /**
@@ -49,10 +55,10 @@ export function cardIn(node, index = 0) {
   }
   gsap.from(node, {
     opacity: 0,
-    y: 16,
-    rotation: 0.5,
+    y: 26,
+    rotation: 0.8,
     transformOrigin: '50% 100%',
-    duration: 0.42,
+    duration: 0.9,
     ease: 'power2.out',
     delay,
   });
@@ -71,7 +77,24 @@ export function chipsIn(chips, delay = 0.15) {
     gsap.from(nodes, { opacity: 0, duration: 0.28, delay, stagger: 0.07 });
     return;
   }
-  gsap.from(nodes, { opacity: 0, y: 8, duration: 0.3, ease: 'power2.out', delay, stagger: 0.07 });
+  gsap.from(nodes, { opacity: 0, y: 14, duration: 0.6, ease: 'power2.out', delay, stagger: 0.1 });
+}
+
+/**
+ * Question cue-cards: dealt one after another with a slide from the right —
+ * a hand laying cards on the desk. No-op on empty lists / reduced motion fades.
+ * @param {Element[]|NodeList} cards
+ * @param {number} [delay] seconds before the first card
+ */
+export function cardsIn(cards, delay = 0.1) {
+  const gsap = gsapOrNull();
+  const nodes = Array.from(cards ?? []);
+  if (!gsap || !nodes.length) return;
+  if (reducedMotion()) {
+    gsap.from(nodes, { opacity: 0, duration: 0.28, delay, stagger: 0.08 });
+    return;
+  }
+  gsap.from(nodes, { opacity: 0, x: 44, duration: 0.85, ease: 'power2.out', delay, stagger: 0.16 });
 }
 
 /**
@@ -88,9 +111,9 @@ export function closureIn(card) {
     if (rows.length) gsap.from(rows, { opacity: 0, duration: 0.28, stagger: 0.09 });
     return;
   }
-  gsap.from(card, { opacity: 0, y: 16, duration: 0.38, ease: 'power2.out' });
+  gsap.from(card, { opacity: 0, y: 16, duration: 0.7, ease: 'power2.out' });
   if (rows.length) {
-    gsap.from(rows, { opacity: 0, y: 10, duration: 0.34, ease: 'power2.out', stagger: 0.09, delay: 0.1 });
+    gsap.from(rows, { opacity: 0, y: 10, duration: 0.6, ease: 'power2.out', stagger: 0.12, delay: 0.1 });
   }
   rows.forEach((row, i) => {
     const circle = row.querySelector('.gold-circle circle');
@@ -100,7 +123,7 @@ export function closureIn(card) {
     gsap.fromTo(
       circle,
       { strokeDasharray: length, strokeDashoffset: length },
-      { strokeDashoffset: 0, duration: 0.5, ease: 'power2.out', delay: 0.18 + i * 0.09 },
+      { strokeDashoffset: 0, duration: 0.8, ease: 'power2.out', delay: 0.25 + i * 0.09 },
     );
   });
 }

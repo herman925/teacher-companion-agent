@@ -1,4 +1,4 @@
-// main.js — app logic for the 陪跑智能体 demo chat (JSDoc-typed ESM, no build
+// main.js — app logic for the 小小探索家 demo chat (JSDoc-typed ESM, no build
 // step, ADR-0001). Talks to demo/serve.mjs over the /api/chat SSE protocol.
 // State custody: course_state + transcript + provider choice + API keys live
 // in localStorage; keys ('cst.keys') never leave the machine except in the
@@ -7,10 +7,11 @@
 import { createInitialState, STAGE_NAMES } from '../engine.mjs';
 import {
   renderTeacherMessage, renderAgentMessage, renderArtifactCard,
-  renderQuestionBlock, renderClosureCard, renderAwaitingNote,
+  renderQuestionBlock, renderQuestionCards, freezeQuestionCards,
+  renderClosureCard, renderAwaitingNote,
   renderErrorNotice, renderDebug, renderWfTrace, el,
 } from './render.js';
-import { messageIn, cardIn, chipsIn, closureIn, fadeIn } from './motion.js';
+import { messageIn, cardIn, cardsIn, chipsIn, closureIn, fadeIn } from './motion.js';
 import { runLocalMockTurn } from './local-turn.mjs';
 import { buildSystemPrompt, stageModuleName, profileSectionText, STYLE_DIRECTIVES } from '../prompt-builder.mjs';
 import { createLogStore, mountLogPanel, redactSecrets } from './session-log.mjs';
@@ -153,10 +154,18 @@ let backendOnline = false;
 let persistent = false;
 /** Whether the backend requires login for persistence (SECURITY.md §3). */
 let authRequired = false;
+/** Deploy channel from /api/health: 'public' hides dev instruments (spanner). */
+let backendChannel = 'dev';
 /** Logged-in user (GET /api/me shape) or null = visitor. */
 let me = null;
 /** Active server course id (persistence tier); null = not loaded / offline. */
 let activeCourseId = load(LS.courseId, null);
+/** Persistence usable RIGHT NOW: capability + reachability + (login when required).
+ * `persistent` alone is the server's capability flag — true even for a signed-out
+ * visitor, who must stay on the localStorage 演示模式 path (SECURITY.md §3). */
+function persistenceActive() {
+  return persistent && backendOnline && !(authRequired && !me);
+}
 /** Brief list of the demo user's server courses, for the history rail. */
 let coursesCache = [];
 /** History rail state. */
@@ -243,8 +252,7 @@ const skipLink = $('#skip');
 const statusLine = $('#status-line');
 const statusText = $('#status-text');
 const subtitleEl = $('#subtitle');
-const settingsDrawer = $('#settings-drawer');
-const userModal = $('#user-modal');
+const settingsDrawer = $('#settings-drawer'); // the 用户中心 modal (controls everything)
 const debugDrawer = $('#debug-drawer');
 const debugBody = $('#debug-body');
 const providerBox = $('#provider-box');
@@ -263,7 +271,16 @@ function updateSkipLink() {
 
 function setStatus(text) {
   if (text) {
-    statusText.textContent = text;
+    // Trailing ellipsis becomes the breathing three-dot indicator — the one
+    // permitted loop (DESIGN.md §6): it signals "working" and dies with the reply.
+    const trimmed = text.replace(/[…⋯]+\s*$/, '');
+    statusText.textContent = trimmed;
+    if (trimmed !== text) {
+      const dots = el('span', 'status-dots');
+      dots.setAttribute('aria-hidden', 'true');
+      for (let i = 0; i < 3; i += 1) dots.append(document.createElement('i'));
+      statusText.append(dots);
+    }
     statusLine.classList.add('on');
   } else {
     statusLine.classList.remove('on');
@@ -286,12 +303,11 @@ function autogrow() {
 }
 
 function openDrawer(drawer) {
-  for (const d of [settingsDrawer, userModal, debugDrawer]) d.classList.toggle('open', d === drawer && !d.classList.contains('open'));
+  for (const d of [settingsDrawer, debugDrawer]) d.classList.toggle('open', d === drawer && !d.classList.contains('open'));
 }
 
 function closeDrawers() {
   settingsDrawer.classList.remove('open');
-  userModal.classList.remove('open');
   debugDrawer.classList.remove('open');
 }
 
@@ -334,7 +350,8 @@ function renderTurnGroup(ev, opts = {}) {
   const group = el('div', 'turn-group');
 
   const msg = renderAgentMessage(turn.reply_markdown, {
-    interceptCount: gate?.violations?.length ?? 0,
+    // warn-level violations are recorded (debug drawer) but are not intercepts.
+    interceptCount: gate?.violations?.filter((v) => v.action !== 'warn').length ?? 0,
     degraded: Boolean(gate?.degraded),
     onBadgeClick: () => { refreshDebug(); openDrawer(debugDrawer); },
   });
@@ -354,8 +371,21 @@ function renderTurnGroup(ev, opts = {}) {
   }
 
   let questionEl = null;
-  if (turn.question) {
-    questionEl = renderQuestionBlock(turn.question);
+  const cardQuestions = Array.isArray(turn.questions) && turn.questions.length
+    ? turn.questions
+    : (turn.question ? [turn.question] : []);
+  if (cardQuestions.length >= 2) {
+    // Freeze any earlier still-active card set: only the newest turn collects answers.
+    for (const stale of messagesEl.querySelectorAll('.qcards:not(.submitted)')) freezeQuestionCards(stale);
+    questionEl = renderQuestionCards(cardQuestions, {
+      onSubmit: (packed, meta) => {
+        logEvent('user_input', 'question_cards_submit', meta);
+        send(packed);
+      },
+    });
+    group.append(questionEl);
+  } else if (cardQuestions.length === 1) {
+    questionEl = renderQuestionBlock(cardQuestions[0]);
     group.append(questionEl);
   }
 
@@ -374,10 +404,12 @@ function renderTurnGroup(ev, opts = {}) {
   messagesEl.append(group);
 
   if (animate) {
-    messageIn(msg);
+    messageIn(msg, 0, { from: 'left' }); // agent slides in from its side of the desk
     cards.forEach((card, i) => cardIn(card, i));
     if (questionEl) {
-      messageIn(questionEl, 0.12 + cards.length * 0.08);
+      // The question card deck is dealt from the agent's side of the desk.
+      messageIn(questionEl, 0.12 + cards.length * 0.08, { from: 'left' });
+      cardsIn(questionEl.querySelectorAll('.qcard'), 0.2 + cards.length * 0.08);
       chipsIn(questionEl.querySelectorAll('.chip'), 0.28 + cards.length * 0.08);
     }
     if (closureEl) closureIn(closureEl);
@@ -404,6 +436,15 @@ function replayTranscript() {
   const last = transcript[transcript.length - 1];
   lastEvent = last?.ev ?? null;
   lastTurnHadQuestion = Boolean(last?.ev?.turn?.question);
+  // Historical question cards are read-only: only card sets living in the very
+  // last turn-group may still collect answers, and only when the transcript
+  // actually ends on an agent turn (an existing teacher reply closes them all).
+  const groups = messagesEl.querySelectorAll('.turn-group');
+  const lastGroup = groups[groups.length - 1] ?? null;
+  const lastIsOpenAgentTurn = Boolean(last?.ev);
+  for (const set of messagesEl.querySelectorAll('.qcards')) {
+    if (!lastIsOpenAgentTurn || !lastGroup || !lastGroup.contains(set)) freezeQuestionCards(set);
+  }
 }
 
 // ------------------------------------------------------------- SSE client
@@ -497,7 +538,7 @@ async function send(message, opts = {}) {
     clearAwaitingNotes();
     const bubble = renderTeacherMessage(text);
     messagesEl.append(bubble);
-    messageIn(bubble);
+    messageIn(bubble, 0, { from: 'right' }); // teacher slides in from their side
     scrollToEnd();
   }
 
@@ -534,7 +575,7 @@ async function send(message, opts = {}) {
 
   const needsBackend = provider !== 'mock';
   const haveBackend = backendOnline || Boolean(apiBase);
-  const usePersistent = persistent && backendOnline && Boolean(activeCourseId);
+  const usePersistent = persistenceActive() && Boolean(activeCourseId);
 
   // POST one turn to a turn endpoint (persistent course chat or the stateless
   // /api/chat) and pump its SSE / buffered-JSON events through dispatch.
@@ -893,6 +934,59 @@ function customSection() {
   return details;
 }
 
+// ------------------------------------------------------------ 外观 (theme)
+// The head inline script resolved the theme pre-paint from the same key;
+// here we own switching. 'system' follows prefers-color-scheme live.
+
+const THEME_KEY = 'cst.theme';
+const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+function resolveTheme(choice) {
+  return choice === 'light' || choice === 'dark' ? choice : (systemDark.matches ? 'dark' : 'light');
+}
+
+/** Apply + crossfade (DESIGN.md §6 register 2); fade skipped under reduced motion. */
+function applyTheme(choice, { animate = true } = {}) {
+  const root = document.documentElement;
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (animate && !reduced) {
+    root.classList.add('theme-fade');
+    setTimeout(() => root.classList.remove('theme-fade'), 520);
+  }
+  root.dataset.theme = resolveTheme(choice);
+}
+
+systemDark.addEventListener('change', () => {
+  const choice = localStorage.getItem(THEME_KEY);
+  if (choice !== 'light' && choice !== 'dark') applyTheme('system');
+});
+
+/** 外观 select: 跟随系统 / 浅色 / 深色 (DESIGN.md §4 通用). */
+function themeField() {
+  const saved = localStorage.getItem(THEME_KEY);
+  const current = saved === 'light' || saved === 'dark' ? saved : 'system';
+  const field = el('div', 'settings-field');
+  const label = el('label', 'settings-label', '外观');
+  label.htmlFor = 'theme-select';
+  const select = document.createElement('select');
+  select.id = 'theme-select';
+  select.className = 'settings-select';
+  for (const [value, text] of [['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']]) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = text;
+    if (value === current) opt.selected = true;
+    select.append(opt);
+  }
+  select.addEventListener('change', () => {
+    localStorage.setItem(THEME_KEY, select.value);
+    applyTheme(select.value);
+    logEvent('session', 'theme_change', { choice: select.value });
+  });
+  field.append(label, select);
+  return field;
+}
+
 /** 开发者模式 toggle: persists + replays the transcript so annotations (dis)appear. */
 function devModeField() {
   const field = el('div', 'settings-field');
@@ -1082,6 +1176,7 @@ function buildGeneralPane() {
     syncOpenSection();
   });
 
+  pane.append(themeField());
   pane.append(devModeField());
   pane.append(el('p', 'settings-note', '「演示模式」不联网、不填密钥即可体验完整流程。密钥与接口配置在「模型服务」页。规划中：将来这里只保留「官方服务」（平台代管）与「自备密钥」两种方式。'));
 }
@@ -1119,11 +1214,9 @@ function buildProviderSections() {
   syncOpenSection();
   buildProviderAdvanced();
   buildGeneralPane();
-  if (me) {
-    $('#pane-profile').replaceChildren(el('p', 'settings-note', '已登录：教师档案在「用户中心」（右上角人形图标）里维护，会跟随你的账号。'));
-  } else {
-    buildProfilePane();
-  }
+  // 用户中心 is the ONE home for everything now — the profile pane is always
+  // real (signed-in it syncs to the account via saveProfile; local otherwise).
+  buildProfilePane();
 }
 
 function syncOpenSection() {
@@ -1143,6 +1236,7 @@ async function initProviders() {
       }
       persistent = Boolean(health.persistence);
       authRequired = Boolean(health.auth);
+      backendChannel = health.channel === 'public' ? 'public' : 'dev';
       backendOnline = true;
     }
   } catch { /* offline from the API is fine — 演示模式 still works client-side */ }
@@ -1480,34 +1574,31 @@ function paneMsg() {
 }
 
 /** Rebuild the 用户中心 modal for the current login state and open it. */
+/** Switch the 用户中心 modal to one pane (shared by nav clicks and deep links). */
+function activateUserPane(key) {
+  for (const b of document.querySelectorAll('#settings-nav button')) b.classList.toggle('on', b.dataset.pane === key);
+  for (const p of document.querySelectorAll('.modal-pane')) p.classList.toggle('on', p.dataset.pane === key);
+}
+
+/** 用户中心 controls everything: 账号/登录 + 教师档案 + 通用 + 模型服务 + 登录设备.
+ * The auth panes are rebuilt on every open (they depend on live auth state);
+ * the settings panes are static and owned by buildProviderSections(). */
 function openUserModal(startPane, notice) {
-  const nav = $('#user-nav');
-  const panes = $('#user-panes');
-  nav.replaceChildren();
-  panes.replaceChildren();
+  const accountPane = $('#pane-account');
+  const devicesPane = $('#pane-devices');
+  accountPane.replaceChildren();
+  devicesPane.replaceChildren();
 
-  const addPane = (key, navLabel) => {
-    const btn = el('button', '', navLabel);
-    btn.type = 'button';
-    btn.dataset.pane = key;
-    nav.append(btn);
-    const pane = el('section', 'modal-pane');
-    pane.dataset.pane = key;
-    panes.append(pane);
-    return pane;
-  };
-  const activate = (key) => {
-    for (const b of nav.querySelectorAll('button')) b.classList.toggle('on', b.dataset.pane === key);
-    for (const p of panes.querySelectorAll('.modal-pane')) p.classList.toggle('on', p.dataset.pane === key);
-  };
-  nav.addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-pane]');
-    if (b) activate(b.dataset.pane);
-  });
+  const authAvailable = backendOnline && authRequired;
+  $('#nav-account').hidden = !authAvailable;
+  $('#nav-account').textContent = me ? '账号' : '登录';
+  $('#nav-devices').hidden = !(authAvailable && me);
 
-  if (!me) {
+  if (!authAvailable) {
+    // offline / static hosting: no accounts — settings panes only
+  } else if (!me) {
     // ---- signed out: login pane ----
-    const pane = addPane('login', '登录');
+    const pane = accountPane;
     const msg = paneMsg();
     const { field: userField, input: userInput } = settingsField('用户名', 'login-username', { placeholder: '账号由管理员创建', value: '' });
     const { field: pwField, input: pwInput } = settingsField('密码', 'login-password', { type: 'password', value: '' });
@@ -1527,7 +1618,6 @@ function openUserModal(startPane, notice) {
         logEvent('session', 'login', { user: me.username });
         if (me.profile) { profile = { ...profile, ...me.profile }; save(LS.profile, profile); }
         buildProviderSections(); // settings 档案 tab flips to the pointer note
-        $('#btn-user').hidden = false;
         await enablePersistence();
         if (me.must_change_password) openUserModal('account', '请先修改初始密码，再开始使用。');
         else closeDrawers();
@@ -1537,13 +1627,10 @@ function openUserModal(startPane, notice) {
     pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
     pane.append(userField, pwField, btn, msg,
       el('p', 'settings-note', '没有账号？账号由管理员在数据管理台创建（首次登录后需要改密码）。不登录也可以用「演示模式」体验，对话只存在本机。'));
-    activate('login');
   } else {
     // ---- signed in: 账号 / 登录设备 ----
-    const account = addPane('account', '账号');
-    const profilePane = addPane('profile', '教师档案');
-    const devices = addPane('devices', '登录设备');
-    buildProfilePane(profilePane);
+    const account = accountPane;
+    const devices = devicesPane;
 
     const noticeEl = paneMsg();
     if (notice) noticeEl.textContent = notice;
@@ -1629,18 +1716,21 @@ function openUserModal(startPane, notice) {
       }
       if (!(data.sessions ?? []).length) list.append(el('p', 'settings-note', '没有其他设备。'));
     }).catch(() => list.append(el('p', 'settings-note', '设备列表加载失败。')));
-
-    activate(startPane === 'devices' ? 'devices' : 'account');
   }
 
-  openDrawer(userModal);
+  activateUserPane(startPane ?? (authAvailable ? 'account' : 'profile'));
+  // Always OPEN (openDrawer toggles — a re-entrant call, e.g. the must-change
+  // flow right after login, must never accidentally close the modal).
+  debugDrawer.classList.remove('open');
+  settingsDrawer.classList.add('open');
 }
 
 // ------------------------------------------------------------ new course
 
 async function resetCourse() {
-  // Persistence tier: a new course is a new server record, not a wipe — no confirm.
-  if (persistent && backendOnline) {
+  // Persistence tier (signed in): a new course is a new server record, not a wipe — no confirm.
+  // Visitors stay on the local-wipe path below; they must never hit the 401 courses API.
+  if (persistenceActive()) {
     try {
       const course = await serverCreateCourse();
       coursesCache = [course, ...coursesCache];
@@ -1684,6 +1774,7 @@ function wire() {
   messagesEl.addEventListener('click', (e) => {
     const chip = e.target.closest('.chip');
     if (!chip) return;
+    if (chip.classList.contains('qcard-chip')) return; // card chips fill their own card (render.js)
     inputEl.value = chip.textContent;
     autogrow();
     inputEl.focus();
@@ -1711,33 +1802,27 @@ function wire() {
   skipLink.addEventListener('click', () => send('先跳过'));
 
   $('#btn-new').addEventListener('click', resetCourse);
-  $('#btn-settings').addEventListener('click', () => {
-    const profBtn = document.querySelector('#settings-nav button[data-pane="profile"]');
-    if (profBtn) {
-      profBtn.hidden = Boolean(me);
-      if (me && profBtn.classList.contains('on')) {
-        document.querySelector('#settings-nav button[data-pane="general"]').click();
-      }
-    }
-    openDrawer(settingsDrawer);
+  // Header theme toggle: one click flips light↔dark as an explicit choice
+  // (跟随系统 remains available in 设置 · 通用). Icon swap is pure CSS.
+  $('#btn-theme').addEventListener('click', () => {
+    const next = resolveTheme(localStorage.getItem(THEME_KEY)) === 'dark' ? 'light' : 'dark';
+    localStorage.setItem(THEME_KEY, next);
+    applyTheme(next);
+    const sel = document.querySelector('#theme-select');
+    if (sel) sel.value = next;
+    logEvent('session', 'theme_change', { choice: next, via: 'header' });
   });
   $('#btn-debug').addEventListener('click', () => { refreshDebug(); openDrawer(debugDrawer); });
   $('#close-settings').addEventListener('click', closeDrawers);
   $('#close-debug').addEventListener('click', closeDrawers);
 
-  // settings modal: left-nav pane switching + scrim click closes
+  // 用户中心: left-nav pane switching + scrim click closes
   $('#settings-nav').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-pane]');
-    if (!btn) return;
-    for (const b of document.querySelectorAll('#settings-nav button')) b.classList.toggle('on', b === btn);
-    for (const p of document.querySelectorAll('.modal-pane')) p.classList.toggle('on', p.dataset.pane === btn.dataset.pane);
+    if (btn) activateUserPane(btn.dataset.pane);
   });
   document.querySelector('[data-close-settings]').addEventListener('click', closeDrawers);
-
-  // 用户中心
   $('#btn-user').addEventListener('click', () => openUserModal());
-  $('#close-user').addEventListener('click', closeDrawers);
-  document.querySelector('[data-close-user]').addEventListener('click', closeDrawers);
 
   // history rail: 历史 is a true toggle — pinned means "keep open", so
   // toggling while pinned unpins and closes rather than doing nothing.
@@ -1794,6 +1879,7 @@ function wire() {
 
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key === '`') {
+      if (backendChannel === 'public') return; // dev instrument — not on the public channel
       e.preventDefault();
       refreshDebug();
       openDrawer(debugDrawer);
@@ -1834,8 +1920,9 @@ function boot() {
   // Detect the backend, then (if it offers persistence) load server-side history
   // and re-render — the localStorage cache above kept first paint instant.
   initProviders().then(async () => {
+    // The spanner is a dev-channel instrument only: hide it on the public channel.
+    if (backendChannel === 'public') $('#btn-debug').hidden = true;
     if (authRequired && backendOnline) {
-      $('#btn-user').hidden = false;          // people icon: login or account
       me = await fetchMe();
       if (me?.profile) { profile = { ...profile, ...me.profile }; save(LS.profile, profile); }
       logEvent('session', 'auth_state', { signed_in: Boolean(me), user: me?.username ?? null });

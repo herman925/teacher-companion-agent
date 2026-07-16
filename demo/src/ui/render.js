@@ -299,6 +299,176 @@ export function renderQuestionBlock(q) {
   return root;
 }
 
+// ------------------------------------------------------ question cards (问题卡)
+
+/**
+ * Multi-question cue-card carousel (DESIGN.md §4 问题卡). Rendered when a turn
+ * carries 2+ questions: horizontal scroll-snap track of cards (swipe / ‹ › / dots),
+ * a 查看全部 stacked-list toggle for the review-everything pass, and one submit
+ * bar that packages every answer into a SINGLE teacher message via onSubmit —
+ * skipped cards are reported as 跳过 (a skip is information too).
+ * Chips fill their own card's answer field (insert, never auto-send).
+ * @param {Array<import('../types.mjs').TurnQuestion>} questions
+ * @param {{ onSubmit?: (packed: string, meta: {total: number, answered: number, skipped: number}) => void }} opts
+ */
+export function renderQuestionCards(questions, opts = {}) {
+  const root = el('div', 'qcards');
+  const track = el('div', 'qcards-track');
+  root.append(track);
+
+  const answers = questions.map(() => ({ value: '', skipped: false }));
+
+  const counter = el('span', 'qcards-count');
+  const submitBtn = el('button', 'qcards-submit-btn', '一起发送');
+  submitBtn.type = 'button';
+
+  const refresh = () => {
+    const answered = answers.filter((a) => a.value.trim()).length;
+    counter.textContent = `已答 ${answered} / 共 ${questions.length}`;
+    submitBtn.disabled = answered === 0 || root.classList.contains('submitted');
+  };
+
+  questions.forEach((q, i) => {
+    const card = el('article', 'qcard');
+    const head = el('div', 'qcard-head');
+    head.append(el('span', 'question-marker', '问'));
+    head.append(el('span', 'qcard-index', `${i + 1} / ${questions.length}`));
+    card.append(head);
+    const text = el('div', 'qcard-text');
+    text.innerHTML = sanitizeInline(q.text);
+    card.append(text);
+    if (q.why) card.append(el('div', 'question-why', '—— ' + q.why));
+
+    const chipRow = el('div', 'chip-row');
+    for (const example of q.examples ?? []) {
+      const chip = el('button', 'chip qcard-chip', example);
+      chip.type = 'button';
+      chip.addEventListener('click', () => {
+        input.value = example;
+        answers[i] = { value: example, skipped: false };
+        card.classList.remove('skipped');
+        refresh();
+        input.focus();
+      });
+      chipRow.append(chip);
+    }
+    card.append(chipRow);
+
+    const input = el('textarea', 'qcard-input');
+    input.rows = 2;
+    input.placeholder = '写你的回答，或点上面的示例改一改';
+    input.addEventListener('input', () => {
+      answers[i] = { value: input.value, skipped: false };
+      card.classList.remove('skipped');
+      refresh();
+    });
+    card.append(input);
+
+    const skip = el('button', 'qcard-skip', '这题先跳过');
+    skip.type = 'button';
+    skip.addEventListener('click', () => {
+      const on = !answers[i].skipped;
+      answers[i] = { value: on ? '' : input.value, skipped: on };
+      if (on) input.value = '';
+      card.classList.toggle('skipped', on);
+      refresh();
+    });
+    card.append(skip);
+
+    track.append(card);
+  });
+
+  // nav: ‹ dots › + 查看全部
+  const nav = el('div', 'qcards-nav');
+  const prev = el('button', 'qcards-arrow', '‹');
+  prev.type = 'button';
+  prev.setAttribute('aria-label', '上一张');
+  const next = el('button', 'qcards-arrow', '›');
+  next.type = 'button';
+  next.setAttribute('aria-label', '下一张');
+  const dots = el('div', 'qcards-dots');
+  questions.forEach((_, i) => {
+    const dot = el('button', 'qcards-dot');
+    dot.type = 'button';
+    dot.setAttribute('aria-label', `第 ${i + 1} 张`);
+    dot.addEventListener('click', () => scrollToCard(i));
+    dots.append(dot);
+  });
+  const listToggle = el('button', 'qcards-list-toggle', '查看全部');
+  listToggle.type = 'button';
+  nav.append(prev, dots, next, listToggle);
+  root.append(nav);
+
+  const cardAt = (i) => track.children[i];
+  const cardLeft = (card) => card.offsetLeft - track.offsetLeft;
+  const scrollToCard = (i) => {
+    const card = cardAt(Math.max(0, Math.min(questions.length - 1, i)));
+    if (card) track.scrollTo({ left: cardLeft(card), behavior: 'smooth' });
+  };
+  // Nearest card by actual offset — exact regardless of gap/width rounding.
+  const focusedIndex = () => {
+    let best = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < track.children.length; i += 1) {
+      const dist = Math.abs(cardLeft(track.children[i]) - track.scrollLeft);
+      if (dist < bestDist) { best = i; bestDist = dist; }
+    }
+    return best;
+  };
+  prev.addEventListener('click', () => scrollToCard(focusedIndex() - 1));
+  next.addEventListener('click', () => scrollToCard(focusedIndex() + 1));
+  const markDot = () => {
+    const idx = focusedIndex();
+    [...dots.children].forEach((d, i) => d.classList.toggle('on', i === idx));
+  };
+  track.addEventListener('scroll', () => requestAnimationFrame(markDot), { passive: true });
+  markDot();
+
+  listToggle.addEventListener('click', () => {
+    const listed = root.classList.toggle('as-list');
+    listToggle.textContent = listed ? '收起为卡片' : '查看全部';
+    nav.classList.toggle('list-mode', listed);
+  });
+
+  // submit bar
+  const bar = el('div', 'qcards-bar');
+  bar.append(counter, submitBtn);
+  root.append(bar);
+  submitBtn.addEventListener('click', () => {
+    if (submitBtn.disabled) return;
+    const lines = questions.map((q, i) => {
+      const a = answers[i];
+      const answer = a.value.trim() ? a.value.trim() : '（跳过）';
+      return `${i + 1}. 「${q.text}」：${answer}`;
+    });
+    const answered = answers.filter((a) => a.value.trim()).length;
+    root.classList.add('submitted');
+    freezeAnswerControls(root);
+    opts.onSubmit?.(`【问题卡回复】\n${lines.join('\n')}`, {
+      total: questions.length,
+      answered,
+      skipped: questions.length - answered,
+    });
+  });
+
+  refresh();
+  return root;
+}
+
+/** Disable answering (chips, inputs, skip, submit) but keep review navigation
+ * (arrows / dots / 查看全部) alive — a submitted set can still be re-read. */
+function freezeAnswerControls(rootEl) {
+  for (const control of rootEl.querySelectorAll('.qcard button, .qcard textarea, .qcards-submit-btn')) {
+    control.disabled = true;
+  }
+}
+
+/** Freeze a rendered qcards block (historical turns replay read-only). */
+export function freezeQuestionCards(rootEl) {
+  rootEl.classList.add('submitted');
+  freezeAnswerControls(rootEl);
+}
+
 // -------------------------------------------------------- closure-loop card
 
 const CLOSURE_ROWS = [

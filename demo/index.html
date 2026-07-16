@@ -3,16 +3,88 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>陪跑智能体 · 教师资源发展平台</title>
-  <meta name="description" content="陪跑智能体演示：陪伴幼儿园教师把本土文化资源长成主题探究课程。">
+  <title>小小探索家 · 学前教育主题探究课程助手</title>
+  <meta name="description" content="小小探索家：陪伴幼儿园教师把本土文化资源长成主题探究课程的陪跑智能体。">
+  <!-- Theme resolves BEFORE first paint: saved choice wins, else system (DESIGN.md §1). -->
+  <script>
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem('cst.theme'); } catch (e) { /* storage blocked */ }
+      var theme = (saved === 'light' || saved === 'dark') ? saved
+        : (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
+  <!-- Favicon: the 放大镜+小脚印 logo as inline SVG data URI (DESIGN.md §2b). -->
+  <link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="14" cy="13" r="9" fill="none" stroke="%232F5D50" stroke-width="2.6"/><line x1="20.5" y1="19.5" x2="27" y2="26" stroke="%232F5D50" stroke-width="3" stroke-linecap="round"/><ellipse cx="13.6" cy="14.6" rx="2.6" ry="3.4" fill="%23C96A3B"/><circle cx="10.9" cy="10.4" r="1.05" fill="%23C96A3B"/><circle cx="13.3" cy="9.4" r="1.05" fill="%23C96A3B"/><circle cx="15.7" cy="9.7" r="1.05" fill="%23C96A3B"/><circle cx="17.6" cy="11.3" r="0.95" fill="%23C96A3B"/></svg>'>
   <!-- Noto Serif SC via Google Fonts; the CSS font stack falls back to local
        serif fonts (Source Han Serif / Songti / SimSun) when offline. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=ZCOOL+KuaiLe&display=swap">
   <link rel="stylesheet" href="src/ui/styles.css">
 </head>
 <body>
+
+  <!-- 探索天空 (DESIGN.md §2c): a fixed, pointer-transparent layer of faint brand
+       motifs drifting VERY slowly behind the paper — a child was here, quietly.
+       Opacity whispers (≤7%); prefers-reduced-motion freezes them in place. -->
+  <div class="sky" aria-hidden="true">
+    <svg class="sky-item sky-boat" viewBox="0 0 48 32" fill="none">
+      <path d="M6 20h36l-6 8H12l-6-8Z" fill="var(--persimmon)"/>
+      <path d="M24 4v14M24 4c6 2 10 6 10 12H24" fill="var(--green)" stroke="var(--green)" stroke-width="1.5"/>
+    </svg>
+    <svg class="sky-item sky-pinwheel" viewBox="0 0 40 40" fill="none">
+      <g class="pinwheel-head">
+        <path d="M20 20 20 6a7 7 0 0 1 7 7Z" fill="var(--persimmon)"/>
+        <path d="M20 20h14a7 7 0 0 1-7 7Z" fill="var(--gold)"/>
+        <path d="M20 20v14a7 7 0 0 1-7-7Z" fill="var(--green)"/>
+        <path d="M20 20H6a7 7 0 0 1 7-7Z" fill="var(--brick)"/>
+      </g>
+      <line x1="20" y1="20" x2="20" y2="38" stroke="var(--ink-faded)" stroke-width="1.6"/>
+    </svg>
+    <svg class="sky-item sky-foot-a" viewBox="0 0 24 28" fill="var(--green)">
+      <ellipse cx="11" cy="18" rx="6" ry="8"/>
+      <circle cx="5" cy="8" r="2.2"/><circle cx="10.5" cy="6" r="2.2"/><circle cx="16" cy="7" r="2.2"/><circle cx="19.5" cy="10.5" r="2"/>
+    </svg>
+    <svg class="sky-item sky-foot-b" viewBox="0 0 24 28" fill="var(--persimmon)">
+      <ellipse cx="13" cy="18" rx="6" ry="8"/>
+      <circle cx="19" cy="8" r="2.2"/><circle cx="13.5" cy="6" r="2.2"/><circle cx="8" cy="7" r="2.2"/><circle cx="4.5" cy="10.5" r="2"/>
+    </svg>
+    <svg class="sky-item sky-glass" viewBox="0 0 32 32" fill="none">
+      <circle cx="14" cy="13" r="9" stroke="var(--green)" stroke-width="2.5"/>
+      <line x1="20.5" y1="19.5" x2="27" y2="26" stroke="var(--green)" stroke-width="3" stroke-linecap="round"/>
+    </svg>
+    <svg class="sky-item sky-star" viewBox="0 0 24 24" fill="var(--gold)">
+      <path d="M12 2l2.4 6.9L21 11l-6.6 2.1L12 20l-2.4-6.9L3 11l6.6-2.1Z"/>
+    </svg>
+    <svg class="sky-item sky-kite" viewBox="0 0 40 56" fill="none">
+      <path d="M20 2 34 18 20 34 6 18Z" fill="var(--persimmon)"/>
+      <path d="M20 2v32M6 18h28" stroke="var(--paper)" stroke-width="1.4"/>
+      <path class="kite-tail" d="M20 34c-3 5 3 8 0 13s3 8 0 12" stroke="var(--green)" stroke-width="1.6" stroke-linecap="round"/>
+      <circle cx="17" cy="42" r="1.6" fill="var(--gold)"/><circle cx="23" cy="52" r="1.6" fill="var(--gold)"/>
+    </svg>
+    <svg class="sky-item sky-cloud" viewBox="0 0 64 32" fill="var(--ink-faded)">
+      <path d="M18 26a8 8 0 1 1 2.4-15.6 10 10 0 0 1 19.4 2A7 7 0 0 1 46 26Z"/>
+    </svg>
+    <svg class="sky-item sky-plane" viewBox="0 0 48 32" fill="none" stroke="var(--green)" stroke-width="1.8" stroke-linejoin="round">
+      <path d="M4 26 44 6 28 28l-6-8Z" fill="var(--green-wash)"/>
+      <path d="M44 6 22 18l0 0"/>
+    </svg>
+    <svg class="sky-item sky-balloon" viewBox="0 0 32 52" fill="none">
+      <ellipse cx="16" cy="14" rx="11" ry="13" fill="var(--brick)"/>
+      <path d="M16 27c-1 3 2 3 1 6s2 4 1 7-2 4-1 8" stroke="var(--ink-faded)" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>
+    <svg class="sky-item sky-blocks" viewBox="0 0 48 34" fill="none">
+      <rect x="4" y="18" width="14" height="14" rx="2" fill="var(--green)"/>
+      <rect x="20" y="18" width="14" height="14" rx="2" fill="var(--gold)"/>
+      <rect x="12" y="3" width="14" height="14" rx="2" fill="var(--persimmon)" transform="rotate(6 19 10)"/>
+    </svg>
+    <svg class="sky-item sky-leaf" viewBox="0 0 28 28" fill="var(--green)">
+      <path d="M14 2C7 8 4 15 6 23c8 2 15-1 20-8-3-7-7-11-12-13Z" opacity="0.9"/>
+      <path d="M8 21C11 15 15 10 21 7" stroke="var(--paper)" stroke-width="1.3" fill="none"/>
+    </svg>
+  </div>
 
   <!-- History rail (persistence tier only; toggled by JS via body.has-history).
        Hover the hot-zone to peek; pin to keep it open (DESIGN.md §4/§5). -->
@@ -39,31 +111,62 @@
     </div>
   </aside>
 
+  <!-- Header (DESIGN.md §2b/§4): taller bar; hamburger far left (ChatGPT-style),
+       big logo + two-line name lockup, course subtitle; center cluster =
+       新课程 / 用户中心 / theme; spanner far right (dev channels only). -->
   <header class="app-header">
     <div class="app-header-inner">
-      <h1 class="app-title">陪跑智能体</h1>
-      <div class="app-subtitle" id="subtitle">新课程</div>
-      <div class="header-actions">
-        <button type="button" class="icon-btn history-toggle" id="btn-history" hidden title="历史课程" aria-label="历史课程">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <line x1="4" y1="7" x2="20" y2="7"></line>
-            <line x1="4" y1="12" x2="20" y2="12"></line>
-            <line x1="4" y1="17" x2="14" y2="17"></line>
+      <button type="button" class="icon-btn history-toggle" id="btn-history" hidden title="历史课程" aria-label="历史课程">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="4" y1="7" x2="20" y2="7"></line>
+          <line x1="4" y1="12" x2="20" y2="12"></line>
+          <line x1="4" y1="17" x2="14" y2="17"></line>
+        </svg>
+      </button>
+      <div class="app-title-lockup">
+        <span class="app-logo" aria-hidden="true">
+          <!-- 放大镜里的小脚印 (DESIGN.md §2b): lens+handle in --green, footprint in --persimmon -->
+          <svg viewBox="0 0 32 32" fill="none">
+            <circle cx="14" cy="13" r="9" stroke="var(--green)" stroke-width="2.5"/>
+            <path d="M6.8 9.4a9 9 0 0 1 3.4-3.6" stroke="var(--gold)" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>
+            <line x1="20.5" y1="19.5" x2="27" y2="26" stroke="var(--green)" stroke-width="3" stroke-linecap="round"/>
+            <g class="logo-foot" fill="var(--persimmon)">
+              <ellipse cx="13.6" cy="14.6" rx="2.6" ry="3.4"/>
+              <circle cx="10.9" cy="10.4" r="1.05"/>
+              <circle cx="13.3" cy="9.4" r="1.05"/>
+              <circle cx="15.7" cy="9.7" r="1.05"/>
+              <circle cx="17.6" cy="11.3" r="0.95"/>
+            </g>
           </svg>
-        </button>
+        </span>
+        <div class="app-names">
+          <h1 class="app-title">小小探索家</h1>
+          <div class="app-platform-sub">学前教育主题探究课程助手</div>
+        </div>
+      </div>
+      <div class="app-subtitle" id="subtitle">新课程</div>
+      <div class="header-center">
         <button type="button" class="text-btn" id="btn-new">新课程</button>
-        <button type="button" class="icon-btn" id="btn-user" hidden title="用户中心" aria-label="用户中心">
+        <button type="button" class="icon-btn" id="btn-user" title="用户中心" aria-label="用户中心">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="8" r="4"></circle>
             <path d="M4 20c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5"></path>
           </svg>
         </button>
-        <button type="button" class="icon-btn" id="btn-settings" title="设置（模型与密钥）" aria-label="设置">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.08A1.7 1.7 0 0 0 10.1 3.6V3.5a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56h.08a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.08a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1.28Z"></path>
+        <button type="button" class="icon-btn" id="btn-theme" title="切换浅色/深色" aria-label="切换浅色/深色">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4.2"></circle>
+            <line x1="12" y1="2.5" x2="12" y2="5"></line><line x1="12" y1="19" x2="12" y2="21.5"></line>
+            <line x1="2.5" y1="12" x2="5" y2="12"></line><line x1="19" y1="12" x2="21.5" y2="12"></line>
+            <line x1="5.3" y1="5.3" x2="7" y2="7"></line><line x1="17" y1="17" x2="18.7" y2="18.7"></line>
+            <line x1="5.3" y1="18.7" x2="7" y2="17"></line><line x1="17" y1="7" x2="18.7" y2="5.3"></line>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"></path>
           </svg>
         </button>
+      </div>
+      <div class="header-right">
         <button type="button" class="icon-btn" id="btn-debug" title="调试抽屉（Ctrl+`）" aria-label="调试">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M14.7 6.3a4.5 4.5 0 0 0-6 5.6L3 17.6a2.1 2.1 0 0 0 3 3l5.7-5.7a4.5 4.5 0 0 0 5.6-6L14 12l-2-2Z"></path>
@@ -95,52 +198,39 @@
     </div>
   </div>
 
-  <!-- Settings: centered modal (DESIGN.md §4), left nav + one pane at a time. -->
-  <div class="modal" id="settings-drawer" role="dialog" aria-modal="true" aria-label="设置">
+  <!-- 用户中心: ONE centered modal controls everything (DESIGN.md §4) —
+       账号/登录 + 教师档案 + 通用 + 模型服务 + 登录设备. Auth panes (账号/登录/设备)
+       are (re)built by JS on open; the rest are static and built once. -->
+  <div class="modal" id="settings-drawer" role="dialog" aria-modal="true" aria-label="用户中心">
     <div class="modal-backdrop" data-close-settings></div>
     <div class="modal-card">
       <div class="modal-head">
-        <h2 class="drawer-title">设置</h2>
-        <button type="button" class="icon-btn" id="close-settings" aria-label="关闭设置">
+        <h2 class="drawer-title">用户中心</h2>
+        <button type="button" class="icon-btn" id="close-settings" aria-label="关闭用户中心">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
             <path d="M6 6l12 12M18 6L6 18"></path>
           </svg>
         </button>
       </div>
       <div class="modal-body">
-        <nav class="modal-nav" id="settings-nav" aria-label="设置分区">
-          <button type="button" class="on" data-pane="general">通用</button>
+        <nav class="modal-nav" id="settings-nav" aria-label="用户中心分区">
+          <button type="button" id="nav-account" data-pane="account" hidden>账号</button>
+          <button type="button" class="on" data-pane="profile">教师档案</button>
+          <button type="button" data-pane="general">通用</button>
           <button type="button" data-pane="providers">模型服务</button>
-          <button type="button" data-pane="profile">教师档案</button>
+          <button type="button" id="nav-devices" data-pane="devices" hidden>登录设备</button>
         </nav>
         <div class="modal-panes">
-          <section class="modal-pane on" id="pane-general" data-pane="general"></section>
+          <section class="modal-pane" id="pane-account" data-pane="account"></section>
+          <section class="modal-pane on" id="pane-profile" data-pane="profile"></section>
+          <section class="modal-pane" id="pane-general" data-pane="general"></section>
           <section class="modal-pane" id="pane-providers" data-pane="providers">
             <div id="provider-box"></div>
             <p class="settings-note">密钥和模型 id 只保存在这台设备的浏览器里，随请求直接发给所选服务，不经过第三方。规划中：未来这里会简化为「官方服务」（平台代管密钥与用量）与「自备密钥」两种方式。</p>
             <div id="provider-advanced"></div>
           </section>
-          <section class="modal-pane" id="pane-profile" data-pane="profile"></section>
+          <section class="modal-pane" id="pane-devices" data-pane="devices"></section>
         </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 用户中心 (SECURITY.md §2–§4): login when signed out; 账号/教师档案说明/登录设备 when signed in. -->
-  <div class="modal" id="user-modal" role="dialog" aria-modal="true" aria-label="用户中心">
-    <div class="modal-backdrop" data-close-user></div>
-    <div class="modal-card">
-      <div class="modal-head">
-        <h2 class="drawer-title" id="user-modal-title">用户中心</h2>
-        <button type="button" class="icon-btn" id="close-user" aria-label="关闭用户中心">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-            <path d="M6 6l12 12M18 6L6 18"></path>
-          </svg>
-        </button>
-      </div>
-      <div class="modal-body">
-        <nav class="modal-nav" id="user-nav" aria-label="用户中心分区"></nav>
-        <div class="modal-panes" id="user-panes"></div>
       </div>
     </div>
   </div>

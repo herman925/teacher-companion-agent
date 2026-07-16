@@ -38,7 +38,9 @@ if (!fs.existsSync(basePath)) {
 } else {
   const base = read(basePath);
   must('base.zh.md', base, ['状态机优先', '证据优先', '资源意图', '文化可能性后台提示', '输出闭环'], '系统原则');
-  must('base.zh.md', base, ['先读后问', '一次一问', '必附示例', '静默跳关', '待现场确认'], '动态识别契约');
+  // 「一次一问」became 「问题走问题卡」 (questions[] cue cards, batch-answered —
+  // DESIGN.md §4 问题卡); the anti-interrogation intent lives on in that rule.
+  must('base.zh.md', base, ['先读后问', '问题走问题卡', '必附示例', '静默跳关', '待现场确认'], '动态识别契约');
   must('base.zh.md', base, ['禁止编造儿童反馈', '禁止把文化线索变成儿童口号', '禁止所有主题都项目化', '禁止只给方案不给回传要求'], '禁止规则');
   must('base.zh.md', base, ['本轮可以去做什么', '回来请告诉我什么'], '闭环要素');
 }

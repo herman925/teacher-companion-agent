@@ -1,7 +1,7 @@
 {
   "version": "0.1.0",
-  "project": "教师资源发展平台 / China Teacher Resources Development Platform",
-  "updated": "2026-07-05",
+  "project": "小小探索家：学前教育主题探究课程助手 / Little Explorers — Preschool Theme-Inquiry Course Assistant",
+  "updated": "2026-07-16",
   "note": "Canonical bilingual glossary. Single source of truth for terminology. The glossary checker (harness/glossary-check.mjs) reads this file. Terms originate from the V1.3 workflow spec (source-docs/workflow-v1.3.zh-CN.md); when a term is resolved or changed, edit it HERE and nowhere else.",
   "rules": {
     "casing_en": "Use the canonical English exactly as written (sentence case unless a proper noun).",
@@ -13,11 +13,11 @@
   "terms": [
     {
       "id": "platform",
-      "zh": "教师资源发展平台",
-      "en": "Teacher Resources Development Platform",
+      "zh": "小小探索家",
+      "en": "Little Explorers",
       "category": "core",
-      "definition_zh": "面向幼儿园教师的网页版AI陪跑对话平台，支持围绕本土文化资源的主题探究课程建设。",
-      "definition_en": "The web-based AI companion chat platform for kindergarten teachers, supporting theme-inquiry curriculum built around local cultural resources.",
+      "definition_zh": "平台品牌名，全称「小小探索家：学前教育主题探究课程助手」：面向幼儿园教师的网页版AI陪跑对话平台，支持围绕本土文化资源的主题探究课程建设。原工作名「教师资源发展平台」（2026-07-16 更名）。",
+      "definition_en": "The platform brand, in full \"Little Explorers — Preschool Theme-Inquiry Course Assistant\": the web-based AI companion chat platform for kindergarten teachers, supporting theme-inquiry curriculum built around local cultural resources. Formerly the working title \"Teacher Resources Development Platform\" (renamed 2026-07-16).",
       "variants_forbidden": ["教师平台系统", "AI教学系统"]
     },
     {

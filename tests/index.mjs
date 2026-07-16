@@ -16,3 +16,4 @@ import '../demo/tests/auth-store.test.mjs';
 import '../demo/tests/prompt-builder.test.mjs';
 import '../demo/tests/awaiting-escalation.test.mjs';
 import '../demo/tests/flow-crawler.test.mjs';
+import '../demo/tests/question-cards.test.mjs';

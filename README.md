@@ -1,6 +1,6 @@
-# China Teacher Resources Development Platform
+# 小小探索家 Little Explorers — Preschool Theme-Inquiry Course Assistant
 
-中文版本：[README.zh-CN.md](README.zh-CN.md)
+中文版本：[README.zh-CN.md](README.zh-CN.md) · Formerly "China Teacher Resources Development Platform" (renamed 2026-07-16)
 
 A web-based AI companion (陪跑智能体) that accompanies kindergarten teachers through local-culture theme-inquiry courses — from resource intent, through evidence-driven action cycles, to the final course story (课程故事). Built on the V1.3 integrated workflow spec (番禺幼教AI主题探究陪跑智能体集成工作流).
 

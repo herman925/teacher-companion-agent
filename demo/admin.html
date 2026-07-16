@@ -3,22 +3,43 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>数据管理台 · 陪跑智能体</title>
+  <title>数据管理台 · 小小探索家</title>
+  <script>
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem('cst.theme'); } catch (e) { /* storage blocked */ }
+      var theme = (saved === 'light' || saved === 'dark') ? saved
+        : (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="14" cy="13" r="9" fill="none" stroke="%232F5D50" stroke-width="2.6"/><line x1="20.5" y1="19.5" x2="27" y2="26" stroke="%232F5D50" stroke-width="3" stroke-linecap="round"/><ellipse cx="13.6" cy="14.6" rx="2.6" ry="3.4" fill="%23C96A3B"/><circle cx="10.9" cy="10.4" r="1.05" fill="%23C96A3B"/><circle cx="13.3" cy="9.4" r="1.05" fill="%23C96A3B"/><circle cx="15.7" cy="9.7" r="1.05" fill="%23C96A3B"/><circle cx="17.6" cy="11.3" r="0.95" fill="%23C96A3B"/></svg>'>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&display=swap">
   <style>
     /* Same design language as the teacher UI (demo/DESIGN.md): paper, ink, banyan
-       green, cream cards, brick for destructive. Mono only for the JSON record. */
+       green, cream cards, brick for destructive. Mono only for the JSON record.
+       Both themes (DESIGN.md §2) — dark is warm cocoa, resolved pre-paint above. */
     :root {
+      color-scheme: light;
       --paper: #FAF6EF; --ink: #2D2A26; --ink-faded: #6B645B;
       --green: #2F5D50; --green-wash: #E8EFEB;
       --cream: #F3EAD8; --brick: #A8503C; --border-warm: #E5DED2;
+      --surface: #FFFFFF;
       --shadow-card: 0 2px 12px rgba(45, 42, 38, 0.08);
       --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif;
       --font-sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
       --font-mono: "JetBrains Mono", Consolas, monospace;
       --sp: 8px;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --paper: #211D18; --ink: #EDE6DA; --ink-faded: #A79D8F;
+      --green: #6FAE9C; --green-wash: #2A3833;
+      --cream: #322C24; --brick: #C97C66; --border-warm: #3D362C;
+      --surface: #2A251F; --on-accent: #1E2B27;
+      --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.35);
     }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; } /* explicit display rules must not beat the hidden attribute */
@@ -30,7 +51,7 @@
       padding: calc(var(--sp) * 2) calc(var(--sp) * 3);
       border-bottom: 1px solid var(--border-warm);
       display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
-      background: rgba(250, 246, 239, 0.94);
+      background: color-mix(in srgb, var(--paper) 94%, transparent);
     }
     header h1 { font-family: var(--font-serif); font-weight: 700; font-size: 19px; margin: 0; letter-spacing: 0.02em; }
     header .note { color: var(--ink-faded); font-size: 13px; }
@@ -50,7 +71,7 @@
     details.guide[open] summary::before { content: "▾ "; }
     details.guide ol { margin: 8px 0 4px; padding-left: 1.4em; }
     details.guide li { margin-bottom: 6px; }
-    details.guide code { font-family: var(--font-mono); font-size: 12px; background: #fff; border: 1px solid var(--border-warm); border-radius: 4px; padding: 1px 5px; }
+    details.guide code { font-family: var(--font-mono); font-size: 12px; background: var(--surface); border: 1px solid var(--border-warm); border-radius: 4px; padding: 1px 5px; }
     .guide-warn { color: var(--brick); font-weight: 500; }
 
     .bar {
@@ -59,22 +80,22 @@
     }
     input[type=password], input[type=text] {
       font-family: var(--font-sans); font-size: 14px; color: var(--ink);
-      background: #fff; border: 1px solid var(--border-warm); border-radius: 8px;
+      background: var(--surface); border: 1px solid var(--border-warm); border-radius: 8px;
       padding: 8px 12px; min-height: 40px; min-width: 210px;
     }
     input:focus { outline: none; border-color: var(--green); }
     button {
       font-family: var(--font-sans); font-size: 14px; color: var(--ink);
-      background: #fff; border: 1px solid var(--border-warm); border-radius: 999px;
+      background: var(--surface); border: 1px solid var(--border-warm); border-radius: 999px;
       padding: 8px 16px; min-height: 40px; cursor: pointer;
     }
     button:hover { border-color: var(--green); color: var(--green); }
-    button.primary { background: var(--green); border-color: var(--green); color: #fff; }
-    button.primary:hover { color: #fff; opacity: 0.92; }
+    button.primary { background: var(--green); border-color: var(--green); color: var(--on-accent, #fff); }
+    button.primary:hover { color: var(--on-accent, #fff); opacity: 0.92; }
     button.danger { color: var(--brick); }
     button.danger:hover { border-color: var(--brick); color: var(--brick); }
-    button.confirming { background: var(--brick); border-color: var(--brick); color: #fff; }
-    button.confirming:hover { color: #fff; }
+    button.confirming { background: var(--brick); border-color: var(--brick); color: var(--on-accent, #fff); }
+    button.confirming:hover { color: var(--on-accent, #fff); }
     button:disabled { opacity: 0.45; cursor: not-allowed; }
     button.tab { border-radius: 8px; }
     button.tab.on { background: var(--green-wash); border-color: var(--green); color: var(--green); font-weight: 500; }
@@ -84,14 +105,14 @@
     .colpick { position: relative; }
     .colpick summary {
       list-style: none; cursor: pointer; font-size: 14px; color: var(--ink);
-      background: #fff; border: 1px solid var(--border-warm); border-radius: 999px;
+      background: var(--surface); border: 1px solid var(--border-warm); border-radius: 999px;
       padding: 8px 16px; min-height: 40px; display: inline-flex; align-items: center;
     }
     .colpick summary::-webkit-details-marker { display: none; }
     .colpick summary:hover { border-color: var(--green); color: var(--green); }
     .colpick-menu {
       position: absolute; right: 0; top: calc(100% + 6px); z-index: 6;
-      background: #fff; border: 1px solid var(--border-warm); border-radius: 10px;
+      background: var(--surface); border: 1px solid var(--border-warm); border-radius: 10px;
       box-shadow: var(--shadow-card); padding: 10px 12px;
       display: flex; flex-direction: column; gap: 6px; min-width: 150px;
     }
@@ -99,7 +120,7 @@
     #data-filters { padding-top: 0; }
     #data-filters select {
       font-family: var(--font-sans); font-size: 13px; color: var(--ink);
-      background: #fff; border: 1px solid var(--border-warm); border-radius: 8px;
+      background: var(--surface); border: 1px solid var(--border-warm); border-radius: 8px;
       padding: 6px 8px; min-height: 36px;
     }
     #data-filters input[type=date] { min-width: 0; min-height: 36px; padding: 4px 8px; font-size: 13px; }
@@ -109,7 +130,7 @@
 
     .banner {
       margin: 0 calc(var(--sp) * 3); padding: 8px 14px;
-      border-top: 2px solid var(--brick); background: #fff;
+      border-top: 2px solid var(--brick); background: var(--surface);
       border-radius: 0 0 8px 8px; color: var(--ink); font-size: 13px;
     }
 
@@ -117,7 +138,7 @@
     .list { flex: 1 1 58%; min-width: 0; }
     .detail { flex: 1 1 42%; min-width: 0; }
 
-    table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--border-warm); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow-card); }
+    table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border-warm); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow-card); }
     th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border-warm); white-space: nowrap; }
     th { color: var(--ink-faded); font-weight: 500; font-size: 13px; background: var(--paper); }
     tbody tr:hover { background: var(--cream); }
@@ -128,7 +149,7 @@
     .row-actions button { padding: 3px 10px; min-height: 30px; font-size: 13px; }
     .empty { color: var(--ink-faded); padding: 18px 12px; }
 
-    .detail-card { background: #fff; border: 1px solid var(--border-warm); border-radius: 10px; box-shadow: var(--shadow-card); padding: calc(var(--sp) * 2); }
+    .detail-card { background: var(--surface); border: 1px solid var(--border-warm); border-radius: 10px; box-shadow: var(--shadow-card); padding: calc(var(--sp) * 2); }
     .detail-head { font-family: var(--font-serif); font-weight: 600; margin-bottom: 8px; }
     .detail-hint { color: var(--ink-faded); font-size: 13px; }
     pre {

@@ -122,7 +122,7 @@ export function createLogStore(opts = {}) {
     /** Assemble the export file body (pure — the download itself is UI-side). */
     buildExportPayload(context = {}) {
       return {
-        app: '陪跑智能体 demo · session log',
+        app: '小小探索家 demo · session log',
         exported_at: now(),
         context,
         categories: { ...config },

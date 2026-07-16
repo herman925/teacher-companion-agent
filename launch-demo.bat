@@ -28,7 +28,7 @@ if errorlevel 1 (
 set "PORT=%~1"
 if "%PORT%"=="" set "PORT=8787"
 
-echo Starting 陪跑智能体 demo on http://localhost:%PORT% ...
+echo Starting 小小探索家 demo on http://localhost:%PORT% ...
 echo （关闭本窗口即停止服务 / close this window to stop the server）
 
 rem Open the browser once the server has had a moment to bind.

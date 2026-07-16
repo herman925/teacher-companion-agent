@@ -65,9 +65,57 @@ function detectResource(message) {
 // ---------------------------------------------- awaiting-phase discrimination
 
 /** Strong field-feedback signal; hard evidence markers bypass the length check. */
+/** A packaged question-card reply quotes the QUESTIONS back (`N. 「…」：answer`).
+ * Strip those quoted titles (and skip markers) so content gates test only what
+ * the teacher actually wrote — otherwise every packaged reply matches 「」. */
+function answersOnly(message) {
+  return String(message)
+    .replace(/^【问题卡回复】\s*/m, '')
+    .replace(/^\d+[.、]\s*「[^」]*」：/gm, '')
+    .replace(/（跳过）/g, '');
+}
+
 function hasFieldFeedback(message) {
-  if (/「|」|原话/.test(message)) return true;
-  return /(说|问|画|拍|停留|围|模仿|盯着|照片|卡住)/.test(message) && message.length > 20;
+  const m = answersOnly(message);
+  if (/「|」|原话/.test(m)) return true;
+  return /(说|问|画|拍|停留|围|模仿|盯着|照片|卡住)/.test(m) && m.length > 20;
+}
+
+/** Did the teacher's message plausibly carry 儿童原话? (same gate the flows use) */
+function hasChildWords(message) {
+  const m = answersOnly(message);
+  return /说|问|「|原话/.test(m) && m.length > 10;
+}
+
+/**
+ * Compose two scripted turns into one — the batch-answer fast path: when a
+ * packaged question-card reply already carries what the NEXT turn would have
+ * asked for, both turns' work lands in a single round (多问一答 → 一次点亮多节点).
+ * Artifacts/deltas/traces concat; reply/question/closure and the stage proposal
+ * are chosen explicitly by the caller (stage jumps >1 are illegal — engine gate).
+ */
+function mergeTurns(a, b, { reply, stage, note }) {
+  const delta = { ...a.state_delta };
+  for (const [key, value] of Object.entries(b.state_delta || {})) {
+    delta[key] = Array.isArray(value) && Array.isArray(delta[key]) ? [...delta[key], ...value] : value;
+  }
+  if (stage !== undefined) delta.stage = stage; else delete delta.stage;
+  return {
+    reply_markdown: reply,
+    question: b.question ?? null,
+    ...(b.questions ? { questions: b.questions } : {}),
+    artifacts: [...(a.artifacts || []), ...(b.artifacts || [])],
+    closure_loop: b.closure_loop ?? null,
+    state_delta: delta,
+    evidence_refs: [...new Set([...(a.evidence_refs || []), ...(b.evidence_refs || [])])],
+    round_complete: b.round_complete,
+    wf_trace: {
+      ...a.wf_trace,
+      nodes: [...(a.wf_trace?.nodes || []), ...(b.wf_trace?.nodes || [])],
+      principles: [...new Set([...(a.wf_trace?.principles || []), ...(b.wf_trace?.principles || [])])],
+      state_notes: note ?? a.wf_trace?.state_notes ?? '',
+    },
+  };
 }
 
 /** In-place support request while a round is out in the field (WF22). */
@@ -113,18 +161,31 @@ function turnIntentQuestion(message, opts = {}) {
   const resource = detectResource(message);
   // 教师档案 light touch: address the actual 年段 when the teacher shared one.
   const kid = opts.profile && String(opts.profile.ageBand || '').trim() ? String(opts.profile.ageBand).trim() + '孩子' : '孩子';
+  const intentCard = {
+    id: 'q-intent',
+    text: `为什么想带${kid}做${resource}？`,
+    why: '先听懂你的资源意图，切口卡才不会泛泛而谈',
+    examples: [
+      `园附近每年都有${resource}活动，孩子们其实见过，但只是看热闹`,
+      '园里想做本土文化课程，我自己也想试试项目式的做法',
+      '我还说不清楚，你根据这个资源先给我几个可能的方向',
+    ],
+  };
+  const feelingCard = {
+    id: 'q-feeling',
+    text: `你希望${kid}接触${resource}之后，多感受到一点什么？`,
+    why: '初步目标决定入口往哪个方向开，说不清也没关系',
+    examples: [
+      '一群人一起使劲、一起配合的那种劲儿',
+      '对家乡的东西多一点亲近感',
+      '先不定目标，看孩子自己被什么抓住',
+    ],
+  };
   return {
     reply_markdown:
-      `听起来你已经带着「${resource}」的初步想法来了——这个资源本身就有很强的现场感，我们不急着写方案，先把它变成孩子能真实进入的入口。\n\n我先问一个最要紧的问题（后面两问会更快）。`,
-    question: {
-      text: `为什么想带${kid}做${resource}？你希望${kid}接触它之后，多感受到一点什么？`,
-      why: '先听懂你的资源意图，切口卡才不会泛泛而谈',
-      examples: [
-        `园附近每年都有${resource}活动，孩子们其实见过，但只是看热闹`,
-        '园里想做本土文化课程，我自己也想试试项目式的做法',
-        '我还说不清楚，你根据这个资源先给我几个可能的方向',
-      ],
-    },
+      `听起来你已经带着「${resource}」的初步想法来了——这个资源本身就有很强的现场感，我们不急着写方案，先把它变成孩子能真实进入的入口。\n\n下面两件事想先听你说说，答完这一轮就能出切口卡。`,
+    question: intentCard,
+    questions: [intentCard, feelingCard],
     artifacts: [],
     closure_loop: null,
     state_delta: { teacher_mode: 'from_zero', theme_resource: { name: resource }, completed_nodes: ['WF01', 'WF02'] },
@@ -132,7 +193,7 @@ function turnIntentQuestion(message, opts = {}) {
     round_complete: false,
     wf_trace: trace('from_zero', 0, [
       { id: 'WF01', name: '入口识别', apply: '首条消息按关键词判定为从零陪跑模式' },
-      { id: 'WF02', name: '信息补全', apply: '动态识别式提问：一次只问一个聚焦问题' },
+      { id: 'WF02', name: '信息补全', apply: '动态识别式提问：两张问题卡一次问清资源意图，教师打包作答' },
       { id: 'WF03b', name: '资源意图确认与课程可能性启发', apply: '先听资源意图，下一轮才出切口卡' },
     ], ['状态机优先', '教师资源意图优先'], '本轮写入 teacher_mode 与 theme_resource；stage 保持0'),
   };
@@ -375,10 +436,15 @@ function turnStoryFragment(state) {
 // ================================================ 已有主题优化 optimize_existing
 
 function optimizeFlow(state, history, message) {
-  if (!state.resource_entry_card) return turnOptimizeBackfill();
+  if (!state.resource_entry_card) {
+    // Batch fast path: the entry's two question cards answered together —
+    // 家底 AND 原话 in one packaged reply — backfill and evidence land in one turn.
+    if (hasChildWords(message)) return turnOptimizeBackfillWithEvidence();
+    return turnOptimizeBackfill();
+  }
   if (!(state.children_evidence || []).length) {
     // 证据优先: only ingest when the message plausibly carries 原话.
-    if (/说|问|「|原话/.test(message) && message.length > 10) return turnOptimizeEvidence();
+    if (hasChildWords(message)) return turnOptimizeEvidence();
     if (priorTurnsMatching(history, OPTIMIZE_WAIT_MARKER) >= MAX_NUDGES) return turnOptimizeEvidence();
     return turnOptimizeWait(history);
   }
@@ -386,15 +452,39 @@ function optimizeFlow(state, history, message) {
   return turnHorizon('optimize_existing', state, history);
 }
 
+/** Batch fast path: 回填建档 + 原话入池 in one turn (entry cards answered together). */
+function turnOptimizeBackfillWithEvidence() {
+  return mergeTurns(turnOptimizeBackfill(), turnOptimizeEvidence(), {
+    reply:
+      '家底和原话一次到齐——我把两步并成一轮做完。\n\n**回填建档**：主题网络接进课程档案，切口卡和适配性筛查在下面两张卡里，确认方向就行。\n\n**证据先行**：三句原话质量都很高——特别是「想自己做一条会浮的龙舟」，里面已经藏着行动性和公共性。「兴趣散」的判断可以修正了：从证据看，孩子的注意力集中在「船怎么浮、怎么动」这类构造问题上，只是原来的主题网络没有接住它。\n\n下面还有整理后的儿童问题池和收紧的核心驱动问题候选。等孩子选定问题，目标与评估轴心就能进入下一轮。',
+    stage: 1, // 0→1 by the backfill; 0→2 would be an illegal jump — pick 阶段 advances later
+    note: '批量作答快车道：回填 resource_entry_card + children_evidence + 问题池 + 驱动问题候选同轮入账；stage 提议 0→1，阶段2 等教师选定驱动问题再提',
+  });
+}
+
 function turnOptimizeEntry() {
   return {
     reply_markdown:
-      '好——已经在做的主题不用推倒重来，我们从你手上已有的东西接着长。我先把家底接进课程档案，再看孩子的真实反应指向哪里。',
+      '好——已经在做的主题不用推倒重来，我们从你手上已有的东西接着长。下面两张卡把家底带给我：都答上的话，建档和证据整理我一轮就能做完。',
     question: {
       text: '你们现在手上已经有什么，做到哪一步了？',
       why: '先摸清已有底子，才不会给你重复的建议',
       examples: ['有主题网络，但孩子兴趣散', '做了两周活动，不知道下一步', '有活动照片和作品，没整理'],
     },
+    questions: [
+      {
+        id: 'q-assets',
+        text: '你们现在手上已经有什么，做到哪一步了？',
+        why: '先摸清已有底子，才不会给你重复的建议',
+        examples: ['有主题网络，但孩子兴趣散', '做了两周活动，不知道下一步', '有活动照片和作品，没整理'],
+      },
+      {
+        id: 'q-words',
+        text: '这段时间里，孩子说过哪几句让你印象深的话？',
+        why: '证据优先——有原话，优化方向就从证据里长，答不上先跳过',
+        examples: ['有孩子问龙舟为什么要有鼓', '有孩子说想自己做一条会浮的龙舟', '记不清了，我翻翻记录再补'],
+      },
+    ],
     artifacts: [],
     closure_loop: null,
     state_delta: { teacher_mode: 'optimize_existing', completed_nodes: ['WF01', 'WF02'] },
@@ -543,10 +633,15 @@ function turnOptimizeEvidence() {
 // ================================================== 课程故事整理 story_export
 
 function storyFlow(state, history, message) {
-  if (!state.story_materials) return turnStoryMaterials();
+  if (!state.story_materials) {
+    // Batch fast path: entry cards answered together (材料底子 AND 原话) —
+    // materials inventory and narrative spine land in one turn.
+    if (hasChildWords(message)) return turnStoryMaterialsWithSpine();
+    return turnStoryMaterials();
+  }
   if (state.stage < 5) {
     // The spine needs real 原话 — a nudge or 记不全 answer must not fabricate.
-    if (/说|「|原话/.test(message)) return turnStorySpine();
+    if (/说|「|原话/.test(answersOnly(message))) return turnStorySpine();
     if (priorTurnsMatching(history, STORY_WAIT_MARKER) >= MAX_NUDGES) return turnStorySpine();
     return turnStoryWait(history);
   }
@@ -562,12 +657,26 @@ function storyFlow(state, history, message) {
 function turnStoryEntry() {
   return {
     reply_markdown:
-      '好，我们把这堆照片整理成一个立得住的课程故事。第一步不是动笔，而是盘点材料——有什么、缺什么，缺的部分如实标注，不虚构。\n\n先告诉我材料的底子。',
+      '好，我们把这堆照片整理成一个立得住的课程故事。第一步不是动笔，而是盘点材料——有什么、缺什么，缺的部分如实标注，不虚构。\n\n下面两张卡把材料底子带给我：原话也答得上的话，盘点和叙事主线我一轮就能出。',
     question: {
       text: '这堆照片主要拍的是什么？',
       why: '材料完整性检查是课程故事的第一步，主线要从真实材料里长出来',
       examples: ['主要是活动过程照片', '有孩子的作品和涂鸦', '还有几段采访视频'],
     },
+    questions: [
+      {
+        id: 'q-materials',
+        text: '这堆照片主要拍的是什么？',
+        why: '材料完整性检查是课程故事的第一步，主线要从真实材料里长出来',
+        examples: ['主要是活动过程照片', '有孩子的作品和涂鸦', '还有几段采访视频'],
+      },
+      {
+        id: 'q-words',
+        text: '你还记得孩子当时说过哪几句话吗？',
+        why: '故事的主线要用孩子的声音立起来——记不全先跳过，回头补也行',
+        examples: ['有孩子说：这是我们一起做出来的', '有孩子说：下次我还想再做一遍', '记不全了，我回去问问搭班老师和家长'],
+      },
+    ],
     artifacts: [],
     closure_loop: null,
     state_delta: { teacher_mode: 'story_export', completed_nodes: ['WF01'] },
@@ -615,6 +724,16 @@ function turnStoryMaterials() {
       { id: 'WF28', name: '材料完整性检查', apply: '照片、作品、视频入账，三项缺口如实列出' },
     ], ['证据优先', '输出闭环固定'], '写入 story_materials 与三条材料证据；stage 保持0——原话没到，不跳导出'),
   };
+}
+
+/** Batch fast path: 材料盘点 + 叙事主线 in one turn (entry cards answered together). */
+function turnStoryMaterialsWithSpine() {
+  return mergeTurns(turnStoryMaterials(), turnStorySpine(), {
+    reply:
+      '材料底子和原话一次到齐——盘点和主线我并成一轮做完。\n\n**材料的账**：照片、作品、采访视频都已记入证据账本；缺口还剩卡点与转折记录、教师反思，我在卡片里如实标注，不填空话。\n\n**叙事主线**：孩子的声音够立骨架了。下面这版主线只用了有证据的部分，「这是我们一起做出来的」做章眼，「下次我还想再做一遍」收尾。',
+    stage: 5, // 0→5 is the one legal long jump (导出), and the evidence ledger is non-empty
+    note: '批量作答快车道：材料证据 + 儿童原话 + 叙事主线同轮入账；stage 提议 0→5（证据账本非空，导出跳转合法）；缺口如实保留',
+  });
 }
 
 function turnStorySpine() {
@@ -670,7 +789,8 @@ function turnStorySpine() {
 
 function midCourseFlow(state, history, message) {
   if (!(state.children_evidence || []).length) {
-    if (/卡|试|做|说|问|指挥|活跃/.test(message) && message.length > 15) return turnMidCourseReview();
+    const m = answersOnly(message);
+    if (/卡|试|做|说|问|指挥|活跃/.test(m) && m.length > 15) return turnMidCourseReview();
     if (priorTurnsMatching(history, MIDCOURSE_WAIT_MARKER) >= MAX_NUDGES) return turnMidCourseReview();
     return turnMidCourseWait(history);
   }
@@ -683,18 +803,32 @@ function midCourseFlow(state, history, message) {
 }
 
 function turnMidCourseEntry() {
+  // 三句聚焦反馈 as three question cards — the spec's three-sentence intake IS
+  // a natural multi-question turn; the teacher answers all at once and the
+  // packaged reply lets the next turn light several nodes together.
+  const whatCard = {
+    id: 'q-what',
+    text: '孩子们做了什么？',
+    why: '有一句现场信息，卡壳复盘就能开工',
+    examples: ['孩子们试了纸箱做狮头，卡在固定不住', '分组画了龙舟，有两组一直在争谁画龙头'],
+  };
+  const whoCard = {
+    id: 'q-who',
+    text: '谁的表现最让你在意？',
+    why: '差异观察是下一轮分组和支架的依据',
+    examples: ['最活跃的是小宇，一直在指挥别人', '有两个孩子全程只看不动手'],
+  };
+  const judgeCard = {
+    id: 'q-judge',
+    text: '你现在最想判断什么？',
+    why: '这轮我优先回答你最急的判断',
+    examples: ['下一轮该分组还是集体', '要不要把家长资源引进来'],
+  };
   return {
     reply_markdown:
-      '收到。按流程我会先读你的课程档案再接话——但这个演示会话里档案是空的，真实使用中不会让你重复回忆已经记录过的东西。这里先快速补档：用三句话把昨天的现场带给我就够。',
-    question: {
-      text: '用三句话告诉我：孩子们做了什么、谁的表现最让你在意、你现在最想判断什么？',
-      why: '三句聚焦反馈够我接住现场，不用写总结',
-      examples: [
-        '孩子们试了纸箱做狮头，卡在固定不住',
-        '最活跃的是小宇，一直在指挥别人',
-        '我想知道下一轮该分组还是集体',
-      ],
-    },
+      '收到。按流程我会先读你的课程档案再接话——但这个演示会话里档案是空的，真实使用中不会让你重复回忆已经记录过的东西。这里先快速补档：下面三张卡把昨天的现场带给我就够，答不全也没关系。',
+    question: whatCard,
+    questions: [whatCard, whoCard, judgeCard],
     artifacts: [],
     closure_loop: null,
     state_delta: { teacher_mode: 'mid_course', completed_nodes: ['WF01'] },
@@ -778,6 +912,20 @@ function turnMaterialEntry(message) {
       why: '场景不同，问题的口吻和数量会不一样',
       examples: ['给家长的调查表', '布置墙面的问题墙', '采访附近店主的提纲'],
     },
+    questions: [
+      {
+        id: 'q-scene',
+        text: '这份素材打算用在什么场景？',
+        why: '场景不同，问题的口吻和数量会不一样',
+        examples: ['给家长的调查表', '布置墙面的问题墙', '采访附近店主的提纲'],
+      },
+      {
+        id: 'q-band',
+        text: '打算给哪个年段的孩子用？',
+        why: '年段决定问题的数量和口吻——小班要更短更具体',
+        examples: ['小班', '中班', '大班'],
+      },
+    ],
     artifacts: [],
     closure_loop: null,
     state_delta: { teacher_mode: 'material_support', theme_resource: { name: resource }, completed_nodes: ['WF01', 'WF22'] },
@@ -906,7 +1054,7 @@ const MIDCOURSE_HOLD_MARKER = /各组的结果|先发一个卡点/;
 function turnAwaitNudge(history) {
   const v = replyVariant(history, NUDGE_MARKER, 2);
   const reply = v === 0
-    ? '不急，我先把进度摊开给你看。\n\n**已完成**：入口识别、资源课程化切口卡、适配性筛查、第一轮体验计划、访谈卡。\n**等你带回**：孩子的两三句原话、停留最久的点、几张照片。\n\n等待期间我也能就地帮忙：要不要一段给家长的知会话术？要不要把访谈卡改成孩子能看的图文版说明？说一声就给。'
+    ? '不急，我先把进度摊开给你看。\n\n**已完成**：入口识别、资源课程化切口卡、适配性筛查、第一轮体验计划、访谈卡。\n**等你带回**：孩子的两三句原话、停留最久的点、几张照片。\n\n等待期间我也能就地帮忙：比如一段给家长的知会话术，或者把访谈卡改成孩子能看的图文版说明。说一声就给。'
     : '我还在这里，随时接得住。如果是卡在准备环节——比如还没约到醒狮队、家长有顾虑、想先在班里做点铺垫——直接说，我出预案。如果已经去过现场了，哪怕只记得一句孩子的原话，也先发我这一句。';
   return {
     reply_markdown: reply,

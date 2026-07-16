@@ -164,7 +164,7 @@ async function runTurn(req, emit) {
     if (result.errors?.length) chainErrors = result.errors;
 
     const parsed = parseTurn(result.payload);
-    const violations = parsed.turn ? validateTurn(parsed.turn, state) : parsed.violations;
+    const violations = parsed.turn ? validateTurn(parsed.turn, state, { stylePref: req.profile?.stylePref }) : parsed.violations;
     const blocking = violations.filter((v) => v.action === 'block');
     allViolations.push(...violations.map((v) => ({ ...v, attempt })));
 
@@ -337,6 +337,9 @@ const server = http.createServer(async (req, res) => {
       // client falls back to localStorage-only 演示模式.
       persistence: true,
       auth: true,
+      // Deploy channel: the public instance sets CHANNEL=public in its .env,
+      // which hides dev instruments (the debug spanner) in the UI.
+      channel: process.env.CHANNEL === 'public' ? 'public' : 'dev',
       providers: Object.entries(PROVIDERS)
         .filter(([, p]) => p.enabled !== false)
         .map(([id, p]) => ({ id, label: p.label, defaultModel: p.model, hasEnvKey: Boolean(ENV_KEYS[id]) })),
@@ -682,7 +685,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   const seeded = Object.entries(ENV_KEYS).filter(([, v]) => v).map(([k]) => k);
-  console.log(`陪跑智能体 demo → http://localhost:${PORT}`);
+  console.log(`小小探索家 demo → http://localhost:${PORT}`);
   console.log(seeded.length ? `env keys detected: ${seeded.join(', ')}` : 'no env keys — enter one in the UI settings drawer');
   if (!existsSync(path.join(PROMPT_DIR, 'base.zh.md'))) console.warn('WARNING: prompts missing');
 });

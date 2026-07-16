@@ -139,6 +139,24 @@ export const TURN_SCHEMA = {
       },
       required: ['text', 'why', 'examples'],
     },
+    // Multi-question turns: preferred over `question` when there is more than
+    // one thing to ask. Deliberately uncapped (count is a warn, not a block —
+    // re-tighten on pilot data). parseTurn normalizes question ⇄ questions.
+    questions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['text', 'why', 'examples'],
+        properties: {
+          id: { type: 'string' },
+          text: { type: 'string' },
+          why: { type: 'string' },
+          examples: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 3 },
+          input: { type: 'string', enum: ['choice', 'text', 'both'] },
+          required: { type: 'boolean' },
+        },
+      },
+    },
     artifacts: {
       type: 'array',
       items: {

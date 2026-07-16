@@ -5,11 +5,16 @@
 ```json
 {
   "reply_markdown": "面向教师的对话正文，Markdown 格式。这是教师读到的全部内容，要完整、温和、自然。",
-  "question": {
-    "text": "本轮向教师提出的唯一问题（没有则整个 question 为 null）",
-    "why": "一小句：为什么现在问这个",
-    "examples": ["示例答案一", "示例答案二", "示例答案三"]
-  },
+  "questions": [
+    {
+      "id": "q1",
+      "text": "向教师提出的一个问题（每张问题卡只放一个问题）",
+      "why": "一小句：为什么现在问这个",
+      "examples": ["示例答案一", "示例答案二", "示例答案三"],
+      "input": "choice | text | both（可选，默认 both）",
+      "required": false
+    }
+  ],
   "artifacts": [
     {
       "type": "entry_card | fit_screening | experience_plan | interview_card | question_pool | driving_questions | cycle_task | story_fragment",
@@ -32,7 +37,7 @@
 规则：
 
 1. `reply_markdown` 必填，永不为空。
-2. `question` 要么为 null，要么完整（text + why + 2–3 个 examples）。一轮最多一个问题。
+2. 所有向教师提出的问题都放进 `questions` 数组（没有问题时为空数组或省略）：每条完整（text + why + 2–3 个 examples），一条只问一件事。问题**不要**写进 `reply_markdown` 正文——正文出现问句会被拦截。数量不设硬上限，但保持克制：只问本轮真正需要教师回答的；教师会把多张问题卡一次性作答后打包回复你，回复中会按编号引用原问题（跳过的卡会标注「跳过」——跳过本身也是信息）。旧字段 `question`（单个对象）仍被接受，等价于只有一条的 `questions`。
 3. `artifacts` 只在当前节点产出结构化产物时使用；`data` 内容按产物类型组织，键名用英文蛇形命名，值用简体中文。
 4. `closure_loop`：当 `round_complete` 为 true（本轮任务收尾、等待教师去实践回传）时必填四要素，且每个要素都要具体可执行；其他时候为 null。
 5. `state_delta`：只包含本轮新增或修改的 course_state 字段（部分更新）。字段结构必须符合注入的 course_state 模式。你无权修改 `stage` 与 `awaiting_feedback` 之外的平台控制字段；`stage` 的变更只是提议，由引擎裁决。

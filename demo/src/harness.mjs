@@ -34,9 +34,16 @@ export function parseTurn(raw) {
   if (!obj || typeof obj !== 'object' || typeof obj.reply_markdown !== 'string' || !obj.reply_markdown.trim()) {
     return { turn: null, violations: [{ kind: 'contract_parse', detail: 'reply_markdown 缺失或为空', action: 'block' }] };
   }
+  // question ⇄ questions normalization: downstream always sees BOTH shapes —
+  // `questions` as the canonical array, `question` as its first entry (legacy
+  // single-question consumers: mock, UI focus logic, tests).
+  const questions = Array.isArray(obj.questions)
+    ? obj.questions.filter((q) => q && typeof q === 'object')
+    : (obj.question && typeof obj.question === 'object' ? [obj.question] : []);
   const turn = {
     reply_markdown: obj.reply_markdown,
-    question: obj.question ?? null,
+    question: questions[0] ?? null,
+    questions,
     artifacts: Array.isArray(obj.artifacts) ? obj.artifacts : [],
     closure_loop: obj.closure_loop ?? null,
     state_delta: obj.state_delta && typeof obj.state_delta === 'object' ? obj.state_delta : {},
@@ -60,14 +67,26 @@ export function extractJson(text) {
   return trimmed;
 }
 
+/** Prose length above which 极简速览 gets a style warn (never a block). */
+const TERSE_STYLE_MAX_CHARS = 1200;
+/** Question-card count above which we record a warn — no hard cap by design:
+ * the ceiling is decided later from pilot answered/skipped data. */
+const QUESTIONS_WARN_ABOVE = 5;
+
 /**
  * L3: deterministic validation of a parsed turn against current state.
+ * `action` levels: block (L4 retry) · strip (engine drops the field) ·
+ * warn (recorded + shown in dev drawer only — never retries, style checks live here).
  * @param {import('./types.mjs').Turn} turn
  * @param {Object} state current course_state
+ * @param {{ stylePref?: string }} opts teacher profile bits that tune warn-level checks
  * @returns {import('./types.mjs').Violation[]}
  */
-export function validateTurn(turn, state) {
+export function validateTurn(turn, state, opts = {}) {
   const violations = [];
+  const questions = Array.isArray(turn.questions)
+    ? turn.questions
+    : (turn.question ? [turn.question] : []);
 
   // 1. Closure loop: required and four-part when a round completes.
   if (turn.round_complete) {
@@ -81,16 +100,38 @@ export function validateTurn(turn, state) {
     }
   }
 
-  // 2. Screening contract: at most one question, and it must carry examples.
-  if (turn.question) {
-    if (!Array.isArray(turn.question.examples) || turn.question.examples.length < 2) {
-      violations.push({ kind: 'question_no_examples', detail: '问题必须附 2–3 个示例答案', action: 'block' });
+  // 2. Question cards: every card complete (text + why + 2–3 examples); questions
+  // live in cards, not prose. Count is uncapped — >5 records a warn so the
+  // re-tightening decision is made on pilot data (DESIGN.md §4 问题卡).
+  const incomplete = questions.filter(
+    (q) => !String(q?.text ?? '').trim() || !Array.isArray(q?.examples) || q.examples.length < 2,
+  );
+  if (incomplete.length) {
+    violations.push({ kind: 'question_no_examples', detail: `${incomplete.length} 张问题卡不完整——每张必须有 text 和 2–3 个示例答案`, action: 'block' });
+  }
+  if (questions.length) {
+    const proseQuestions = countQuestionSentences(turn.reply_markdown);
+    if (proseQuestions > 1) {
+      violations.push({ kind: 'multi_question', detail: `正文中出现 ${proseQuestions} 个问句——问题必须放进 questions 问题卡，不写进正文`, action: 'block' });
     }
-    const extraQuestions = countQuestionSentences(turn.reply_markdown);
-    if (extraQuestions > 2) {
-      // question field + reply prose asking several more distinct questions = interrogation.
-      violations.push({ kind: 'multi_question', detail: `正文中出现 ${extraQuestions} 个问句——建档/引导阶段一次只问一个聚焦问题`, action: 'block' });
+    if (questions.length > QUESTIONS_WARN_ABOVE) {
+      violations.push({ kind: 'many_questions', detail: `本轮提出 ${questions.length} 张问题卡（>${QUESTIONS_WARN_ABOVE}）——未拦截，仅记录；教师跳卡率会说明上限该定在哪`, action: 'warn' });
     }
+  } else if (!turn.round_complete && !turn.artifacts.length && countQuestionSentences(turn.reply_markdown) === 0) {
+    // Anti-dead-end: a mid-round turn with no cards, no artifacts and no closure
+    // leaves the teacher nothing to grab. Warn-level: pure Q&A answers are legitimate.
+    violations.push({ kind: 'no_forward_handle', detail: '本轮既无问题卡、无产物、也未收尾——给教师留一个前进抓手：至少一张问题卡或一个开放式建议', action: 'warn' });
+  }
+
+  // 2b. Style proxies (warn only — style is persuasion, safety is law; DESIGN.md §4).
+  const stylePref = String(opts.stylePref ?? '');
+  if (stylePref.startsWith('极简速览')) {
+    const proseLen = turn.reply_markdown.replace(/```[\s\S]*?```/g, '').length;
+    if (proseLen > TERSE_STYLE_MAX_CHARS) {
+      violations.push({ kind: 'style_mismatch', detail: `教师选了极简速览，但正文 ${proseLen} 字（>${TERSE_STYLE_MAX_CHARS}）——仅记录，不拦截`, action: 'warn' });
+    }
+  } else if (stylePref.startsWith('提问引导') && !questions.length && !turn.round_complete) {
+    violations.push({ kind: 'style_mismatch', detail: '教师选了提问引导，但本轮没有提出任何问题——仅记录，不拦截', action: 'warn' });
   }
 
   // 3. Evidence-first: child-claims require refs into EXISTING or NEWLY-PROVIDED evidence.
@@ -151,10 +192,12 @@ export function findClaimSentences(markdown) {
     .filter((s) => s && CHILD_CLAIM_RE.test(s) && !HEDGE_RE.test(s));
 }
 
-/** Count interrogative sentences aimed at the teacher in reply prose. */
+/** Count interrogative sentences aimed at the teacher in reply prose.
+ * Question marks inside closing quotes (”"』」）) are quoted speech — often a
+ * child's question being cited — and don't count as asking the teacher. */
 function countQuestionSentences(markdown) {
   const prose = markdown.replace(/```[\s\S]*?```/g, '');
-  return (prose.match(/[？?](?=\s|$|[^”"』)])/g) || []).length;
+  return (prose.match(/[？?](?=\s|$|[^”"』」)）])/g) || []).length;
 }
 
 /**
@@ -171,15 +214,17 @@ export function violationFeedback(violations) {
 
 /** L4 terminal fallback: the safe template when regeneration also fails. */
 export function safeTemplate(state) {
+  const question = {
+    text: '这一轮孩子实际做了什么、说了什么？',
+    why: '我需要真实现场信息才能给出可靠的下一步',
+    examples: ['孩子们围着龙舟模型看了很久，有人问桨为什么是弯的', '我们还没开展活动，先想听听准备建议'],
+  };
   return {
     reply_markdown:
       '这一轮我想先放慢一点。为了不给你不可靠的内容，我需要再确认一次现场信息。\n\n' +
-      '你可以用一两句话告诉我：这一轮孩子实际做了什么、说了什么？哪怕只有一句原话也很好。',
-    question: {
-      text: '这一轮孩子实际做了什么、说了什么？',
-      why: '我需要真实现场信息才能给出可靠的下一步',
-      examples: ['孩子们围着龙舟模型看了很久，有人问桨为什么是弯的', '我们还没开展活动，先想听听准备建议'],
-    },
+      '你可以用一两句话告诉我：这一轮孩子实际做了什么、说了什么。哪怕只有一句原话也很好。',
+    question,
+    questions: [question],
     artifacts: [],
     closure_loop: null,
     state_delta: {},

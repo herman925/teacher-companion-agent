@@ -1,5 +1,7 @@
-# PRD — China Teacher Resources Development Platform
+# PRD — 小小探索家 Little Explorers: Preschool Theme-Inquiry Course Assistant
 ## AI Theme-Inquiry Companion for Kindergarten Teachers (番禺幼教AI主题探究陪跑智能体)
+
+Formerly the working title "China Teacher Resources Development Platform"; renamed 2026-07-16.
 
 | | |
 |---|---|

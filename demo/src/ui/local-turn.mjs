@@ -17,7 +17,7 @@ export function runLocalMockTurn(state, history, message, opts = {}) {
   const cur = state && state.course_id ? state : createInitialState(`course-${Date.now()}`);
   const payload = mockTurn(cur, history || [], message, opts);
   const parsed = parseTurn(payload);
-  const violations = parsed.turn ? validateTurn(parsed.turn, cur) : parsed.violations;
+  const violations = parsed.turn ? validateTurn(parsed.turn, cur, { stylePref: opts.profile?.stylePref }) : parsed.violations;
   const blocking = violations.filter((v) => v.action === 'block');
   const ok = Boolean(parsed.turn) && blocking.length === 0;
   const turn = ok ? parsed.turn : safeTemplate(cur);

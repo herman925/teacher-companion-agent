@@ -1,10 +1,13 @@
-/* 陪跑智能体 demo — stylesheet implementing demo/DESIGN.md.
-   Teacher-facing surfaces stay in the warm paper family; the cool slate pair
-   is quarantined to the debug drawer (DESIGN.md §2). Light mode only. */
+/* 小小探索家 — stylesheet implementing demo/DESIGN.md.
+   Teacher-facing surfaces stay in the warm family in BOTH themes; the cool
+   slate pair is quarantined to the debug drawer (DESIGN.md §2). Theme is
+   resolved pre-paint by an inline head script setting <html data-theme>. */
 
 :root {
-  /* §2 palette */
+  color-scheme: light; /* native scrollbars/controls follow the theme */
+  /* §2 tokens — light (rice-paper day) */
   --paper: #FAF6EF;            /* Rice-Paper Warm White */
+  --surface: #FFFFFF;          /* card-paper component surfaces */
   --ink: #2D2A26;              /* Ink Brown-Black */
   --ink-faded: #6B645B;        /* Faded Ink */
   --green: #2F5D50;            /* Banyan Deep Green */
@@ -17,6 +20,10 @@
   --slate: #23282E;            /* Study-Lamp Slate — debug drawer only */
   --slate-text: #C9D1D9;       /* debug drawer text */
   --border-warm: #E5DED2;      /* hairline warm border */
+  --on-accent: #FFFFFF;        /* text on green/brick fills */
+  --header-veil: rgba(250, 246, 239, 0.94);
+  --paper-fade: rgba(250, 246, 239, 0); /* transparent end of paper gradients */
+  --backdrop-ink: rgba(45, 42, 38, 0.35);
 
   /* §3 type */
   --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif;
@@ -25,11 +32,43 @@
 
   /* §4/§5 metrics */
   --shadow-card: 0 2px 12px rgba(45, 42, 38, 0.08);
+  --shadow-card-lift: 0 4px 18px rgba(45, 42, 38, 0.12);
+  --shadow-deep: 0 12px 48px rgba(45, 42, 38, 0.22);
   --radius-card: 10px;
   --radius-input: 12px;
   --col: 720px;
   --col-wide: 800px;
   --sp: 8px; /* 8pt grid */
+}
+
+/* §2 dark (evening lesson-prep lamp) — warm cocoa, never blue-black. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #211D18;
+  --surface: #2A251F;
+  --ink: #EDE6DA;
+  --ink-faded: #A79D8F;
+  --green: #6FAE9C;
+  --green-wash: #2A3833;
+  --persimmon: #E39468;
+  --persimmon-wash: #3A2C22;
+  --gold: #D2B36E;
+  --cream: #322C24;
+  --brick: #C97C66;
+  --border-warm: #3D362C;
+  --on-accent: #1E2B27;
+  --header-veil: rgba(33, 29, 24, 0.94);
+  --paper-fade: rgba(33, 29, 24, 0);
+  --backdrop-ink: rgba(0, 0, 0, 0.5);
+  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.35);
+  --shadow-card-lift: 0 4px 18px rgba(0, 0, 0, 0.45);
+  --shadow-deep: 0 12px 48px rgba(0, 0, 0, 0.55);
+}
+
+/* One-shot crossfade while switching themes (main.js toggles .theme-fade for ~300ms).
+   Scoped to the switch so it never fights component transitions. */
+:root.theme-fade, :root.theme-fade *, :root.theme-fade *::before, :root.theme-fade *::after {
+  transition: background-color 420ms ease-out, color 420ms ease-out, border-color 420ms ease-out, box-shadow 420ms ease-out !important;
 }
 
 * { box-sizing: border-box; }
@@ -51,7 +90,7 @@ html, body {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: rgba(250, 246, 239, 0.94);
+  background: var(--header-veil);
   backdrop-filter: blur(4px);
   border-bottom: 1px solid var(--border-warm);
 }
@@ -61,7 +100,7 @@ html, body {
   margin: 0 auto;
   padding: calc(var(--sp) * 2) calc(var(--sp) * 2);
   display: flex;
-  align-items: baseline;
+  align-items: center; /* the logo lockup centers; baseline broke against the SVG */
   gap: calc(var(--sp) * 2);
 }
 
@@ -90,6 +129,7 @@ html, body {
   align-items: center;
   gap: var(--sp);
   align-self: center;
+  flex: none;
 }
 
 .icon-btn {
@@ -163,7 +203,7 @@ html, body {
   margin-left: auto;
   max-width: 75%;
   width: fit-content;
-  background: #FFFFFF;
+  background: var(--surface);
   border: 1px solid var(--border-warm);
   border-radius: 12px;
   padding: 12px 16px;
@@ -212,7 +252,7 @@ html, body {
   border-radius: 999px;
   padding: 2px 10px;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.5);
+  background: color-mix(in srgb, var(--surface) 50%, transparent);
 }
 .harness-badge:hover { color: var(--brick); border-color: var(--brick); }
 
@@ -345,7 +385,7 @@ html, body {
   appearance: none;
   font-family: var(--font-sans);
   font-size: 14px;
-  background: #FFFFFF;
+  background: var(--surface);
   color: var(--persimmon);
   border: 1.5px solid var(--persimmon);
   border-radius: 999px;
@@ -360,11 +400,160 @@ html, body {
 .chip:hover, .chip:active { background: var(--persimmon-wash); }
 .chip:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
 
+/* --------------------------------------------------- question cards (问题卡) */
+/* Cue-card carousel for multi-question turns (DESIGN.md §4 问题卡): scroll-snap
+   track, dots + arrows, 查看全部 stacked fallback, one batch-submit bar. */
+
+.qcards { margin-top: calc(var(--sp) * 1.5); }
+
+.qcards-track {
+  display: flex;
+  gap: calc(var(--sp) * 2);
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  padding: 2px;
+  /* dots + arrows are the navigation affordance — no scrollbar chrome */
+  scrollbar-width: none;
+}
+.qcards-track::-webkit-scrollbar { display: none; }
+
+.qcard {
+  /* one card per view: lands exactly, no sliver of the neighbor.
+     min/max pins beat the flex min-width:auto trap — otherwise nowrap chip
+     rows (mobile) force the card out to its intrinsic content width. */
+  flex: 0 0 100%;
+  min-width: 100%;
+  max-width: 100%;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  background: var(--cream);
+  border: 1px solid var(--border-warm);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+  padding: calc(var(--sp) * 2);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--sp) * 1.25);
+}
+
+.qcard.skipped { opacity: 0.55; border-style: dashed; }
+/* On narrow screens chips go nowrap (global rule) — they scroll INSIDE the card. */
+.qcard .chip-row { overflow-x: auto; scrollbar-width: none; }
+.qcard .chip-row::-webkit-scrollbar { display: none; }
+
+.qcard-head { display: flex; align-items: baseline; gap: calc(var(--sp) * 1.5); }
+.qcard-index { font-size: 12px; color: var(--ink-faded); }
+.qcard-text { font-size: 15px; line-height: 1.6; }
+
+.qcard-input {
+  width: 100%;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border-warm);
+  border-radius: 8px;
+  padding: 8px 10px;
+  resize: vertical;
+  min-height: 44px;
+}
+.qcard-input:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
+
+.qcard-skip {
+  align-self: flex-start;
+  appearance: none;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-faded);
+  cursor: pointer;
+  padding: 4px 0;
+  min-height: 32px;
+}
+.qcard.skipped .qcard-skip { color: var(--green); }
+
+.qcards-nav { display: flex; align-items: center; gap: calc(var(--sp) * 1.5); margin-top: 4px; }
+
+.qcards-arrow {
+  appearance: none;
+  border: 1px solid var(--border-warm);
+  background: var(--surface);
+  color: var(--ink-faded);
+  border-radius: 50%;
+  width: 32px; height: 32px;
+  font-size: 18px; line-height: 1;
+  cursor: pointer;
+}
+.qcards-arrow:hover { background: var(--cream); }
+
+.qcards-dots { display: flex; gap: 8px; }
+.qcards-dot {
+  appearance: none;
+  border: none;
+  background: var(--border-warm);
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+}
+.qcards-dot.on { background: var(--green); }
+
+.qcards-list-toggle {
+  margin-left: auto;
+  appearance: none;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--green);
+  cursor: pointer;
+  min-height: 32px;
+}
+
+/* 查看全部: flatten the carousel into a stacked review list */
+.qcards.as-list .qcards-track { flex-direction: column; overflow-x: visible; scroll-snap-type: none; }
+.qcards.as-list .qcard { flex-basis: auto; width: 100%; }
+.qcards-nav.list-mode .qcards-arrow, .qcards-nav.list-mode .qcards-dots { display: none; }
+
+.qcards-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--sp) * 2);
+  margin-top: calc(var(--sp) * 1.5);
+  padding: 0 2px;
+}
+.qcards-count { font-size: 13px; color: var(--ink-faded); }
+
+.qcards-submit-btn {
+  appearance: none;
+  border: none;
+  background: var(--green);
+  color: var(--on-accent);
+  font: inherit;
+  font-size: 14px;
+  border-radius: 999px;
+  padding: 10px 22px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.qcards-submit-btn:disabled { background: var(--border-warm); color: var(--ink-faded); cursor: default; }
+
+.qcards.submitted { opacity: 0.75; }
+.qcards.submitted .qcard-input, .qcards.submitted .chip { cursor: default; }
+
+@media (prefers-reduced-motion: reduce) {
+  .qcards-track { scroll-behavior: auto; }
+}
+
+
 /* ------------------------------------------------------ closure-loop card */
 /* Gold is used here and NOWHERE else (§2, §4). */
 
 .closure-card {
-  background: #FFFFFF;
+  background: var(--surface);
   border: 2px solid var(--gold);
   border-radius: var(--radius-card);
   padding: calc(var(--sp) * 3);
@@ -455,7 +644,7 @@ html, body {
   left: 0;
   right: 0;
   z-index: 20;
-  background: linear-gradient(to top, var(--paper) 75%, rgba(250, 246, 239, 0));
+  background: linear-gradient(to top, var(--paper) 75%, var(--paper-fade));
   padding: calc(var(--sp) * 3) calc(var(--sp) * 2) calc(var(--sp) * 2);
 }
 
@@ -495,7 +684,7 @@ html, body {
   font-size: 16px;
   line-height: 1.6;
   color: var(--ink);
-  background: #FFFFFF;
+  background: var(--surface);
   border: 1px solid var(--border-warm);
   border-radius: var(--radius-input);
   padding: 11px 16px;
@@ -579,7 +768,7 @@ html, body {
 /* Centered paper card over an ink scrim; left nav, one pane at a time. */
 .modal { position: fixed; inset: 0; z-index: 50; display: none; }
 .modal.open { display: block; }
-.modal-backdrop { position: absolute; inset: 0; background: rgba(45, 42, 38, 0.35); }
+.modal-backdrop { position: absolute; inset: 0; background: var(--backdrop-ink); }
 .modal-card {
   position: relative;
   margin: 7vh auto 0;
@@ -588,7 +777,7 @@ html, body {
   background: var(--paper);
   border: 1px solid var(--border-warm);
   border-radius: 14px;
-  box-shadow: 0 12px 48px rgba(45, 42, 38, 0.22);
+  box-shadow: var(--shadow-deep);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -641,7 +830,7 @@ body.has-history #btn-new { display: none; }
   font-family: var(--font-sans);
   font-size: 14px;
   color: var(--ink);
-  background: #FFFFFF;
+  background: var(--surface);
   border: 1px solid var(--border-warm);
   border-radius: 8px;
   padding: 10px 12px;
@@ -716,7 +905,7 @@ body.rail-pinned .composer { left: 260px; }
 .rail-edit:hover { color: var(--green); }
 .rail-rename {
   flex: 1; min-width: 0; font: inherit; font-size: 14px; color: var(--ink);
-  background: #fff; border: 1px solid var(--green); border-radius: 6px; padding: 4px 8px;
+  background: var(--surface); border: 1px solid var(--green); border-radius: 6px; padding: 4px 8px;
 }
 .rail-rename:focus { outline: none; }
 .rail-del.confirming { font-size: 12px; font-weight: 500; }
@@ -726,8 +915,8 @@ body.rail-pinned .composer { left: 260px; }
 .rail-foot .text-btn, .rail-managebar .text-btn { flex: 1 1 auto; min-height: 40px; }
 .text-btn.danger { color: var(--brick); }
 .text-btn.danger:hover { border-color: var(--brick); color: var(--brick); }
-.text-btn.confirming { background: var(--brick); color: #fff; border-color: var(--brick); }
-.text-btn.confirming:hover { color: #fff; }
+.text-btn.confirming { background: var(--brick); color: var(--on-accent); border-color: var(--brick); }
+.text-btn.confirming:hover { color: var(--on-accent); }
 
 /* Narrow screens: the rail overlays instead of reflowing (pin still keeps it open). */
 @media (max-width: 900px) {
@@ -740,7 +929,7 @@ body.rail-pinned .composer { left: 260px; }
 .provider-config {
   border: 1px solid var(--border-warm);
   border-radius: 8px;
-  background: #FFFFFF;
+  background: var(--surface);
   margin-bottom: calc(var(--sp) * 1.5);
   padding: 0 calc(var(--sp) * 2);
 }
@@ -911,7 +1100,10 @@ body.rail-pinned .composer { left: 260px; }
 @media (max-width: 480px) {
   body { font-size: 15px; }
   .chat-main { padding-left: 16px; padding-right: 16px; }
-  .app-header-inner { padding-left: 16px; padding-right: 16px; }
+  .app-header-inner { padding-left: 16px; padding-right: 16px; gap: var(--sp); flex-wrap: wrap; }
+  /* header must never widen the page: subtitle gives way first, actions may wrap */
+  .app-subtitle { display: none; }
+  .header-center { flex-wrap: wrap; justify-content: flex-end; }
   .teacher-msg { max-width: 85%; }
 
   /* chips become a horizontal scroll row (§5) */
@@ -1014,3 +1206,186 @@ body.rail-pinned .composer { left: 260px; }
   max-height: 320px;
   overflow-y: auto;
 }
+
+/* ---------------------------------------------- §6 motion registers 2 & 3 */
+/* Register 2 (专业): quiet continuous feedback — CSS transitions, 120–180ms. */
+
+.artifact-card, .qcard, .closure-card, .teacher-msg {
+  transition: box-shadow 160ms ease-out, transform 160ms ease-out;
+}
+.artifact-card:hover, .qcard:hover { box-shadow: var(--shadow-card-lift); transform: translateY(-1px); }
+
+.chip { transition: background-color 120ms ease-out, border-color 120ms ease-out, transform 120ms ease-out; }
+.chip:active { transform: scale(0.97); } /* register 3: press, release — never past 1.03 */
+
+.text-btn, .icon-btn, .qcards-arrow, .qcards-submit-btn {
+  transition: background-color 140ms ease-out, color 140ms ease-out, border-color 140ms ease-out, box-shadow 140ms ease-out;
+}
+.qcards-submit-btn:not(:disabled):hover { box-shadow: var(--shadow-card-lift); }
+
+.input-field, .qcard-input { transition: border-color 140ms ease-out, box-shadow 140ms ease-out; }
+.input-field:focus-visible, .qcard-input:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 18%, transparent);
+}
+
+/* Register 3 (童趣): the active carousel dot pill-morphs — small, once, earned. */
+.qcards-dot { transition: width 200ms ease-out, background-color 200ms ease-out; }
+.qcards-dot.on { width: 20px; border-radius: 999px; }
+
+/* Status line: the one permitted loop — three soft dots breathing while thinking. */
+.status-dots { display: inline-flex; gap: 3px; margin-left: 4px; }
+.status-dots i {
+  width: 4px; height: 4px; border-radius: 50%;
+  background: var(--ink-faded);
+  animation: status-breathe 1.6s ease-in-out infinite;
+}
+.status-dots i:nth-child(2) { animation-delay: 0.2s; }
+.status-dots i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes status-breathe {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.8; }
+}
+
+/* Logo: footprint steps in on first paint (register 3, once). */
+.app-logo { flex: none; display: inline-flex; align-self: center; }
+.app-logo svg { width: 40px; height: 40px; display: block; }
+.app-logo .logo-foot {
+  opacity: 0;
+  transform: translateY(4px);
+  animation: foot-step 400ms cubic-bezier(0.22, 1, 0.36, 1) 200ms forwards;
+}
+@keyframes foot-step {
+  to { opacity: 1; transform: translateY(0); }
+}
+.app-title-lockup { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .artifact-card, .qcard, .closure-card, .teacher-msg, .chip,
+  .text-btn, .icon-btn, .qcards-arrow, .qcards-submit-btn,
+  .input-field, .qcard-input, .qcards-dot { transition: none; }
+  .artifact-card:hover, .qcard:hover { transform: none; }
+  .chip:active { transform: none; }
+  .status-dots i { animation: none; opacity: 0.6; }
+  .app-logo .logo-foot { animation: none; opacity: 1; transform: none; }
+}
+
+/* Header theme toggle: sun shows in dark (click → light), moon in light. */
+#btn-theme .icon-sun { display: none; }
+#btn-theme .icon-moon { display: block; }
+:root[data-theme="dark"] #btn-theme .icon-sun { display: block; }
+:root[data-theme="dark"] #btn-theme .icon-moon { display: none; }
+
+/* --------------------------------------------- §2c 探索天空 (kid background) */
+/* Faint brand motifs drifting behind the paper. Whisper opacity, glacial
+   timing — noticed on the third visit, never while reading. Content sits
+   above via .chat-main z-index below. */
+
+.sky { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.chat-main { position: relative; z-index: 1; }
+
+.sky-item { position: absolute; opacity: 0.1; }
+:root[data-theme="dark"] .sky-item { opacity: 0.07; }
+
+.sky-boat     { width: 76px; left: 7%;  top: 26%; animation: sky-drift-x 90s linear infinite alternate, sky-bob 11s ease-in-out infinite alternate; }
+.sky-pinwheel { width: 58px; right: 9%; top: 14%; animation: sky-bob 14s ease-in-out infinite alternate; }
+.sky-pinwheel .pinwheel-head { transform-origin: 20px 20px; animation: sky-spin 26s linear infinite; }
+.sky-foot-a   { width: 26px; left: 15%; bottom: 27%; transform: rotate(-14deg); animation: sky-steps 16s ease-in-out infinite; }
+.sky-foot-b   { width: 26px; left: 20%; bottom: 22%; transform: rotate(10deg); animation: sky-steps 16s ease-in-out infinite 8s; }
+.sky-glass    { width: 62px; right: 13%; bottom: 16%; transform: rotate(12deg); animation: sky-bob 17s ease-in-out infinite alternate 3s; }
+.sky-star     { width: 30px; right: 24%; top: 40%; animation: sky-twinkle 9s ease-in-out infinite; }
+.sky-kite     { width: 54px; left: 12%; top: 8%;  animation: sky-sway 13s ease-in-out infinite alternate, sky-bob 9s ease-in-out infinite alternate; }
+.sky-cloud    { width: 88px; right: 30%; top: 7%; opacity: 0.06; animation: sky-drift-x 120s linear infinite alternate; }
+.sky-plane    { width: 60px; left: 32%; top: 55%; animation: sky-glide 22s ease-in-out infinite alternate; }
+.sky-balloon  { width: 40px; right: 7%; top: 52%; animation: sky-rise-sway 19s ease-in-out infinite alternate; }
+.sky-blocks   { width: 58px; left: 6%;  bottom: 8%; animation: sky-bob 21s ease-in-out infinite alternate 5s; }
+.sky-leaf     { width: 30px; right: 18%; bottom: 34%; animation: sky-leaf-turn 24s ease-in-out infinite alternate; }
+
+@keyframes sky-bob {
+  from { translate: 0 0; }
+  to   { translate: 0 -14px; }
+}
+@keyframes sky-drift-x {
+  from { margin-left: 0; }
+  to   { margin-left: 9vw; }
+}
+@keyframes sky-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes sky-steps {
+  0%, 12%  { opacity: 0; }
+  25%, 70% { opacity: 0.08; }
+  85%, 100% { opacity: 0; }
+}
+@keyframes sky-twinkle {
+  0%, 100% { opacity: 0.05; scale: 1; }
+  50%      { opacity: 0.13; scale: 1.12; }
+}
+@keyframes sky-sway {
+  from { rotate: -6deg; }
+  to   { rotate: 7deg; }
+}
+@keyframes sky-glide {
+  from { translate: 0 0; rotate: 0deg; }
+  to   { translate: 7vw -3vh; rotate: -4deg; }
+}
+@keyframes sky-rise-sway {
+  0%   { translate: 0 0; rotate: -3deg; }
+  50%  { translate: 6px -18px; rotate: 3deg; }
+  100% { translate: -4px -34px; rotate: -2deg; }
+}
+@keyframes sky-leaf-turn {
+  from { rotate: -10deg; translate: 0 0; }
+  to   { rotate: 24deg; translate: 8px 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sky-item, .sky-pinwheel .pinwheel-head { animation: none; }
+}
+@media (max-width: 720px) {
+  /* narrow screens: the column owns the space — keep a few quiet corners */
+  .sky-boat, .sky-star, .sky-glass, .sky-cloud, .sky-plane, .sky-blocks { display: none; }
+}
+
+/* §3 童趣 display type: the wordmark and welcome greeting use a rounded,
+   hand-drawn face; body text stays serif/sans for tired-teacher readability. */
+.app-title { font-family: "ZCOOL KuaiLe", var(--font-serif); font-weight: 400; font-size: 22px; }
+.welcome-title { font-family: "ZCOOL KuaiLe", var(--font-serif); font-weight: 400; font-size: 26px; }
+
+/* ----------------------------------------- header v2 (taller, full lockup) */
+.app-header-inner {
+  padding-top: calc(var(--sp) * 1.75);
+  padding-bottom: calc(var(--sp) * 1.75);
+  gap: calc(var(--sp) * 1.5);
+}
+.app-logo svg { width: 48px; height: 48px; }
+.app-names { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.app-title { font-size: 24px; color: var(--green); letter-spacing: 0.04em; }
+.app-platform-sub {
+  font-family: var(--font-serif);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-faded);
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+}
+/* center cluster sits mid-bar; spanner hugs the right edge */
+.header-center { display: flex; align-items: center; gap: var(--sp); margin: 0 auto; }
+.header-right { display: flex; align-items: center; flex: none; }
+.app-subtitle { flex: 0 1 auto; }
+
+@media (max-width: 640px) {
+  .app-platform-sub { display: none; }
+  .app-title { font-size: 20px; }
+  .app-logo svg { width: 38px; height: 38px; }
+}
+
+/* ------------------------------------------------ chat typography (§3 v2) */
+/* Agent prose reads as a colleague's written note: literary serif, roomier
+   leading. Teacher bubbles and UI controls stay sans. */
+.agent-body {
+  font-family: var(--font-serif);
+  font-size: 16.5px;
+  line-height: 1.9;
+}
+.agent-body strong { font-weight: 600; }
+.qcard-text { font-family: var(--font-serif); }
