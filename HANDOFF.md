@@ -2,6 +2,14 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-17 — 预设/生成 rebalance: upstream blessed, ADR-0003 drafted (uncommitted)
+
+- **锋×枫 call transcript reviewed** (Herman pasted; not archived in repo yet). 枫's verdicts: product = 主题探究 agent, 项目式 is a Stage-3-signal branch, never the spine; workflow needs no rewrite — agent never implemented her Stage 1 = five steps from 小小探索家 (预先计划网络图 with 极左/极右 warnings → 建立共同经验 in exactly 5 activity types 集体/小组/个别/自主游戏·环创/亲子 → 发掘已有知识 KWL → 发展探究问题 问题墙/KWHL → 创设环境 材料清单+家长信+周月计划); delivery contract = 「不要一点一点吐给我，直接给我一个比较明确的蓝图」. Validates the contradictions doc AND Herman's information-starvation layer. 锋 reworks Stage 1 next, then Stages 2–3 with 枫.
+- **Detailed blueprint plan produced in-session** (user journey + harness design): planning lens journey (v0.1 blueprint turn 1 + ≤3 cards → 对照+delta+version on answers), lens-gated rule table (`unmarked_hypothesis`/`status_escalation` block, `planning_refusal`/`ask_without_delivery`/density warns, all dormancy-gated so existing flows/styles/fixtures pass unchanged), `blueprint_delta` not full re-emission.
+- **Herman's decisions (AskUserQuestion)**: this pass = ADR only; mode = derived lens from existing `teacher_mode` (NO stored `interaction_mode` — drift risk); WF03b 三问 softens to auto-extract + ask-missing-only; 周/月计划 template upload deferred, noted as planned capability.
+- **[docs/adr/0003-blueprint-first-planning-lens.md](docs/adr/0003-blueprint-first-planning-lens.md) written, status Proposed** — flips to Accepted when 锋's reworked Stage-1 doc lands + Herman signs off. Gate `--fast` green. **Uncommitted.**
+- **Next**: archive 枫's PPT + 锋's reworked Stage-1 doc in `source-docs/` (faithful extractions) — Phase 1 prompt spike blocked on them; then Phase 1 per ADR. Pollution guard when building: existing fixtures must pass with zero edits.
+
 ## 2026-07-16 (later) — 小小探索家 rebrand, dual themes, 问题卡 carousel, 用户中心 v2 (dev only)
 
 One large batch, all browser-verified, 175/175 tests, full gate green. **UPDATE: shipped to PUBLIC same day** — `88b3204` (this batch + role-gated spanner + full-bleed header) is live on main/public; `CHANNEL=public` is set in the public `.env`, `/api/health` reports it, and the spanner is hidden there for visitors/teachers and shown only to a signed-in admin (Ctrl+` same rule). Live-verified on http://43.136.113.129/. **Ship war story:** Google Drive rolled back `.git/refs/heads/main` mid-merge AND resurrected a stale working tree over a dev checkout — recovery: push `dev:main` directly (no local ref writes), `git update-ref` to repair local main, `git checkout -- .` to restore the tree. The move-repo-off-Drive recommendation stands, urgently.
