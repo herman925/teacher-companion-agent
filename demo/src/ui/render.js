@@ -549,6 +549,12 @@ export function renderQuestionCards(questions, opts = {}) {
     const answered = answers.filter((a) => a.value.trim()).length;
     counter.textContent = `已答 ${answered} / 共 ${questions.length}`;
     submitBtn.disabled = answered === 0 || root.classList.contains('submitted');
+    answers.forEach((a, i) => {
+      const seg = segs.children[i];
+      if (!seg) return;
+      seg.classList.toggle('done', Boolean(a.value.trim()));
+      seg.classList.toggle('skipped', a.skipped);
+    });
   };
 
   questions.forEach((q, i) => {
@@ -601,7 +607,10 @@ export function renderQuestionCards(questions, opts = {}) {
     track.append(card);
   });
 
-  // nav: ‹ dots › + 查看全部
+  // nav: ‹ [segmented answer-progress bar] › + 查看全部. The segments replace
+  // the old dots: one wide clickable segment per card, filled when answered,
+  // hollow when pending, hatched when skipped, ringed when in view — progress
+  // AND position in one strip loud enough to say "there are more cards".
   const nav = el('div', 'qcards-nav');
   const prev = el('button', 'qcards-arrow', '‹');
   prev.type = 'button';
@@ -609,17 +618,19 @@ export function renderQuestionCards(questions, opts = {}) {
   const next = el('button', 'qcards-arrow', '›');
   next.type = 'button';
   next.setAttribute('aria-label', '下一张');
-  const dots = el('div', 'qcards-dots');
+  const segs = el('div', 'qcards-segs');
+  segs.setAttribute('role', 'tablist');
   questions.forEach((_, i) => {
-    const dot = el('button', 'qcards-dot');
-    dot.type = 'button';
-    dot.setAttribute('aria-label', `第 ${i + 1} 张`);
-    dot.addEventListener('click', () => scrollToCard(i));
-    dots.append(dot);
+    const seg = el('button', 'qcards-seg');
+    seg.type = 'button';
+    seg.setAttribute('aria-label', `第 ${i + 1} 张，共 ${questions.length} 张`);
+    seg.append(el('span', 'qcards-seg-num', String(i + 1)));
+    seg.addEventListener('click', () => scrollToCard(i));
+    segs.append(seg);
   });
   const listToggle = el('button', 'qcards-list-toggle', '查看全部');
   listToggle.type = 'button';
-  nav.append(prev, dots, next, listToggle);
+  nav.append(prev, segs, next, listToggle);
   root.append(nav);
 
   const cardAt = (i) => track.children[i];
@@ -640,12 +651,12 @@ export function renderQuestionCards(questions, opts = {}) {
   };
   prev.addEventListener('click', () => scrollToCard(focusedIndex() - 1));
   next.addEventListener('click', () => scrollToCard(focusedIndex() + 1));
-  const markDot = () => {
+  const markSeg = () => {
     const idx = focusedIndex();
-    [...dots.children].forEach((d, i) => d.classList.toggle('on', i === idx));
+    [...segs.children].forEach((d, i) => d.classList.toggle('on', i === idx));
   };
-  track.addEventListener('scroll', () => requestAnimationFrame(markDot), { passive: true });
-  markDot();
+  track.addEventListener('scroll', () => requestAnimationFrame(markSeg), { passive: true });
+  markSeg();
 
   listToggle.addEventListener('click', () => {
     const listed = root.classList.toggle('as-list');

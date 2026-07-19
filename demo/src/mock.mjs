@@ -259,23 +259,42 @@ function turnBlueprintRound1(message, opts = {}) {
       ],
     },
   };
-  const qResources = {
-    id: 'q-bp-resources',
-    text: `园里或周边有哪些能用上的${resource}资源`,
-    why: '真实人物和场地会显著改变网络图的重心',
-    examples: [`附近有${resource}队/传承人，可以约参观`, '园里有相关道具和图书角材料', '暂时想不到，先按通用方案来'],
-  };
-  const qDuration = {
-    id: 'q-bp-duration',
-    text: '这个主题你打算做多久、班里大概多少个孩子',
-    why: '周期和班额决定周计划怎么排',
-    examples: ['做一个月，30 个孩子左右', '先试两三周看看', '园里统一安排，还没定'],
-  };
+  // 必答缺口清单（锋版 WF-01 intake）：主题、年龄段/班额、可用资源、预计周期、
+  // 输出形式。已经从消息或档案里读到的，静默亮灯跳过——绝不重复问（≤3 张）。
+  const durationKnown = /([一两三四1-9])\s*个?\s*(月|周|星期)/.test(message);
+  const formatKnown = /月计划|周计划|日计划/.test(message);
+  const classKnown = Boolean(opts.profile && String(opts.profile.classSize || '').trim()) || /\d+\s*个?\s*(孩子|人|幼儿)/.test(message);
+  const gapCards = [
+    {
+      id: 'q-bp-resources',
+      text: `园里或周边有哪些能用上的${resource}资源`,
+      why: '真实人物和场地会显著改变网络图的重心',
+      examples: [`附近有${resource}队/传承人，可以约参观`, '园里有相关道具和图书角材料', '暂时想不到，先按通用方案来'],
+    },
+    !durationKnown && {
+      id: 'q-bp-duration',
+      text: '这个主题你打算做多久',
+      why: '周期决定五步怎么铺、计划排几周',
+      examples: ['做一个月', '先试两三周看看', '园里统一安排，还没定'],
+    },
+    !formatKnown && {
+      id: 'q-bp-format',
+      text: '最后想要什么形式的计划',
+      why: '我会把活动直接排进你要的格式',
+      examples: ['月计划一张表', '按周计划来', '先给大纲，格式以后再说'],
+    },
+    !classKnown && {
+      id: 'q-bp-class',
+      text: '班里大概多少个孩子',
+      why: '班额影响小组活动和材料的量',
+      examples: ['30 个左右', '20 出头', '混龄班，人数不固定'],
+    },
+  ].filter(Boolean).slice(0, 3);
   return {
     reply_markdown:
-      `好，我先把「${resource}」的阶段一预设蓝图整理给你——主题判断、五步路径和两张网络图都在下面的卡片里，标了「预设·待验证」的是我按${band}孩子的一般特点预判的，不当作已发生的事实。\n\n你可以直接在方向上删改；下面两件事补上后，我就把完整预设包（2–3 周计划、五类活动方案、环境与材料）排出来。`,
-    question: qResources,
-    questions: [qResources, qDuration],
+      `好，我先把「${resource}」的阶段一预设蓝图整理给你——主题判断、五步路径、两张网络图做了细案，后面的周计划、活动包和环境模块也先立了骨架（标「待细化」），你第一眼就能看到全貌。标「预设·待验证」的是我按${band}孩子的一般特点预判的，不当作已发生的事实。\n\n你可以直接在方向上删改；下面几件事补上后，我就把骨架部分细化成完整预设包。`,
+    question: gapCards[0],
+    questions: gapCards,
     artifacts: [blueprint],
     closure_loop: null,
     state_delta: {

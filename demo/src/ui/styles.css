@@ -488,17 +488,29 @@ html, body {
 }
 .qcards-arrow:hover { background: var(--cream); }
 
-.qcards-dots { display: flex; gap: 8px; }
-.qcards-dot {
+/* Segmented answer-progress bar — replaces the old dots. One wide segment per
+   card: hollow = pending, green fill = answered, hatched = skipped, ring = in
+   view. Loud enough that "there are more cards" is unmissable. */
+.qcards-segs { display: flex; gap: 6px; flex: 1; max-width: 320px; }
+.qcards-seg {
   appearance: none;
-  border: none;
-  background: var(--border-warm);
-  width: 8px; height: 8px;
-  border-radius: 50%;
+  border: 1.5px solid var(--border-warm);
+  background: var(--surface);
+  flex: 1;
+  height: 18px;
+  border-radius: 999px;
   padding: 0;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-.qcards-dot.on { background: var(--green); }
+.qcards-seg-num { font-size: 11px; color: var(--ink-faded); line-height: 1; }
+.qcards-seg.on { border-color: var(--green); box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 25%, transparent); }
+.qcards-seg.done { background: var(--green); border-color: var(--green); }
+.qcards-seg.done .qcards-seg-num { color: var(--on-accent); }
+.qcards-seg.skipped { background: repeating-linear-gradient(45deg, var(--border-warm) 0 3px, transparent 3px 6px); }
+.qcards-seg.skipped .qcards-seg-num { color: var(--ink-faded); }
 
 .qcards-list-toggle {
   margin-left: auto;
@@ -515,7 +527,7 @@ html, body {
 /* 查看全部: flatten the carousel into a stacked review list */
 .qcards.as-list .qcards-track { flex-direction: column; overflow-x: visible; scroll-snap-type: none; }
 .qcards.as-list .qcard { flex-basis: auto; width: 100%; }
-.qcards-nav.list-mode .qcards-arrow, .qcards-nav.list-mode .qcards-dots { display: none; }
+.qcards-nav.list-mode .qcards-arrow, .qcards-nav.list-mode .qcards-segs { display: none; }
 
 .qcards-bar {
   display: flex;
@@ -1229,8 +1241,8 @@ body.rail-pinned .composer { left: 260px; }
 }
 
 /* Register 3 (童趣): the active carousel dot pill-morphs — small, once, earned. */
-.qcards-dot { transition: width 200ms ease-out, background-color 200ms ease-out; }
-.qcards-dot.on { width: 20px; border-radius: 999px; }
+.qcards-seg { transition: border-color 200ms ease-out, background-color 200ms ease-out, box-shadow 200ms ease-out; }
+
 
 /* Status line: the one permitted loop — three soft dots breathing while thinking. */
 .status-dots { display: inline-flex; gap: 3px; margin-left: 4px; }
@@ -1262,7 +1274,7 @@ body.rail-pinned .composer { left: 260px; }
 @media (prefers-reduced-motion: reduce) {
   .artifact-card, .qcard, .closure-card, .teacher-msg, .chip,
   .text-btn, .icon-btn, .qcards-arrow, .qcards-submit-btn,
-  .input-field, .qcard-input, .qcards-dot { transition: none; }
+  .input-field, .qcard-input, .qcards-seg { transition: none; }
   .artifact-card:hover, .qcard:hover { transform: none; }
   .chip:active { transform: none; }
   .status-dots i { animation: none; opacity: 0.6; }

@@ -117,6 +117,23 @@ test('round 2 delta applies cleanly and the flow rejoins the normal from_zero pa
   assert.ok(!(r3.artifacts || []).some((a) => a.type === 'blueprint'), 'after round 2 the normal flow owns the course');
 });
 
+// ---------- required-gap intake: ask only what the teacher hasn't said ----------
+
+test('gap cards skip what the message already answers (亮灯), ask what it lacks', () => {
+  // PLAN_MSG says 一个月 + 月计划 → duration and format are known; class size is not.
+  const known = mockTurn(createInitialState('t-gap1'), [], PLAN_MSG);
+  const knownIds = known.questions.map((q) => q.id);
+  assert.ok(!knownIds.includes('q-bp-duration'), 'duration already given — never re-asked');
+  assert.ok(!knownIds.includes('q-bp-format'), '月计划 already named — format never re-asked');
+  assert.ok(knownIds.includes('q-bp-class'), 'class size missing — asked');
+  // A bare planning request lacks duration and format → both cards appear (≤3 total).
+  const bare = mockTurn(createInitialState('t-gap2'), [], '我想做一套醒狮主题的整体方案');
+  const bareIds = bare.questions.map((q) => q.id);
+  assert.ok(bareIds.includes('q-bp-duration'));
+  assert.ok(bareIds.includes('q-bp-format'));
+  assert.ok(bare.questions.length <= 3, 'planning density guardrail holds');
+});
+
 // ---------- both directions: no pollution of existing journeys ----------
 
 test('non-planning from_zero entry stays on the intent-question path (no blueprint)', () => {

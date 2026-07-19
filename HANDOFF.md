@@ -11,6 +11,7 @@ Latest session first. Keep entries short and factual; link instead of restating.
 - **Web ⇄ 小程序 accounts** — [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §7b: MP does NOT replace web; both are surfaces over server-side accounts/courses (history follows login, already true). WeChat identity = a BINDING on our users row via UnionID (needs MP + 网站应用 under one 开放平台 subject — D1 again); never the primary key (admin-provisioned accounts stay first-class). Open question 6 added (UnionID mechanics/扫码 OAuth — 待核实).
 - Verified: round-1 skeleton in browser (7 modules, 3 「待细化」 hypothesis chips, edges at 0.45), 21 blueprint/map/crawler tests green, full gate green.
 - **Next build candidates, in order**: three-panel workspace (§5b), node-detail popover fed by `body` (rationale fields arrive with Phase-3 schema), then blueprint_delta/engine versioning per ADR-0003 Phase 3.
+- **(later) Required-gap intake + carousel progress (Herman's asks)**: ① 必答缺口清单 codified from 锋版 WF-01 (主题/资源 · 年龄段与班额 · 可用资源与人物 · 预计周期 · 输出形式) — stage0 prompt lists it with the 亮灯 rule (already-given = never re-asked); mock builds gap cards dynamically (message says 一个月+月计划 → those cards skipped, tested both directions). ② Question-card dots replaced with a **segmented progress bar**: numbered wide segments, green-filled when answered, hatched when skipped, ringed when in view, clickable — browser-verified (1 filled / 2·3 hollow on a 3-card turn). DESIGN.md 问题卡 bullet updated.
 
 ## 2026-07-19 (later) — Ultracode batch: 导图 view, horizon fixed, pedagogy depth, 小程序 doc
 
