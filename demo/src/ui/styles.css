@@ -1401,3 +1401,43 @@ body.rail-pinned .composer { left: 260px; }
 }
 .agent-body strong { font-weight: 600; }
 .qcard-text { font-family: var(--font-serif); }
+
+/* ---------------------------------------------------------------- blueprint
+   预设蓝图 card (ADR-0003): client-numbered collapsible outline. Numbering and
+   collapse are deterministic UI state — the model only ships the tree. */
+.blueprint-card { display: flex; flex-direction: column; gap: calc(var(--sp) * 1.5); }
+.bp-version {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-faded);
+  border: 1px solid var(--line, rgba(0,0,0,0.12));
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.bp-module, .bp-branch { border-left: 2px solid var(--green-wash); padding-left: calc(var(--sp) * 1.5); }
+.bp-module > summary, .bp-branch > summary {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  cursor: pointer; list-style: none; user-select: none;
+}
+.bp-module > summary::-webkit-details-marker, .bp-branch > summary::-webkit-details-marker { display: none; }
+.bp-module > summary::before, .bp-branch > summary::before {
+  content: '▸'; color: var(--ink-faded); font-size: 12px; transition: transform 140ms ease-out;
+}
+.bp-module[open] > summary::before, .bp-branch[open] > summary::before { transform: rotate(90deg); }
+.bp-module > summary .bp-node-title { font-family: var(--font-serif); font-weight: 600; color: var(--green); }
+.bp-number { font-variant-numeric: tabular-nums; color: var(--ink-faded); font-size: 13px; min-width: 2.2em; }
+.bp-node-title { color: var(--ink); }
+.bp-leaf { padding: 2px 0 2px calc(var(--sp) * 1.5); }
+.bp-leaf-line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.bp-body { font-size: 14px; color: var(--ink); margin: 4px 0 6px calc(2.2em + 8px); line-height: 1.7; }
+.bp-branch, .bp-leaf { margin-left: calc(var(--sp) * 1); }
+.bp-chip {
+  font-size: 11px; border-radius: 999px; padding: 1px 8px; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.bp-confirmed { background: var(--green-wash); color: var(--green); }
+.bp-teacher_preset { background: var(--persimmon-wash); color: var(--persimmon); }
+.bp-ai_suggestion { background: transparent; border-color: var(--ink-faded); color: var(--ink-faded); }
+.bp-hypothesis { background: transparent; border-color: var(--persimmon); color: var(--persimmon); }
+.bp-rollup { font-size: 11px; color: var(--persimmon); }
+.bp-legend { display: flex; gap: 8px; flex-wrap: wrap; margin-top: calc(var(--sp) * 1); opacity: 0.85; }

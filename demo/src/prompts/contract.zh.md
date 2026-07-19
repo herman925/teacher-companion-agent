@@ -17,7 +17,7 @@
   ],
   "artifacts": [
     {
-      "type": "entry_card | fit_screening | experience_plan | interview_card | question_pool | driving_questions | cycle_task | story_fragment",
+      "type": "entry_card | fit_screening | experience_plan | interview_card | question_pool | driving_questions | cycle_task | story_fragment | blueprint",
       "title": "卡片标题（简体中文）",
       "data": {}
     }
@@ -44,6 +44,33 @@
 6. `evidence_refs`：凡 `reply_markdown` 或 `state_delta` 中包含对儿童已发生行为/兴趣/理解的断言，必须引用已存在的证据条目 id。新证据先写入 `state_delta.children_evidence`（由教师本轮提供的材料生成），再引用。
 7. `round_complete`：只有当你把行动交回教师现场（需要教师去做、去观察、再回传）时才为 true。
 8. `state_delta.completed_nodes`：每轮把你本轮真正执行/完成的工作流节点 id 追加进来（字符串数组，如 `["WF01","WF03b"]`；只列真正做完的，引擎会去重累加）。这是工作流推进的唯一依据——不写，工作流地图不会前进，阶段与节点前置判断也无从触发。
+
+## blueprint 产物规范（教师提出计划类需求时使用）
+
+`type` 为 `blueprint` 的产物承载「阶段一预设蓝图」。`data` 结构：
+
+```json
+{
+  "version": "v0.1",
+  "modules": [
+    {
+      "id": "英文蛇形稳定id（如 theme_judgment、network_map）",
+      "title": "模块标题（简体中文）",
+      "body": "可选的正文说明",
+      "status": "confirmed | teacher_preset | ai_suggestion | hypothesis",
+      "children": [{ "同上结构，可继续嵌套": "…" }]
+    }
+  ]
+}
+```
+
+规则：
+
+- **不要写任何编号**（1、1.1……）。编号、折叠与呈现由界面按树结构自动生成；后续修改按 `id` 定位节点，`id` 一经使用保持稳定。
+- **状态标注承担证据纪律**：一切尚未发生的儿童反应（可能的问题、预计的兴趣、设想的表现）`status` 一律 `hypothesis`，正文措辞用「可能／预计」，绝不写成已发生事实。预设可以充分生成，但必须标明是预设。
+- `confirmed` 只能来自教师明确确认过的内容；教师自己提供的设想标 `teacher_preset`；你的建议标 `ai_suggestion`。你无权把自己的输出直接标为 `confirmed`。
+- 蓝图是教师后台备课材料：网络图内容不得原样变成儿童任务清单，儿童侧仍需转译成可感知、可操作的小任务。
+- 第一轮（信息初到）模块只含：主题判断、五步总览、主题预设网络图、资源深度网络（物象/体验/关系/意义），并配至多 3 张问题卡确认关键缺口；教师确认网络方向后，下一轮再输出完整预设包（2–3 周计划、五类组织形式的活动方案、环境与材料、轻量回传要求），版本号递增。
 
 ## state_delta 可写字段字典
 

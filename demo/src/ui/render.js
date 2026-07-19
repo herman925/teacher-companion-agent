@@ -6,6 +6,7 @@
 
 import { STAGE_NAMES } from '../engine.mjs';
 import { WF_NODES, NODE_PREREQS } from '../wf-nodes.mjs';
+import { BLUEPRINT_STATUS, normalizeBlueprint, numberBlueprint } from '../blueprint-util.mjs';
 
 // ---------------------------------------------------------------- sanitizer
 
@@ -153,6 +154,7 @@ const ARTIFACT_SEALS = {
   driving_questions: '驱动问题',
   cycle_task: '任务卡',
   story_fragment: '课程故事',
+  blueprint: '预设蓝图',
 };
 
 /** Known data-field labels; unknown fields fall back to the raw key. */
@@ -259,6 +261,7 @@ function renderValue(v) {
  * @param {import('../types.mjs').TurnArtifact|Object} artifact
  */
 export function renderArtifactCard(artifact) {
+  if (artifact.type === 'blueprint') return renderBlueprintCard(artifact);
   const card = el('article', 'artifact-card');
   const head = el('header', 'artifact-head');
   head.append(el('span', 'artifact-seal', ARTIFACT_SEALS[artifact.type] ?? '卡片'));
@@ -271,6 +274,74 @@ export function renderArtifactCard(artifact) {
     card.append(section);
   }
   return card;
+}
+
+// ---------------------------------------------------------------- blueprint
+
+/**
+ * 预设蓝图 card: the model sends a semantic tree (stable ids + provenance
+ * status); numbering and collapse are reconstructed HERE, deterministically,
+ * client-side (ADR-0003 amendment 5 — the model never writes display numbers).
+ * Modules render as <details> (open by default); nested branches collapse
+ * unless they carry unverified content, so thin/unconfirmed spots stay visible.
+ * @param {import('../types.mjs').TurnArtifact|Object} artifact
+ */
+export function renderBlueprintCard(artifact) {
+  const { version, modules } = normalizeBlueprint(artifact.data);
+  const numbered = numberBlueprint(modules);
+  const card = el('article', 'artifact-card blueprint-card');
+  const head = el('header', 'artifact-head');
+  head.append(el('span', 'artifact-seal', ARTIFACT_SEALS.blueprint));
+  head.append(el('h3', 'artifact-title', artifact.title ?? '阶段一预设蓝图'));
+  head.append(el('span', 'bp-version', version));
+  card.append(head);
+  for (const mod of numbered) card.append(renderBlueprintNode(mod, true));
+  const legend = el('div', 'bp-legend');
+  for (const [key, label] of Object.entries(BLUEPRINT_STATUS)) {
+    legend.append(el('span', `bp-chip bp-${key}`, label));
+  }
+  card.append(legend);
+  return card;
+}
+
+/** One blueprint node → <details> (has children) or leaf row. */
+function renderBlueprintNode(node, isModule) {
+  const chip = el('span', `bp-chip bp-${node.status}`, BLUEPRINT_STATUS[node.status]);
+  if (!node.children.length) {
+    const row = el('div', 'bp-leaf');
+    const line = el('div', 'bp-leaf-line');
+    line.append(el('span', 'bp-number', node.number));
+    const title = el('span', 'bp-node-title');
+    title.innerHTML = sanitizeInline(node.title);
+    line.append(title, chip);
+    row.append(line);
+    if (node.body) {
+      const body = el('div', 'bp-body');
+      body.innerHTML = sanitizeMarkdown(node.body);
+      row.append(body);
+    }
+    return row;
+  }
+  const details = document.createElement('details');
+  details.className = isModule ? 'bp-module' : 'bp-branch';
+  const pending = node.rollup.hypothesis + node.rollup.ai_suggestion;
+  // Modules stay open; sub-branches open only when something inside still
+  // needs the teacher's eye — collapse-state doubles as the 亮灯 board.
+  details.open = isModule || pending > 0;
+  const summary = document.createElement('summary');
+  summary.append(el('span', 'bp-number', node.number));
+  const title = el('span', 'bp-node-title');
+  title.innerHTML = sanitizeInline(node.title);
+  summary.append(title, chip);
+  if (pending > 0) summary.append(el('span', 'bp-rollup', `${pending} 项待确认`));
+  details.append(summary);
+  if (node.body) {
+    const body = el('div', 'bp-body');
+    body.innerHTML = sanitizeMarkdown(node.body);
+    details.append(body);
+  }
+  for (const child of node.children) details.append(renderBlueprintNode(child, false));
+  return details;
 }
 
 // ----------------------------------------------------------- question block

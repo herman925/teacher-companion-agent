@@ -54,8 +54,15 @@ function turnEntry(message, opts = {}) {
     case 'optimize_existing': return turnOptimizeEntry();
     case 'mid_course': return turnMidCourseEntry();
     case 'material_support': return turnMaterialEntry(message);
-    default: return turnIntentQuestion(message, opts);
+    default:
+      if (isPlanningRequest(message)) return turnBlueprintRound1(message, opts);
+      return turnIntentQuestion(message, opts);
   }
+}
+
+/** Planning-lens trigger: teacher explicitly asks for a plan/整体方案 (ADR-0003). */
+function isPlanningRequest(message) {
+  return /月计划|周计划|整体计划|做.{0,4}计划|一套方案|整体方案|预设方案|蓝图/.test(message);
 }
 
 function detectResource(message) {
@@ -144,6 +151,11 @@ const MAX_NUDGES = 2;
 // ======================================================== 从零陪跑 from_zero
 
 function fromZeroFlow(state, history, message) {
+  // Blueprint round 2: round 1 delivered the maps (marker in history), the
+  // teacher has replied (confirmation or card answers) → full 预设包.
+  if (!state.resource_entry_card && priorTurnsMatching(history, BLUEPRINT_MARKER) >= 1) {
+    return turnBlueprintRound2(state, history, message);
+  }
   if (!state.resource_entry_card) return turnEntryCard();
   if (!(state.children_evidence || []).length) return turnAwaitOrIngest(state, history, message);
   if (!(state.driving_question || {}).text) return turnPickDrivingQuestion(state, message);
@@ -196,6 +208,153 @@ function turnIntentQuestion(message, opts = {}) {
       { id: 'WF02', name: '信息补全', apply: '动态识别式提问：两张问题卡一次问清资源意图，教师打包作答' },
       { id: 'WF03b', name: '资源意图确认与课程可能性启发', apply: '先听资源意图，下一轮才出切口卡' },
     ], ['状态机优先', '教师资源意图优先'], '本轮写入 teacher_mode 与 theme_resource；stage 保持0'),
+  };
+}
+
+// ---------------------------------------------- 预设蓝图 planning fast path
+
+const BLUEPRINT_MARKER = /阶段一预设蓝图/;
+
+/** Shorthand blueprint node. */
+function bpNode(id, title, body, status = 'ai_suggestion', children = []) {
+  return { id, title, body, status, children };
+}
+
+/**
+ * Round 1（ADR-0003 两轮交付）: deliver 主题判断 + 五步总览 + 两张网络 first,
+ * then ask ≤3 gap cards. No display numbers in data — the UI numbers the tree.
+ */
+function turnBlueprintRound1(message, opts = {}) {
+  const resource = detectResource(message);
+  const band = opts.profile && String(opts.profile.ageBand || '').trim() ? String(opts.profile.ageBand).trim() : '中班';
+  const blueprint = {
+    type: 'blueprint',
+    title: `阶段一预设蓝图（${resource}·${band}）`,
+    data: {
+      version: 'v0.1',
+      modules: [
+        bpNode('theme_judgment', '主题判断', `「${resource}」贴近本地生活、有真实场域和人物，适合先做一轮主题探究；若后续孩子的问题持续冒出来、装不下了，再考虑往项目化分支发展，不急着现在定。`),
+        bpNode('five_steps', '五步总览（2–3 周）', '预先计划 → 建立共同经验 → 发掘已有知识 → 发展想探究的问题 → 布置探索环境。五步不严格分先后，都属于阶段一。', 'ai_suggestion', [
+          bpNode('five_steps.evidence', '每步留下什么', '网络图与方向确认；活动照片与儿童原话；「我们已经知道的」记录；问题墙照片；环创与材料清单。'),
+        ]),
+        bpNode('network_map', '主题预设网络图（教师备课用）', '围绕主题的可探究方向，供你筛选教育价值——给了不等于照搬，也不必全部听孩子的。', 'ai_suggestion', [
+          bpNode('network_map.origin', `${resource}的来源与故事`, '它从哪里来、和本地的关系。', 'ai_suggestion'),
+          bpNode('network_map.scene', '真实场景', `去看一次真实的${resource}活动／场地。`, 'ai_suggestion'),
+          bpNode('network_map.making', '制作与材料', '它是怎么做出来的、用了什么材料。', 'ai_suggestion'),
+          bpNode('network_map.child_questions', '幼儿可能提出的问题', `孩子可能会问：它为什么长这样、谁在做${resource}、我们能不能自己试一试。`, 'hypothesis'),
+        ]),
+        bpNode('depth_network', '资源深度网络（防浅表化）', '四层都转成孩子可感知、可操作的小任务，不做符号展示。', 'ai_suggestion', [
+          bpNode('depth_network.wuxiang', '物象层', '看、听、摸、比较：外形、声音、动作。', 'ai_suggestion'),
+          bpNode('depth_network.tiyan', '体验层', '模仿、游戏、材料尝试：配合与节奏。', 'ai_suggestion'),
+          bpNode('depth_network.guanxi', '关系层', '它和家人、社区、生活的联系：访谈、走访。', 'ai_suggestion'),
+          bpNode('depth_network.yiyi', '意义层', '孩子可能慢慢多一点亲近和表达——这一层等现场验证，不预写结论。', 'hypothesis'),
+        ]),
+      ],
+    },
+  };
+  const qResources = {
+    id: 'q-bp-resources',
+    text: `园里或周边有哪些能用上的${resource}资源`,
+    why: '真实人物和场地会显著改变网络图的重心',
+    examples: [`附近有${resource}队/传承人，可以约参观`, '园里有相关道具和图书角材料', '暂时想不到，先按通用方案来'],
+  };
+  const qDuration = {
+    id: 'q-bp-duration',
+    text: '这个主题你打算做多久、班里大概多少个孩子',
+    why: '周期和班额决定周计划怎么排',
+    examples: ['做一个月，30 个孩子左右', '先试两三周看看', '园里统一安排，还没定'],
+  };
+  return {
+    reply_markdown:
+      `好，我先把「${resource}」的阶段一预设蓝图整理给你——主题判断、五步路径和两张网络图都在下面的卡片里，标了「预设·待验证」的是我按${band}孩子的一般特点预判的，不当作已发生的事实。\n\n你可以直接在方向上删改；下面两件事补上后，我就把完整预设包（2–3 周计划、五类活动方案、环境与材料）排出来。`,
+    question: qResources,
+    questions: [qResources, qDuration],
+    artifacts: [blueprint],
+    closure_loop: null,
+    state_delta: {
+      teacher_mode: 'from_zero',
+      theme_resource: { name: resource },
+      completed_nodes: ['WF01', 'WF02'],
+      pending_confirmations: [{ path: 'course_plan_blueprint.network_map', reason: 'awaiting_choice', note: '网络图方向待教师筛选' }],
+    },
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace('from_zero', 0, [
+      { id: 'WF01', name: '入口识别', apply: '计划类请求→预设蓝图先行（先交付，后提问）' },
+      { id: 'WF02', name: '信息补全', apply: '静默提取主题与年段；只用两张问题卡问关键缺口' },
+    ], ['先给完整方案再一起改', '预设必须标注'], '蓝图 v0.1 交付；stage 保持0'),
+  };
+}
+
+/**
+ * Round 2: teacher confirmed/answered → full 预设包 v0.2 + 切口卡状态落库；
+ * network modules escalate to teacher_preset/confirmed only because the
+ * teacher's reply confirmed them（教师确认，不是模型自封）.
+ */
+function turnBlueprintRound2(state, history, message) {
+  const resource = (state.theme_resource || {}).name || '醒狮';
+  const blueprint = {
+    type: 'blueprint',
+    title: `阶段一完整预设包（${resource}）`,
+    data: {
+      version: 'v0.2',
+      modules: [
+        bpNode('network_map', '主题预设网络图', '按你的确认保留原方向；你补充的资源已并入关系层。', 'confirmed'),
+        bpNode('week_plan', '2–3 周计划', '', 'ai_suggestion', [
+          bpNode('week_plan.w1', '第 1 周：建立共同经验', `集体：一起看一场${resource}（视频或现场）；环创：教室里开${resource}体验角。`, 'ai_suggestion'),
+          bpNode('week_plan.w2', '第 2 周：发掘已知与问题墙', '集体讨论「我们已经知道的」；问题墙上墙，游戏中随手记孩子的问题。', 'ai_suggestion'),
+          bpNode('week_plan.w3', '第 3 周：聚焦与调整', '按问题墙的密集处调整活动重心，为下一阶段筛有潜力的问题。', 'ai_suggestion'),
+        ]),
+        bpNode('activity_pack', '活动方案包（五类组织形式）', '每类先给一个方向，确认后可展开成完整教案。', 'ai_suggestion', [
+          bpNode('activity_pack.jiti', '集体教学', `观看精彩的${resource}片段，讨论看到了什么、想到了什么。观察点：谁在反复提问。`, 'ai_suggestion'),
+          bpNode('activity_pack.xiaozu', '小组教学', '两人三足式协作小游戏，感受齐心协力。观察点：合作卡点与商量方式。', 'ai_suggestion'),
+          bpNode('activity_pack.gebie', '个别指导', '对特别着迷或还在观望的孩子做一对一跟随记录。', 'ai_suggestion'),
+          bpNode('activity_pack.youxi', '自主游戏·环创', `${resource}体验角持续开放，投放低结构材料。观察点：停留时长与自发语言。`, 'ai_suggestion'),
+          bpNode('activity_pack.qinzi', '亲子活动', `请家长带孩子看一次真实${resource}，或采访见过的长辈。`, 'ai_suggestion'),
+        ]),
+        bpNode('environment', '环境与材料', '', 'ai_suggestion', [
+          bpNode('environment.list', '材料清单', '相关照片视频、旧道具、可拆装的低结构材料、记录用便签与画纸。', 'ai_suggestion'),
+          bpNode('environment.letter', '给家长的一封信（草稿）', `说明班里正在做${resource}主题，请家长帮忙收集材料、分享经历。`, 'ai_suggestion'),
+          bpNode('environment.wall', '问题墙', '孩子的问题要进环境、贴上墙，不只留在教师记录里。', 'ai_suggestion'),
+        ]),
+        bpNode('feedback_card', '轻量回传（3 分钟）', '回来告诉我：儿童原话一两句、作品或问题墙照片、你最困惑的一点。回传是为了优化计划，不是为了解锁下一步。', 'ai_suggestion'),
+        bpNode('signal_note', '项目化信号提醒', '若同一问题反复出现、孩子开始说「我们可以做／试」、你的预设装不下他们的问题——这是可以往项目式探究发展的信号，到时我会提醒你，也可以不切换。', 'hypothesis'),
+      ],
+    },
+  };
+  return {
+    reply_markdown:
+      `收到。对照上一版：网络图方向按你的确认保留，你补充的信息我并进了计划。下面是完整预设包 v0.2——周计划、五类活动方案、环境与材料、回传要求都在卡片里，直接点开各部分删改就行。\n\n先按第 1 周做起来，不用等一切都齐。`,
+    question: null,
+    questions: [],
+    artifacts: [blueprint],
+    closure_loop: {
+      do_now: '按第 1 周安排开展 1–2 个建立共同经验的活动',
+      materials: '材料清单与给家长的一封信（草稿）都在预设包里，可直接取用',
+      bring_back: '儿童原话一两句、活动或问题墙照片、你最困惑的一点',
+      i_will: '对照蓝图说明哪些预设成立、哪些要调整，更新到 v0.3 并给下一轮建议',
+    },
+    state_delta: {
+      theme_fit_level: 'theme_inquiry',
+      completed_nodes: ['WF02b', 'WF03b', 'WF04', 'WF04b'],
+      resource_entry_card: {
+        original_theme: resource,
+        initial_goal: '先做一轮主题探究，观察孩子被什么抓住',
+        child_entry_points: ['真实场景入口', '声音与动作入口', '制作材料入口'],
+        perceivable_content: ['外形与声音', '配合的动作', '真实人物与场地'],
+        deepening_directions: ['关系层：家人与社区', '意义层：亲近与表达（待现场确认）'],
+        first_experience: `一起看一场真实的${resource}`,
+        adult_phrasings_to_avoid: ['传承精神', '弘扬传统文化'],
+      },
+    },
+    evidence_refs: [],
+    round_complete: true,
+    wf_trace: trace('from_zero', 0, [
+      { id: 'WF02b', name: '主题适配性筛查', apply: '判定 theme_inquiry：先做一轮主题探究' },
+      { id: 'WF03b', name: '资源意图确认', apply: '教师回复即确认——三问静默亮灯，不逐轮追问' },
+      { id: 'WF04', name: '主题网络', apply: '网络图经教师确认，状态升级 confirmed' },
+      { id: 'WF04b', name: '资源深度网络', apply: '四层并入预设包，意义层保持待验证' },
+    ], ['先给完整方案再一起改', '回传为了优化不为解锁'], '完整预设包 v0.2；awaiting_feedback 置 true'),
   };
 }
 
