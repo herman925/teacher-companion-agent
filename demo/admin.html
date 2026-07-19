@@ -394,6 +394,7 @@
       { key: 'bands', label: '任教班级', get: (c) => (Array.isArray(c.profile?.classBands) ? c.profile.classBands.join('、') : '') },
       { key: 'classSize', label: '班额', get: (c) => pf(c, 'classSize'), num: true },
       { key: 'state_version', label: '版本', get: (c) => c.state_version, num: true },
+      { key: 'blueprint', label: '蓝图', get: (c) => (c.blueprint_version ? `v${c.blueprint_version}（${c.blueprint_modules} 模块）` : '—') },
       { key: 'messages', label: '消息', get: (c) => c.messages, num: true },
       { key: 'snapshots', label: '快照', get: (c) => c.snapshots, num: true },
       { key: 'created_at', label: '创建时间', get: (c) => fmt(c.created_at) },

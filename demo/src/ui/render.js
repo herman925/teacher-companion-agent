@@ -297,42 +297,10 @@ export function renderBlueprintCard(artifact) {
   head.append(el('span', 'bp-version', version));
   card.append(head);
 
-  const listView = el('div', 'bp-list-view');
-  for (const mod of numbered) listView.append(renderBlueprintNode(mod, true));
-  card.append(listView);
-
-  // 导图 view: PC only (mobile keeps the list — DESIGN.md §4). Same tree,
-  // second renderer; the list stays the source of truth for interaction.
-  // The media query is LIVE: crossing 880px shows/hides the toggle and drops
-  // back to the list, so a resized window never strands a map-only card.
-  if (numbered.length && typeof window !== 'undefined' && window.matchMedia) {
-    const mq = window.matchMedia('(min-width: 880px)');
-    const toggle = el('div', 'bp-view-toggle');
-    const btnList = el('button', 'bp-view-btn active', '列表');
-    const btnMap = el('button', 'bp-view-btn', '导图');
-    btnList.type = btnMap.type = 'button';
-    toggle.append(btnList, btnMap);
-    head.insertBefore(toggle, head.querySelector('.bp-version'));
-    let mapView = null;
-    const show = (map) => {
-      btnList.classList.toggle('active', !map);
-      btnMap.classList.toggle('active', map);
-      listView.hidden = map;
-      if (map && !mapView) {
-        mapView = renderBlueprintMapView(numbered);
-        card.insertBefore(mapView, listView.nextSibling);
-      }
-      if (mapView) mapView.hidden = !map;
-    };
-    btnList.addEventListener('click', () => show(false));
-    btnMap.addEventListener('click', () => show(true));
-    const applyMq = () => {
-      toggle.hidden = !mq.matches;
-      if (!mq.matches) show(false); // narrow screens always fall back to the list
-    };
-    applyMq();
-    mq.addEventListener('change', applyMq);
-  }
+  // Card = list snapshot only. The 导图 and the LIVING plan moved to the
+  // workspace panel (DESIGN.md §5b) — the in-card toggle retired with it;
+  // chat cards remain historical snapshots of the turn that produced them.
+  card.append(renderBlueprintList(numbered));
 
   const legend = el('div', 'bp-legend');
   for (const [key, label] of Object.entries(BLUEPRINT_STATUS)) {
@@ -342,7 +310,18 @@ export function renderBlueprintCard(artifact) {
   return card;
 }
 
+/** Collapsible numbered outline over a numbered blueprint tree — shared by
+ * the chat card (snapshot) and the workspace panel (living document). */
+export function renderBlueprintList(numbered) {
+  const listView = el('div', 'bp-list-view');
+  for (const mod of numbered || []) listView.append(renderBlueprintNode(mod, true));
+  return listView;
+}
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** Live outside-click handlers for map popovers (purged on each new render). */
+const MAP_OUTSIDE_HANDLERS = new Set();
 
 /**
  * 导图 view: deterministic SVG tidy tree over the SAME numbered tree the list
@@ -351,10 +330,46 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
  * state lives here (UI state), never in the data. First render grows in with
  * a stagger (feedback register); re-layouts after a fold are instant.
  */
-function renderBlueprintMapView(numbered) {
+export function renderBlueprintMapView(numbered) {
   const wrap = el('div', 'bp-map');
   const scroller = el('div', 'bp-map-scroll');
   wrap.append(scroller);
+  // Node-detail popover (DESIGN.md §5b): the fold affordance toggles children;
+  // clicking anywhere ELSE on a node opens its detail — body now, rationale
+  // fields when the Phase-3 schema data starts flowing.
+  const pop = el('div', 'bp-pop');
+  pop.hidden = true;
+  wrap.append(pop);
+  const closePop = () => { pop.hidden = true; };
+  const openPop = (n, g) => {
+    pop.replaceChildren();
+    const head = el('div', 'bp-pop-head');
+    head.append(el('span', 'bp-num', n.number));
+    const t = el('strong');
+    t.innerHTML = sanitizeInline(n.title);
+    head.append(t, el('span', `bp-chip bp-${n.status}`, BLUEPRINT_STATUS[n.status]));
+    pop.append(head);
+    const body = el('div', 'bp-pop-body');
+    body.innerHTML = n.body ? sanitizeMarkdown(n.body) : '<em>（这个节点还没有展开说明）</em>';
+    pop.append(body);
+    const gBox = g.getBoundingClientRect();
+    const wBox = wrap.getBoundingClientRect();
+    pop.hidden = false;
+    const left = Math.max(8, Math.min(gBox.left - wBox.left, wrap.clientWidth - pop.offsetWidth - 8));
+    pop.style.left = `${left}px`;
+    pop.style.top = `${gBox.bottom - wBox.top + 8}px`;
+  };
+  // Outside-click closes the popover. Every new map view first purges the
+  // registry of listeners whose wrap left the DOM — renders never accumulate
+  // document-level listeners regardless of how the old view was discarded.
+  for (const h of [...MAP_OUTSIDE_HANDLERS]) {
+    if (!document.contains(h.wrap)) { document.removeEventListener('click', h.fn); MAP_OUTSIDE_HANDLERS.delete(h); }
+  }
+  const outsideClick = (ev) => { if (!wrap.contains(ev.target)) closePop(); };
+  MAP_OUTSIDE_HANDLERS.add({ wrap, fn: outsideClick });
+  document.addEventListener('click', outsideClick);
+  wrap.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closePop(); });
+  scroller.addEventListener('scroll', closePop, { passive: true }); // a scrolled map closes the (position-snapshotted) popover
   const collapsed = new Set();
   let first = true;
   let prevPos = new Map(); // id → {x,y} of the previous layout, for the FLIP reflow tween
@@ -421,17 +436,38 @@ function renderBlueprintMapView(numbered) {
         gi.append(badge);
       }
       g.append(gi);
+      g.setAttribute('tabindex', '0');
+      g.setAttribute('role', 'button');
       if (n.childCount) {
-        g.setAttribute('tabindex', '0');
-        g.setAttribute('role', 'button');
         g.setAttribute('aria-expanded', String(!n.collapsed));
         const toggleFold = () => {
+          closePop();
           if (collapsed.has(n.id)) collapsed.delete(n.id); else collapsed.add(n.id);
           draw();
         };
-        g.addEventListener('click', toggleFold);
+        // Dedicated fold affordance at the node's right edge; the node body
+        // opens the detail popover instead (DESIGN.md §5b interaction contract).
+        const hit = document.createElementNS(SVG_NS, 'g');
+        hit.setAttribute('class', 'bp-fold-hit');
+        hit.setAttribute('transform', `translate(${n.w - 13} ${n.h / 2})`);
+        const circle = document.createElementNS(SVG_NS, 'circle');
+        circle.setAttribute('r', 8);
+        const glyph = document.createElementNS(SVG_NS, 'text');
+        glyph.setAttribute('text-anchor', 'middle');
+        glyph.setAttribute('y', 3.5);
+        glyph.textContent = n.collapsed ? '＋' : '－';
+        hit.append(circle, glyph);
+        hit.addEventListener('click', (ev) => { ev.stopPropagation(); toggleFold(); });
+        gi.append(hit);
+        g.addEventListener('click', () => openPop(n, g));
         g.addEventListener('keydown', (ev) => {
           if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggleFold(); }
+          if (ev.key === 'd') openPop(n, g);
+        });
+      } else {
+        g.addEventListener('click', () => openPop(n, g));
+        g.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openPop(n, g); }
         });
       }
       svg.append(g);

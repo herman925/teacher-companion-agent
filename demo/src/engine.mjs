@@ -3,6 +3,7 @@
 // Runs in both the demo server (validation) and the browser (localStorage store).
 
 import { NODE_PREREQS, WF_NODES } from './wf-nodes.mjs';
+import { normalizeBlueprint } from './blueprint-util.mjs';
 
 const SCHEMA_VERSION = '0.1.0';
 
@@ -189,4 +190,70 @@ export function applyDelta(state, delta, ctx = {}) {
 /** Evidence ids present in state (for the harness fabrication check). */
 export function evidenceIds(state) {
   return new Set((state.children_evidence || []).map((e) => e.id));
+}
+
+/**
+ * Absorb blueprint artifacts into course_state.course_plan_blueprint — the
+ * LIVING mother plan the workspace panel renders (ADR-0003; DATABASE.md §2b).
+ * Module-granularity delta: modules merge by id (same id = replace, new id =
+ * append, order of first appearance kept); the ENGINE owns the version bump
+ * and the revision log — the model's version string is advisory display text.
+ * One escalation rule enforced here, deterministically: a module can never be
+ * BORN confirmed — first appearance degrades to ai_suggestion. Escalating an
+ * EXISTING module to confirmed is legal only while a teacher reply is being
+ * applied (the reply is the confirmation; later the ✓确认 UI event becomes the
+ * cleaner channel). Pure: returns { state, changed }.
+ */
+export function absorbBlueprint(state, turn, ctx = {}) {
+  const artifacts = (turn?.artifacts || [])
+    .filter((a) => a && a.type === 'blueprint')
+    .map((a) => ({ artifact: a, normalized: normalizeBlueprint(a.data) }))
+    .filter((a) => a.normalized.modules.length); // empty artifacts never bump the version
+  if (!artifacts.length) return { state, changed: [] };
+  const next = structuredClone(state);
+  const prev = next.course_plan_blueprint || { version: 0, modules: [], revision_log: [] };
+  const revisionLog = prev.revision_log || [];
+  // Escalation sets come from the PRE-TURN state only (deep walk) — multiple
+  // artifacts in one turn cannot launder a confirmation through each other,
+  // and nested nodes obey the same rule as modules.
+  const preConfirmed = new Set();
+  const preIds = new Set();
+  const walkPre = (n) => {
+    if (!n) return;
+    preIds.add(n.id);
+    if (n.status === 'confirmed') preConfirmed.add(n.id);
+    for (const c of n.children || []) walkPre(c);
+  };
+  for (const m of prev.modules || []) walkPre(m);
+  const sanitizeTree = (node) => {
+    const out = structuredClone(node);
+    const walk = (n) => {
+      if (n.status === 'confirmed' && !preConfirmed.has(n.id) && !(ctx.teacherTurn && preIds.has(n.id))) {
+        n.status = 'ai_suggestion'; // never BORN confirmed; escalation needs a teacher reply on an existing node
+      }
+      for (const c of n.children || []) walk(c);
+    };
+    walk(out);
+    return out;
+  };
+  const version = (prev.version || 0) + 1;
+  const modules = [...(prev.modules || [])];
+  const changed = [];
+  for (const { normalized } of artifacts) {
+    for (const mod of normalized.modules) {
+      const sanitized = sanitizeTree(mod);
+      const idx = modules.findIndex((m) => m.id === sanitized.id);
+      const op = idx >= 0 ? 'update' : 'set';
+      if (idx >= 0) modules[idx] = sanitized; else modules.push(sanitized);
+      changed.push(sanitized.id);
+      revisionLog.push({ v: version, module_id: sanitized.id, op });
+    }
+  }
+  next.course_plan_blueprint = {
+    version,
+    display_version: String(artifacts[artifacts.length - 1].artifact.data?.version ?? `v${version}`),
+    modules,
+    revision_log: revisionLog,
+  };
+  return { state: next, changed };
 }

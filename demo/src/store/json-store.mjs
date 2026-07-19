@@ -449,6 +449,9 @@ export function createJsonStore(opts = {}) {
           profile: byId[c.user_id]?.settings?.profile ?? null, // demographics columns/filters
           state_version: c.state_version, created_at: c.created_at, updated_at: c.updated_at,
           messages: (c.messages || []).length, snapshots: (c.snapshots || []).length,
+          // living-plan visibility (ADR-0003): version + how much is still unconfirmed
+          blueprint_version: c.course_state?.course_plan_blueprint?.version ?? null,
+          blueprint_modules: c.course_state?.course_plan_blueprint?.modules?.length ?? 0,
         }));
         out.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
         return out;

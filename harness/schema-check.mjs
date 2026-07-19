@@ -24,7 +24,9 @@ const SPEC_FIELDS = [
   'driving_question', 'goals_assessment_axis', 'cycle_history', 'child_learning_stage',
   'project_signal_level', 'story_materials', 'child_participation_difference', 'teacher_focus_feedback',
 ];
-const PLATFORM_FIELDS = ['stage', 'completed_nodes', 'awaiting_feedback', 'pending_confirmations', 'schema_version'];
+// course_plan_blueprint is platform-side: ENGINE-written (absorbed from
+// blueprint artifacts, ADR-0003 Phase 3), never model-writable via state_delta.
+const PLATFORM_FIELDS = ['stage', 'completed_nodes', 'awaiting_feedback', 'pending_confirmations', 'schema_version', 'course_plan_blueprint'];
 
 let schema = null;
 if (!fs.existsSync(SCHEMA_PATH)) {

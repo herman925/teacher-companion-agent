@@ -20,6 +20,15 @@
   --slate: #23282E;            /* Study-Lamp Slate — debug drawer only */
   --slate-text: #C9D1D9;       /* debug drawer text */
   --border-warm: #E5DED2;      /* hairline warm border */
+  /* status palette (2026-07-20): one DISTINCT hue per provenance status —
+     visual truth-tags must be readable at a glance (Herman's directive:
+     design-system purity never outranks teacher legibility). */
+  --status-truth: #2F5D50;       /* confirmed — banyan green (truth channel) */
+  --status-teacher: #3E6F9A;     /* teacher_preset — 信任蓝 */
+  --status-teacher-wash: #E7EFF6;
+  --status-ai: #C96A3B;          /* ai_suggestion — persimmon */
+  --status-guess: #7B5EA7;       /* hypothesis / pending_validation — 待验证紫 */
+  --status-guess-wash: #F0EBF8;
   --on-accent: #FFFFFF;        /* text on green/brick fills */
   --header-veil: rgba(250, 246, 239, 0.94);
   --paper-fade: rgba(250, 246, 239, 0); /* transparent end of paper gradients */
@@ -56,6 +65,12 @@
   --cream: #322C24;
   --brick: #C97C66;
   --border-warm: #3D362C;
+  --status-truth: #6FAE9C;
+  --status-teacher: #8FB4D8;
+  --status-teacher-wash: #273543;
+  --status-ai: #E39468;
+  --status-guess: #B49BD9;
+  --status-guess-wash: #342C42;
   --on-accent: #1E2B27;
   --header-veil: rgba(33, 29, 24, 0.94);
   --paper-fade: rgba(33, 29, 24, 0);
@@ -201,7 +216,8 @@ html, body {
 /* §4 teacher messages: right-aligned soft rectangles */
 .teacher-msg {
   margin-left: auto;
-  max-width: 75%;
+  max-width: 78%;
+  border-top-right-radius: 4px; /* speech-tail corner */
   width: fit-content;
   background: var(--surface);
   border: 1px solid var(--border-warm);
@@ -215,8 +231,12 @@ html, body {
 .agent-msg {
   background: var(--green-wash);
   border-left: 3px solid var(--green);
-  border-radius: 8px;
-  padding: 20px;
+  border-radius: 12px;
+  border-top-left-radius: 4px; /* speech-tail corner, mirrors the teacher side */
+  padding: 16px 20px;
+  max-width: 78%;
+  width: fit-content;
+  margin-right: auto;
 }
 
 .agent-msg.degraded { border-top: 3px solid var(--brick); }
@@ -1447,10 +1467,10 @@ body.rail-pinned .composer { left: 260px; }
   font-size: 11px; border-radius: 999px; padding: 1px 8px; white-space: nowrap;
   border: 1px solid transparent;
 }
-.bp-confirmed { background: var(--green-wash); color: var(--green); }
-.bp-teacher_preset { background: var(--persimmon-wash); color: var(--persimmon); }
-.bp-ai_suggestion { background: transparent; border-color: var(--ink-faded); color: var(--ink-faded); }
-.bp-hypothesis { background: transparent; border-color: var(--persimmon); color: var(--persimmon); }
+.bp-confirmed { background: var(--status-truth); color: var(--on-accent); border-color: var(--status-truth); }
+.bp-teacher_preset { background: var(--status-teacher-wash); border-color: var(--status-teacher); color: var(--status-teacher); }
+.bp-ai_suggestion { background: var(--persimmon-wash); border-color: var(--status-ai); color: var(--status-ai); }
+.bp-hypothesis, .bp-pending_validation { background: var(--status-guess-wash); border-color: var(--status-guess); border-style: dashed; color: var(--status-guess); }
 .bp-rollup { font-size: 11px; color: var(--persimmon); }
 .bp-legend { display: flex; gap: 8px; flex-wrap: wrap; margin-top: calc(var(--sp) * 1); opacity: 0.85; }
 
@@ -1476,10 +1496,11 @@ body.rail-pinned .composer { left: 260px; }
 .bp-mnode rect { fill: var(--surface); stroke: var(--ink-faded); stroke-width: 1; }
 .bp-mnode text { font-size: 13px; fill: var(--ink); font-family: var(--font-serif); }
 .bp-num { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-faded); }
-.bp-m-confirmed rect { fill: var(--green-wash); stroke: var(--green); stroke-width: 1.5; }
-.bp-m-ai_suggestion rect { stroke: var(--persimmon); stroke-width: 1.5; }
-.bp-m-hypothesis rect { fill: var(--paper); stroke: var(--ink-faded); stroke-dasharray: 4 3; stroke-width: 1.5; }
-.bp-m-hypothesis text { fill: var(--ink-faded); }
+.bp-m-confirmed rect { fill: var(--green-wash); stroke: var(--status-truth); stroke-width: 2; }
+.bp-m-teacher_preset rect { fill: var(--status-teacher-wash); stroke: var(--status-teacher); stroke-width: 1.5; }
+.bp-m-ai_suggestion rect { stroke: var(--status-ai); stroke-width: 1.5; }
+.bp-m-hypothesis rect, .bp-m-pending_validation rect { fill: var(--status-guess-wash); stroke: var(--status-guess); stroke-dasharray: 4 3; stroke-width: 1.5; }
+.bp-m-hypothesis text, .bp-m-pending_validation text { fill: var(--status-guess); }
 .bp-m-branch { cursor: pointer; }
 .bp-m-branch:hover rect { stroke-width: 2; }
 .bp-fold-badge { font-size: 11px; fill: var(--persimmon); font-family: var(--font-sans); }
@@ -1513,3 +1534,81 @@ body.rail-pinned .composer { left: 260px; }
 }
 .bp-mnode:focus-visible rect { outline: none; stroke: var(--green); stroke-width: 2.5; }
 .bp-mnode:focus-visible { outline: none; }
+
+/* ------------------------------------------- 蓝图 workspace panel (§5b) */
+:root { --bp-w: 380px; }
+.bp-panel {
+  position: fixed;
+  top: var(--header-h, 74px); right: 0; bottom: 0;
+  width: var(--bp-w);
+  background: var(--paper);
+  border-left: 1px solid var(--border-warm);
+  display: flex;
+  flex-direction: column;
+  z-index: 15; /* under the header veil (20), over content */
+}
+.bp-panel-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-warm);
+  flex-wrap: wrap;
+}
+.bp-panel-tabs { margin-left: 0; }
+.bp-panel-head .bp-version { margin-left: auto; }
+.bp-panel-close { width: 34px; height: 34px; }
+.bp-panel-body { flex: 1; overflow: auto; padding: 14px 16px 24px; }
+.bp-panel-body .bp-map-scroll { max-height: none; }
+.bp-panel-resizer {
+  position: absolute; left: -4px; top: 0; bottom: 0; width: 8px;
+  cursor: col-resize; touch-action: none;
+}
+.bp-panel-resizer:hover { background: color-mix(in srgb, var(--green) 20%, transparent); }
+.bp-fab {
+  position: fixed; right: 0; top: 40%;
+  z-index: 14;
+  writing-mode: vertical-rl;
+  appearance: none; border: 1px solid var(--border-warm); border-right: 0;
+  background: var(--cream); color: var(--green);
+  font: inherit; font-size: 13px; letter-spacing: 0.2em;
+  padding: 14px 6px; border-radius: 10px 0 0 10px;
+  cursor: pointer; box-shadow: var(--shadow-card);
+}
+/* Desktop: panel reflows the column; chat centers in the remaining space. */
+@media (min-width: 1100px) {
+  body.has-bp .chat-main {
+    margin-left: max(16px, calc((100vw - var(--bp-w) - var(--col)) / 2));
+    margin-right: calc(var(--bp-w) + 16px);
+  }
+  body.has-bp .composer { right: var(--bp-w); }
+  body.has-bp .bp-fab { display: none; }
+  body.has-bp.rail-pinned .chat-main { margin-left: max(276px, calc((100vw - var(--bp-w) - var(--col)) / 2)); }
+}
+/* Below desktop: the panel exists only as a full-height sheet the 蓝图 button
+   opens; 导图 tab hides under 880px (mobile keeps the list forever). */
+@media (max-width: 1099.9px) {
+  .bp-panel { display: none; }
+  body.bp-sheet .bp-panel { display: flex; width: min(480px, 100vw); box-shadow: var(--shadow-deep); }
+  body.bp-sheet .bp-panel-body { padding-bottom: 140px; } /* keep the tail clear of the composer */
+  body.bp-sheet .bp-fab { display: none; }
+}
+/* node-detail popover (map view) */
+.bp-pop {
+  position: absolute;
+  z-index: 3;
+  max-width: 320px;
+  background: var(--surface);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card-lift);
+  padding: 12px 14px;
+}
+.bp-pop-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.bp-pop-head strong { font-family: var(--font-serif); color: var(--green); }
+.bp-pop-head .bp-num { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faded); }
+.bp-pop-body { font-size: 13.5px; line-height: 1.7; color: var(--ink); }
+.bp-fold-hit circle { fill: var(--surface); stroke: var(--border-warm); }
+.bp-fold-hit text { font-size: 11px; fill: var(--ink-faded); font-family: var(--font-sans); }
+.bp-fold-hit:hover circle { stroke: var(--green); }
+/* the hidden attribute must always win over the panel's display:flex */
+.bp-panel[hidden] { display: none !important; }
+.bp-fab[hidden] { display: none !important; }

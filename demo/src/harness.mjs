@@ -150,6 +150,41 @@ export function validateTurn(turn, state, opts = {}) {
     });
   }
 
+  // 3b. Blueprint marking rules (ADR-0003) — DORMANT unless the turn carries a
+  // blueprint artifact, so non-planning flows never meet them. Evidence
+  // discipline for planning content is STATUS MARKING: a node whose text
+  // asserts realized child reactions must be tagged hypothesis/pending_validation
+  // (or hedged) — 预设 can say anything about children as long as it is
+  // visibly a 预设. Density: blueprint turns keep ≤3 gap cards (warn).
+  const blueprints = turn.artifacts.filter((a) => a && a.type === 'blueprint');
+  if (blueprints.length) {
+    const offenders = [];
+    const walk = (node, path) => {
+      if (!node || typeof node !== 'object') return;
+      const text = `${node.title ?? ''}。${node.body ?? ''}`;
+      const tentative = node.status === 'hypothesis' || node.status === 'pending_validation';
+      if (!tentative && CHILD_CLAIM_RE.test(text) && !HEDGE_RE.test(text)) {
+        offenders.push(path || node.id || '(未命名节点)');
+      }
+      for (const c of Array.isArray(node.children) ? node.children : []) walk(c, c.id || path);
+    };
+    for (const bp of blueprints) for (const m of (bp.data?.modules ?? [])) walk(m, m.id);
+    if (offenders.length) {
+      violations.push({
+        kind: 'unmarked_hypothesis',
+        detail: `蓝图节点把未发生的儿童反应写成事实且未标注（status 需为 hypothesis/pending_validation 或加「可能/预计」）：${offenders.slice(0, 3).join('、')}`,
+        action: 'block',
+      });
+    }
+    if (questions.length > 3) {
+      violations.push({
+        kind: 'planning_question_density',
+        detail: `蓝图轮提出 ${questions.length} 张问题卡（>3）——先交付后提问的密度约定；仅记录`,
+        action: 'warn',
+      });
+    }
+  }
+
   // 4. Culture stays backstage: no adult slogans in child-facing artifacts or the closure loop.
   // adult_phrasings_to_avoid exists precisely to NAME forbidden slogans — exempt it.
   const childFacingText = [
@@ -212,8 +247,30 @@ export function violationFeedback(violations) {
   ].join('\n');
 }
 
-/** L4 terminal fallback: the safe template when regeneration also fails. */
+/** L4 terminal fallback: the safe template when regeneration also fails.
+ * Planning-lens variant: a course that already holds a blueprint must NOT be
+ * asked for field facts — demanding 现场信息 mid-planning is itself the
+ * planning-refusal defect ADR-0003 names. */
 export function safeTemplate(state) {
+  if (state?.course_plan_blueprint) {
+    const question = {
+      text: '蓝图里你最想先动哪一部分？',
+      why: '这一轮我没能生成可靠的新内容，先把已有蓝图保持原样',
+      examples: ['网络图的方向再收窄一点', '先把第 1 周的活动定下来', '暂时不动，我再想想'],
+    };
+    return {
+      reply_markdown:
+        '这一轮我想先稳一下：刚才没能生成可靠的新内容，你的蓝图保持原样，没有丢。\n\n' +
+        '告诉我你最想先动蓝图的哪一部分，我们从那里继续。',
+      question,
+      questions: [question],
+      artifacts: [],
+      closure_loop: null,
+      state_delta: {},
+      evidence_refs: [],
+      round_complete: false,
+    };
+  }
   const question = {
     text: '这一轮孩子实际做了什么、说了什么？',
     why: '我需要真实现场信息才能给出可靠的下一步',

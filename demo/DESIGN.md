@@ -36,6 +36,10 @@ All colors live as CSS custom properties on `:root` (light) with a complete `[da
 
 Rules unchanged: teacher-facing surfaces use only the warm family; slate is quarantined to the debug drawer; green leads, persimmon accents, never equal weight. Every light/dark pair must pass WCAG AA for its role (body text 4.5:1, large text/UI 3:1) against the surfaces it sits on.
 
+### 2a-status. Status palette (2026-07-20)
+
+Provenance statuses each own a DISTINCT hue — Herman's directive: visual truth-tags must be readable at a glance, and design-system warm-purity never outranks teacher legibility. `--status-truth` (banyan green, solid fill = the trust channel), `--status-teacher` 信任蓝 (#3E6F9A light / #8FB4D8 dark + wash), `--status-ai` (persimmon), `--status-guess` 待验证紫 (#7B5EA7 / #B49BD9 + wash, always dashed). Both themes carry all tokens; hue + fill + dash are redundant channels so no status relies on color alone. These tokens are for STATUS ONLY — general chrome stays in the warm family.
+
 ## 2b. Brand & Logo
 
 **Logo: 放大镜里的小脚印** — a child's magnifying glass (round lens, stubby handle tilted 40°) with a single tiny footprint centered in the lens. 探究 made literal: someone small is following tracks. Drawn as inline SVG only (no image assets): lens ring + handle in `--green` (2.5px stroke, round caps), footprint in `--persimmon` (filled, one heel pad + four toe dots — readable at 16px favicon size), an optional faint `--gold` glint arc on the lens at ≥28px sizes.
@@ -61,7 +65,7 @@ The v2 sky carries eleven motifs — boat, pinwheel (turning head), footprint pa
 
 ## 4. Component Stylings
 
-* **Chat — agent messages:** not bubbles. Full-width blocks on Banyan Wash with a 3px Banyan Deep Green left rule, generously padded (20px), subtly rounded (8px). Reads as a colleague's written note, not a chat app.
+* **Chat — agent messages (WhatsApp-style since 2026-07-20, Herman's call):** left-aligned speech bubbles — `max-width 78%`, `width: fit-content`, squared top-left tail corner — mirroring the teacher's right bubbles so the transcript reads as a conversational exchange with consistent widths. Banyan Wash + the 3px green left rule kept (still a colleague's note in register, bubble in shape). Full width is reserved for INSTRUMENTS — artifact cards, the question carousel, the closure loop: tools deserve the page, speech deserves a bubble.
 * **Chat — teacher messages:** right-aligned soft rectangles (12px radius) on white with a hairline warm border (`#E5DED2`), max-width 75%.
 * **Example-answer chips (the anti-form-filling workhorse):** pill-shaped (fully rounded), white fill, 1.5px Lion-Dance Persimmon border, persimmon text; on hover/tap fill warms to `#FBEFE7`; on selection the chip's text is inserted into the input for editing (never submitted directly — the teacher always keeps the pen). Chips wrap in a row beneath the agent's question, staggering in.
 * **Artifact cards (切口卡 / 问题池 / 访谈卡 / 目标轴心):** Question-Wall Cream stock, 10px radius, whisper-soft diffused shadow (`0 2px 12px rgba(45,42,38,0.08)`), serif title with a small persimmon seal-style tag for the card type (e.g. 切口卡), body in labeled sections. 待现场确认 items carry a dashed underline and a small faded-ink tag — visibly provisional, not shameful.
@@ -96,7 +100,7 @@ The v2 sky carries eleven motifs — boat, pinwheel (turning head), footprint pa
 - The page header is minimal: product name in serif, course name in faded ink, and the settings (API key/provider) gear — no navigation chrome to compete with the conversation.
 - The history rail is the one permitted left surface, and it earns that by staying hidden until asked for (a hover hot-zone, or pinned by explicit choice). First paint is unchanged — one centered column, no competing chrome (§1). Pinned mode reflows the column to the right of a 260px rail rather than overlapping it; hover-reveal overlays the left margin without moving the column.
 
-### 5b. Blueprint workspace — three-panel plan (SPEC, next build; Herman 2026-07-20)
+### 5b. Blueprint workspace — three panels (BUILT 2026-07-20; details below are the living spec)
 
 The blueprint outgrows the chat. Cards scroll away with the conversation; a living mother-plan must not. Target layout (desktop):
 
@@ -112,8 +116,9 @@ The blueprint outgrows the chat. Cards scroll away with the conversation; a livi
 - **Resizable splits**: drag handles between chat|panel (and the existing rail reflow), persisted per browser (`cst.panelWidth`). Chat column keeps its 720px max-width *reading measure* inside whatever space it gets; below ~1100px total the panel collapses to a toggle strip.
 - **Panel tabs**: 列表 (the collapsible numbered outline — mobile's only view) and 导图 (the SVG tree). The in-card 列表/导图 toggle retires when the panel ships.
 - **Mobile pattern**: hamburger keeps the history rail; a persistent 蓝图 button (right edge, mirrors 历史) opens the structural LIST as a full-height sheet; 导图 does not exist on mobile — a phone-width infinite tree is unreadable, and the list carries identical information.
-- **Node details are first-class in BOTH renderers** (meeting requirement: nodes explain themselves, not just titles). Interaction contract, both views: the fold **arrow/affordance toggles children; clicking anywhere else on the node opens its detail** (popover on the map, inline expansion in the list). Detail contents, in order: ① the node body; ② 依据 — verbatim teacher words or the question+answer that produced it (`rationale.heard`), ③ for guessed content: what was assumed and the pedagogy behind the guess (`rationale.assumed`, `rationale.pedagogy`), ④ what profile/history context informed it (`rationale.profile_basis`). Status chip + provenance shown in the detail header. Until the Phase-3 schema lands, details render `body` only; the rationale fields are the schema's job (DATABASE.md §2b).
-- Depth is unbounded by design: every level folds independently in both renderers (already true); default-collapse policy at depth ≥3 keeps first paint calm.
+- **Node details are first-class in BOTH renderers** (meeting requirement: nodes explain themselves, not just titles). Interaction contract, both views: the fold **affordance toggles children** (map: a ＋/− circle at the node's right edge; list: the ▸ summary marker); **clicking anywhere else on the node opens its detail** (popover on the map — shipped; inline in the list). Detail contents, in order: ① the node body; ② 依据 — verbatim teacher words or the question+answer that produced it (`rationale.heard`), ③ for guessed content: what was assumed and the pedagogy behind the guess (`rationale.assumed`, `rationale.pedagogy`), ④ what profile/history context informed it (`rationale.profile_basis`). Status chip + provenance shown in the detail header. Until rationale data flows (Phase-3 prompts), the popover renders `body` with an honest empty-state.
+- Depth is unbounded by design: every level folds independently in both renderers; default-collapse policy at depth ≥3 keeps first paint calm.
+- **State custody behind the panel**: the panel renders `course_state.course_plan_blueprint`, which ONLY the engine writes — blueprint artifacts are absorbed post-turn (`absorbBlueprint`: module-granularity merge by id, engine-owned monotonic version, revision log), and a module can never be *born* `confirmed` (model-invented confirmations degrade to AI建议; escalation of an existing module requires a teacher reply — later the ✓确认 click becomes the cleaner channel). The panel's green modules are therefore trustworthy by construction.
 
 ## 6. Motion (GSAP + CSS transitions)
 

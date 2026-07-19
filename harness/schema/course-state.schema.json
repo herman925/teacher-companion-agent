@@ -228,6 +228,30 @@
         }
       }
     },
+    "course_plan_blueprint": {
+      "type": "object",
+      "description": "课程预设蓝图 — the living mother plan (ADR-0003, DATABASE.md §2b). ENGINE-written only (absorbed from blueprint artifacts, versioned + escalation-ruled); never model-writable via state_delta.",
+      "additionalProperties": false,
+      "required": ["version", "modules"],
+      "properties": {
+        "version": { "type": "integer", "minimum": 1, "description": "Engine-owned monotonic version." },
+        "display_version": { "type": "string", "description": "Model's advisory display label (v0.1…)." },
+        "modules": { "type": "array", "items": { "$ref": "#/$defs/blueprintNode" } },
+        "revision_log": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["v", "module_id", "op"],
+            "properties": {
+              "v": { "type": "integer" },
+              "module_id": { "type": "string" },
+              "op": { "type": "string", "enum": ["set", "update", "remove"] }
+            }
+          }
+        }
+      }
+    },
     "story_materials": {
       "type": "object",
       "description": "阶段5 课程故事 materials + gap check.",
@@ -279,6 +303,39 @@
           "question_for_agent": { "type": "string", "description": "下一轮希望/最需要智能体判断的一个问题。Analysis priority #1." },
           "agent_examples_offered": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 3, "description": "The examples the agent drafted before asking." }
         }
+      }
+    }
+  },
+  "$defs": {
+    "blueprintNode": {
+      "type": "object",
+      "description": "One blueprint tree node. Display numbers are client-derived, never stored; rationale fields power the node-detail view (DESIGN.md §5b).",
+      "additionalProperties": false,
+      "required": ["id", "title", "status"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "status": { "type": "string", "enum": ["confirmed", "teacher_preset", "ai_suggestion", "hypothesis", "pending_validation"] },
+        "rationale": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "heard": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": { "quote": { "type": "string" }, "msg_id": { "type": "string" } }
+              }
+            },
+            "assumed": { "type": "string" },
+            "pedagogy": { "type": "string" },
+            "profile_basis": { "type": "string" }
+          }
+        },
+        "evidence_refs": { "type": "array", "items": { "type": "string" } },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/blueprintNode" } }
       }
     }
   }

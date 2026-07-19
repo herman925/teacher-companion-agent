@@ -9,6 +9,7 @@ export const BLUEPRINT_STATUS = {
   teacher_preset: '老师预设',
   ai_suggestion: 'AI建议',
   hypothesis: '预设·待验证',
+  pending_validation: '待现场验证',
 };
 
 const KNOWN_STATUS = new Set(Object.keys(BLUEPRINT_STATUS));
@@ -52,7 +53,7 @@ export function normalizeBlueprint(data) {
 export function numberBlueprint(modules) {
   const walk = (node, number) => {
     const children = node.children.map((c, i) => walk(c, `${number}.${i + 1}`));
-    const rollup = { confirmed: 0, teacher_preset: 0, ai_suggestion: 0, hypothesis: 0 };
+    const rollup = { confirmed: 0, teacher_preset: 0, ai_suggestion: 0, hypothesis: 0, pending_validation: 0 };
     rollup[node.status] += 1;
     for (const c of children) for (const k of Object.keys(rollup)) rollup[k] += c.rollup[k];
     return { ...node, number, children, rollup };

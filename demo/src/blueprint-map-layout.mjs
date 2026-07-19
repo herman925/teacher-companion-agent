@@ -15,6 +15,7 @@ export const MAP_METRICS = {
   gapX: 36,           // horizontal gap between depth columns
   rootW: 120,         // virtual root (blueprint title) column width
   badgeW: 34,         // room reserved right of a collapsed node for the +n badge
+  foldPad: 20,        // extra box width on branch nodes for the fold affordance circle
   numCharW: 7,        // per char of the faint mono number prefix (10px mono)
 };
 
@@ -47,7 +48,8 @@ export function layoutBlueprintMap(numberedModules, collapsed = new Set()) {
   // Column width per depth = widest box at that depth (computed on visible nodes).
   const depthW = [];
   const measure = (n, depth) => {
-    const { w } = nodeBox(n.title, n.number);
+    let { w } = nodeBox(n.title, n.number);
+    if (n.children.length) w += MAP_METRICS.foldPad; // fold-circle room
     depthW[depth] = Math.max(depthW[depth] || 0, w);
     if (!collapsed.has(n.id)) for (const c of n.children) measure(c, depth + 1);
   };
@@ -64,7 +66,10 @@ export function layoutBlueprintMap(numberedModules, collapsed = new Set()) {
    * subtrees and the average version reads subtly off). A sibling that itself
    * has visible children earns cousinGap extra breathing after its block. */
   const place = (n, depth, top) => {
-    const { label, w, numW } = nodeBox(n.title, n.number);
+    const box = nodeBox(n.title, n.number);
+    const label = box.label;
+    const numW = box.numW;
+    const w = box.w + (n.children.length ? MAP_METRICS.foldPad : 0);
     const visibleChildren = collapsed.has(n.id) ? [] : n.children;
     let subtreeH = 0;
     const childRefs = [];
@@ -83,10 +88,10 @@ export function layoutBlueprintMap(numberedModules, collapsed = new Set()) {
       ? (childRefs[0].y + childRefs[childRefs.length - 1].y) / 2 // uniform h → midpoint of first/last child
       : top;
     nodes.push({
-      id: n.id, number: n.number, title: n.title, label, numW, status: n.status,
+      id: n.id, number: n.number, title: n.title, body: n.body ?? '', label, numW, status: n.status,
       depth, x: colX(depth), y, w, h: ownH,
       childCount: n.children.length, collapsed: collapsed.has(n.id),
-      pending: (n.rollup?.hypothesis ?? 0) + (n.rollup?.ai_suggestion ?? 0),
+      pending: (n.rollup?.hypothesis ?? 0) + (n.rollup?.pending_validation ?? 0) + (n.rollup?.ai_suggestion ?? 0),
     });
     for (const child of childRefs) {
       edges.push({

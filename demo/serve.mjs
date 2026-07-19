@@ -20,7 +20,7 @@ import { PROVIDERS, callWithFailover, listModels } from './src/adapter.mjs';
 import { mockTurn } from './src/mock.mjs';
 import { WF_NODES } from './src/wf-nodes.mjs';
 import { parseTurn, validateTurn, violationFeedback, safeTemplate } from './src/harness.mjs';
-import { applyDelta, createInitialState, STAGE_NAMES } from './src/engine.mjs';
+import { applyDelta, absorbBlueprint, createInitialState, STAGE_NAMES } from './src/engine.mjs';
 import { buildSystemPrompt, stageModuleName, profileSectionText } from './src/prompt-builder.mjs';
 import { store } from './src/store.mjs';
 import { deriveCourseTitle, TITLE_MAX } from './src/store/json-store.mjs';
@@ -212,6 +212,9 @@ async function runTurn(req, emit) {
     teacherTurn: true,
   });
   allViolations.push(...applied.violations.map((v) => ({ ...v, attempt: 'apply' })));
+  // Blueprint artifacts merge into the living mother plan (module-granularity
+  // delta; engine owns versioning + escalation rules — ADR-0003 Phase 3).
+  applied.state = absorbBlueprint(applied.state, turn, { teacherTurn: true }).state;
 
   // Dev-mode wf_trace: if the model didn't emit its own trace, synthesize one
   // from the nodes it declared this turn (state_delta.completed_nodes). Makes the

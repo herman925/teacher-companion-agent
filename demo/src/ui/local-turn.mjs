@@ -5,7 +5,7 @@
 
 import { mockTurn } from '../mock.mjs';
 import { parseTurn, validateTurn, safeTemplate } from '../harness.mjs';
-import { applyDelta, createInitialState, STAGE_NAMES } from '../engine.mjs';
+import { applyDelta, absorbBlueprint, createInitialState, STAGE_NAMES } from '../engine.mjs';
 
 /**
  * @param {Object} state current course_state
@@ -22,6 +22,7 @@ export function runLocalMockTurn(state, history, message, opts = {}) {
   const ok = Boolean(parsed.turn) && blocking.length === 0;
   const turn = ok ? parsed.turn : safeTemplate(cur);
   const applied = applyDelta(cur, turn.state_delta, { roundComplete: turn.round_complete, teacherTurn: true });
+  applied.state = absorbBlueprint(applied.state, turn, { teacherTurn: true }).state;
   // Transparency parity with the server path: one "attempt" whose response is the
   // scripted mock payload (no network). The system prompt rides in prompt_debug.
   const api_debug = {

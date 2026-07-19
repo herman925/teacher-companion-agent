@@ -10,7 +10,9 @@ import {
   renderQuestionBlock, renderQuestionCards, freezeQuestionCards,
   renderClosureCard, renderAwaitingNote,
   renderErrorNotice, renderDebug, renderWfTrace, el,
+  renderBlueprintList, renderBlueprintMapView,
 } from './render.js';
+import { normalizeBlueprint, numberBlueprint } from '../blueprint-util.mjs';
 import { messageIn, cardIn, cardsIn, chipsIn, closureIn, fadeIn } from './motion.js';
 import { runLocalMockTurn } from './local-turn.mjs';
 import { buildSystemPrompt, stageModuleName, profileSectionText, STYLE_DIRECTIVES } from '../prompt-builder.mjs';
@@ -32,6 +34,9 @@ const LS = {
   courseId: 'cst.courseId',   // pointer to the active server course (persistence tier)
   railPinned: 'cst.railPinned', // history rail pinned-open preference
   channels: 'cst.channels',   // per-family 线路 choice (国内/国际), {group: providerId}
+  bpW: 'cst.bpW',             // blueprint panel width (desktop, px)
+  bpTab: 'cst.bpTab',         // blueprint panel view: 'list' | 'map'
+  bpHidden: 'cst.bpHidden',   // teacher chose to collapse the panel
 };
 
 function load(key, fallback) {
@@ -430,6 +435,7 @@ function renderTurnGroup(ev, opts = {}) {
 }
 
 function replayTranscript() {
+  refreshBlueprintPanel(); // any path that re-renders the chat re-syncs the living plan
   messagesEl.replaceChildren();
   if (!transcript.length) {
     renderWelcome();
@@ -694,6 +700,16 @@ function handleTurn(userText, ev) {
   save(LS.state, courseState);
   save(LS.transcript, transcript);
   pendingMessage = null;
+  refreshBlueprintPanel();
+  // Living-plan trace: absorbed blueprint versions surface in the debug JSON
+  // export (session log) alongside the workflow events they rode in on.
+  if (courseState?.course_plan_blueprint) {
+    logEvent('workflow', 'blueprint', {
+      version: courseState.course_plan_blueprint.version,
+      display_version: courseState.course_plan_blueprint.display_version,
+      modules: courseState.course_plan_blueprint.modules.map((m) => ({ id: m.id, status: m.status })),
+    });
+  }
 
   setStatus(null);
   renderTurnGroup(ev, { animate: true });
@@ -1352,14 +1368,104 @@ async function switchCourse(id) {
   activeCourseId = id;
   save(LS.courseId, id);
   pendingMessage = null;
+  document.body.classList.remove('bp-sheet');
   await loadCourseFromServer(id);
   replayTranscript();
+  refreshBlueprintPanel();
   updateHeader();
   updateSkipLink();
   refreshDebug();
   renderRail();
   if (!railPinned) closeRail();
   scrollToEnd();
+}
+
+// ---------------------------------------------- 蓝图 workspace panel (§5b)
+// The living mother plan: renders course_state.course_plan_blueprint — every
+// pixel (numbering, collapse, map geometry) reconstructed client-side. Chat
+// cards remain historical snapshots; this panel is always the latest version.
+
+let bpTab = load(LS.bpTab, 'list');
+let bpHidden = load(LS.bpHidden, false);
+let bpRenderKey = ''; // courseId:version:tab — unchanged key skips the re-render, keeping fold/scroll state
+
+function refreshBlueprintPanel() {
+  const panel = $('#bp-panel');
+  const fab = $('#btn-blueprint');
+  if (!panel || !fab) return;
+  const bp = courseState?.course_plan_blueprint;
+  const has = Boolean(bp?.modules?.length);
+  document.body.classList.toggle('has-bp', has && !bpHidden);
+  fab.hidden = !has;
+  panel.hidden = !has || bpHidden;
+  if (!has) return;
+  $('#bp-panel-version').textContent = bp.display_version || `v${bp.version}`;
+  const numbered = numberBlueprint(normalizeBlueprint({ modules: bp.modules }).modules);
+  const desktopMap = window.matchMedia('(min-width: 880px)').matches;
+  $('#bp-tab-map').hidden = !desktopMap;
+  if (bpTab === 'map' && !desktopMap) bpTab = 'list';
+  $('#bp-tab-list').classList.toggle('active', bpTab === 'list');
+  $('#bp-tab-map').classList.toggle('active', bpTab === 'map');
+  const key = `${courseState?.course_id}:${bp.version}:${bpTab}:${desktopMap}`;
+  if (key === bpRenderKey) return; // same plan, same view → keep the teacher's fold/scroll state
+  bpRenderKey = key;
+  const body = $('#bp-panel-body');
+  body.replaceChildren(bpTab === 'map' ? renderBlueprintMapView(numbered) : renderBlueprintList(numbered));
+}
+
+function wireBlueprintPanel() {
+  const panel = $('#bp-panel');
+  if (!panel) return;
+  // Panel sits under the sticky header — measure once (font/theme safe enough).
+  const header = document.querySelector('.app-header');
+  if (header) document.documentElement.style.setProperty('--header-h', `${header.offsetHeight}px`);
+  const setTab = (tab) => { bpTab = tab; save(LS.bpTab, tab); refreshBlueprintPanel(); };
+  $('#bp-tab-list').addEventListener('click', () => setTab('list'));
+  $('#bp-tab-map').addEventListener('click', () => setTab('map'));
+  $('#bp-panel-close').addEventListener('click', () => {
+    bpHidden = true;
+    save(LS.bpHidden, true);
+    document.body.classList.remove('bp-sheet');
+    refreshBlueprintPanel();
+  });
+  $('#btn-blueprint').addEventListener('click', () => {
+    bpHidden = false;
+    save(LS.bpHidden, false);
+    // Under the desktop breakpoint the panel opens as a full-height sheet.
+    if (!window.matchMedia('(min-width: 1100px)').matches) document.body.classList.toggle('bp-sheet');
+    refreshBlueprintPanel();
+  });
+  // Resizable split (desktop): drag the left edge; width persists.
+  const saved = Number(load(LS.bpW, 0));
+  if (saved >= 280 && saved <= 640) document.documentElement.style.setProperty('--bp-w', `${saved}px`);
+  const resizer = $('#bp-resizer');
+  resizer.addEventListener('pointerdown', (down) => {
+    down.preventDefault();
+    resizer.setPointerCapture(down.pointerId);
+    const move = (ev) => {
+      if (!(ev.buttons & 1)) { up(); return; } // canceled drags never keep resizing on hover
+      const w = Math.max(280, Math.min(640, window.innerWidth - ev.clientX));
+      document.documentElement.style.setProperty('--bp-w', `${w}px`);
+    };
+    const up = () => {
+      resizer.removeEventListener('pointermove', move);
+      resizer.removeEventListener('pointerup', up);
+      resizer.removeEventListener('pointercancel', up);
+      resizer.removeEventListener('lostpointercapture', up);
+      const w = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--bp-w'), 10);
+      if (w) save(LS.bpW, w);
+    };
+    resizer.addEventListener('pointermove', move);
+    resizer.addEventListener('pointerup', up);
+    resizer.addEventListener('pointercancel', up);
+    resizer.addEventListener('lostpointercapture', up);
+  });
+  window.matchMedia('(min-width: 1100px)').addEventListener('change', () => {
+    document.body.classList.remove('bp-sheet');
+    refreshBlueprintPanel();
+  });
+  // 880px gates the 导图 tab — keep it LIVE so narrowing mid-session drops to the list.
+  window.matchMedia('(min-width: 880px)').addEventListener('change', refreshBlueprintPanel);
 }
 
 // -------------------------------------------------- history rail (UI surface)
@@ -1768,6 +1874,7 @@ async function resetCourse() {
   if (!sure) return;
   logEvent('session', 'new_course', { previous_course: courseState?.course_id ?? null });
   courseState = createInitialState(`course-${Date.now()}`);
+  document.body.classList.remove('bp-sheet');
   transcript = [];
   lastEvent = null;
   lastTurnHadQuestion = false;
@@ -1925,6 +2032,8 @@ function boot() {
     course_id: courseState?.course_id ?? null, stage: courseState?.stage ?? null,
   });
   replayTranscript(); // instant render from the localStorage cache
+  wireBlueprintPanel();
+  refreshBlueprintPanel();
   updateHeader();
   updateSkipLink();
   refreshDebug();

@@ -180,6 +180,29 @@
 
   <main class="chat-main" id="messages" aria-live="polite"></main>
 
+  <!-- 蓝图 workspace panel (DESIGN.md §5b): the LIVING mother plan, rendered
+       from course_state.course_plan_blueprint — chat cards stay historical
+       snapshots. Desktop ≥1100px: resizable right panel. Mobile: full-height
+       sheet via the 蓝图 button; 导图 tab is desktop-only. -->
+  <aside class="bp-panel" id="bp-panel" aria-label="课程预设蓝图" hidden>
+    <div class="bp-panel-resizer" id="bp-resizer" aria-hidden="true"></div>
+    <header class="bp-panel-head">
+      <span class="artifact-seal">预设蓝图</span>
+      <div class="bp-view-toggle bp-panel-tabs">
+        <button type="button" class="bp-view-btn active" id="bp-tab-list">列表</button>
+        <button type="button" class="bp-view-btn" id="bp-tab-map">导图</button>
+      </div>
+      <span class="bp-version" id="bp-panel-version"></span>
+      <button type="button" class="icon-btn bp-panel-close" id="bp-panel-close" aria-label="收起蓝图面板">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18"></path>
+        </svg>
+      </button>
+    </header>
+    <div class="bp-panel-body" id="bp-panel-body"></div>
+  </aside>
+  <button type="button" class="bp-fab" id="btn-blueprint" hidden>蓝图</button>
+
   <div class="composer">
     <div class="composer-inner">
       <div class="status-line" id="status-line">
