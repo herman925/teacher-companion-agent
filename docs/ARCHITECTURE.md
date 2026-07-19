@@ -123,22 +123,29 @@ The product direction includes a WeChat entry point (teachers live in WeChat). T
 
 **Tier 1 — web app (today).** Teachers open the site in WeChat's built-in browser via a shared link. Works now over bare IP; nothing WeChat-specific required. Limitation: no 小程序 presence, no WeChat identity.
 
-**Tier 2 — 小程序 `web-view` shell (recommended next).** A minimal native shell whose single page hosts our existing web app in a `<web-view>`. Known hard requirements: the hosted page's domain must be configured as a 业务域名 on the MP account, which requires the domain to hold ICP 备案 and serve HTTPS, plus a verification file at the domain root; 个人主体 (individual) MP accounts cannot use `web-view` at all — an organization account is required. Our stack inside the WebView: zero-build ES modules, CSS custom properties, `<details>/<summary>`, localStorage, SSE over fetch, GSAP, and the SVG 导图 are all standard mobile-browser features and are expected to work (the demo already runs in mobile WeChat's browser, which uses the same engines); the blueprint stays list-form on small screens by design. Code reuse ≈ 100%.
+**Tier 2 — 小程序 `web-view` shell (recommended next).** A minimal native shell whose single page hosts our existing web app in a `<web-view>`. Hard requirements (verified against WeChat docs):
 
-**Tier 3 — native 小程序 (only if product demands it).** Full rewrite: WXML/WXSS, no DOM (the entire UI layer, including the SVG map, would be re-implemented on MP `canvas`), and streaming must move from SSE to `wx.request` chunked transfer (`enableChunked`, supported in recent base libraries). The platform-free core (harness, engine, prompts, adapter) ports; everything under `demo/src/ui/` does not. Do not start this before pilot evidence justifies it.
+- **企业主体 only.** 个人主体 and 海外主体 小程序 cannot open arbitrary H5 in `web-view`; enterprise real-name (企业认证) is mandatory. The filing subject decision (LAUNCH-COMPLIANCE **D1**) is therefore also the 小程序 subject decision.
+- **HTTPS + filed domain, no IP.** The target must be an HTTPS domain whose ICP 备案 is at least 24 hours old; `IP:port` is rejected outright.
+- **业务域名 whitelist.** The domain is registered under 小程序后台 → 开发设置 → 业务域名, verified by a 校验文件 at the domain root; any iframe host inside the page must be whitelisted too.
+
+Inside `web-view` the page runs in WeChat's embedded browser — X5/TBS on Android, WKWebView on iOS, *not* the MP framework (the newer Skyline engine does not support `web-view` at all). ES modules, CSS custom properties, `<details>`, localStorage (per-origin, not shared with MP storage) and GSAP track the WebView engine and are expected to work — the demo already runs in mobile WeChat's browser. **The load-bearing risk is streaming**: our chat is a POST `/api/chat` returning an SSE body, so we depend on `fetch()` + `ReadableStream` delivering incrementally (classic `EventSource` is GET-only). Whether X5/WKWebView stream or buffer that response must be measured on real devices before Tier 2 is committed; server-side, any reverse proxy needs `proxy_buffering off`. Code reuse ≈ 100%.
+
+**Tier 3 — native 小程序 (only if product demands it).** Full rewrite of the UI layer: WXML/WXSS, no DOM — `<details>` becomes view+state, GSAP does not run (no DOM), the SVG 导图 would be re-implemented on MP canvas. Streaming moves to `wx.request({ enableChunked: true })` with a reframed SSE parser (and a UTF-8 decode shim — MP has no `TextDecoder`); localStorage becomes `wx.setStorageSync`. The platform-free core (proxy, adapter, runtime harness, engine, prompts) ports untouched. Native pages need no 业务域名, but everything in the compliance list below still applies. Do not start this before pilot evidence justifies it.
 
 Compliance notes specific to the MP surface (beyond §6):
 
-- Child-related media and observations inside an MP flow inherit the existing posture: mainland residency, minimal retention, and the standing rule that no third-party model sees child photos without a recorded ADR.
-- AI-generated content rules (深度合成 labeling; 生成式AI service filing) apply to the service regardless of surface, but MP review adds a second enforcement gate: WeChat review has been rejecting AI-chat features that lack the underlying filings. Treat MP submission as *after* the compliance track closes, not a way around it.
+- **深度合成-AI问答 服务类目 is mandatory** for an AI-answering product, and it is not open to 个人主体. Qualification = own 算法备案 (生成合成类/深度合成) or — more commonly — the upstream model vendor's 备案 plus a 合作协议 naming the algorithm and 备案编号 (consistent with LAUNCH-COMPLIANCE Track B: we already call filed models). A 安全评估报告 may also be requested. WeChat review rejects AI-chat features that lack these filings — MP submission comes *after* the compliance track closes, never around it.
+- **AI-content labelling**: 《人工智能生成合成内容标识办法》(effective 2025-09-01) requires a visible AI生成 notice on generated content plus an implicit provider identifier in metadata — the runtime output surface needs this label added before any MP release.
+- Child-related media and observations inherit the existing posture: mainland residency, minimal retention, no third-party model sees child photos without a recorded ADR. WeChat login would supply platform-level real-name identity for teacher accounts (`code2Session` — the DATABASE.md §4 account design assumes it).
 
 Open questions (verify before Tier 2 work starts; no guessing):
 
-1. Which MP service category fits (教育信息服务 vs a tool category), and whether that category demands qualifications beyond 备案 for a teacher-facing (not student-facing) tool.
-2. Whether our BYOK/platform-key chat requires 生成式AI 备案 in its own name or can rely on the upstream model vendors' filings at pilot scale.
-3. WeChat login (`code2Session`) from a web-view shell vs native — the account design in [DATABASE.md](./DATABASE.md) §4 assumes it; confirm the web-view OAuth path for our account setup.
-4. Exact minimum MP base-library version for any Tier-3 features we would rely on (chunked transfer, canvas 2D) across the pilot teachers' device fleet.
-5. localStorage eviction behavior inside WeChat's WebView on iOS (visitor 演示模式 relies on it; signed-in courses are server-side and unaffected).
+1. **web-view streaming**: does POST-based `fetch`/`ReadableStream` deliver incrementally inside current X5 (Android) and WKWebView (iOS), or buffer? Real-device measurement required — this gates Tier 2.
+2. **Education 类目**: the exact 服务类目 for a teacher-research aid (教师教研辅助工具 framing, not student-facing tutoring — likely avoids 办学许可证, unverified), and whether a non-经营性 tool triggers ICP 许可证 rather than plain 备案 — 待核实 with the filing agent.
+3. **深度合成 category acceptance**: does a borrowed vendor 算法备案 + 合作协议 suffice for our 教研 framing, and is the 安全评估报告 demanded? — 待核实.
+4. **AI-label placement**: per-message vs page-level for the visible AI生成 notice in a chat UI to pass review — unverified.
+5. `<details>`/CSS-custom-props floor on the oldest X5 kernel we would commit to, and localStorage eviction behavior in iOS WKWebView (visitor 演示模式 relies on it; signed-in courses are server-side and unaffected).
 
 ## 8. Alternatives considered
 

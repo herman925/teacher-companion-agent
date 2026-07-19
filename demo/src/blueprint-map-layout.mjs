@@ -11,17 +11,22 @@ export const MAP_METRICS = {
   boxH: 30,           // node box height
   maxChars: 12,       // truncate titles beyond this (full title via tooltip)
   gapY: 10,           // vertical gap between sibling subtrees
+  cousinGap: 12,      // extra breathing after a sibling that has visible children
   gapX: 36,           // horizontal gap between depth columns
   rootW: 120,         // virtual root (blueprint title) column width
   badgeW: 34,         // room reserved right of a collapsed node for the +n badge
+  numCharW: 7,        // per char of the faint mono number prefix (10px mono)
 };
 
-/** Truncated display label + measured box width for a node title. */
-export function nodeBox(title) {
+/** Truncated display label + measured box width for a node title (plus its
+ * client-assigned number prefix — the number comes from numberBlueprint(),
+ * never from here or the model). */
+export function nodeBox(title, number = '') {
   const chars = [...String(title ?? '')];
   const label = chars.length > MAP_METRICS.maxChars ? chars.slice(0, MAP_METRICS.maxChars - 1).join('') + '…' : chars.join('');
-  const w = Math.max(3, [...label].length) * MAP_METRICS.charW + MAP_METRICS.padX * 2;
-  return { label, w };
+  const numW = number ? String(number).length * MAP_METRICS.numCharW + 6 : 0;
+  const w = Math.max(3, [...label].length) * MAP_METRICS.charW + MAP_METRICS.padX * 2 + numW;
+  return { label, w, numW };
 }
 
 /**
@@ -42,7 +47,7 @@ export function layoutBlueprintMap(numberedModules, collapsed = new Set()) {
   // Column width per depth = widest box at that depth (computed on visible nodes).
   const depthW = [];
   const measure = (n, depth) => {
-    const { w } = nodeBox(n.title);
+    const { w } = nodeBox(n.title, n.number);
     depthW[depth] = Math.max(depthW[depth] || 0, w);
     if (!collapsed.has(n.id)) for (const c of n.children) measure(c, depth + 1);
   };
@@ -54,34 +59,38 @@ export function layoutBlueprintMap(numberedModules, collapsed = new Set()) {
     return x;
   };
 
-  /** Post-order: returns subtree height; assigns y so parents center on children. */
+  /** Post-order: returns subtree height; parents sit on the midpoint of their
+   * FIRST and LAST child (not the span average — the two differ on uneven
+   * subtrees and the average version reads subtly off). A sibling that itself
+   * has visible children earns cousinGap extra breathing after its block. */
   const place = (n, depth, top) => {
-    const { label, w } = nodeBox(n.title);
+    const { label, w, numW } = nodeBox(n.title, n.number);
     const visibleChildren = collapsed.has(n.id) ? [] : n.children;
     let subtreeH = 0;
-    const childTops = [];
-    for (const c of visibleChildren) {
+    const childRefs = [];
+    visibleChildren.forEach((c, i) => {
       const h = place(c, depth + 1, top + subtreeH);
-      childTops.push(h);
-      subtreeH += h + MAP_METRICS.gapY;
-    }
-    if (visibleChildren.length) subtreeH -= MAP_METRICS.gapY;
+      childRefs.push(nodes[nodes.length - 1]); // post-order: last pushed IS c
+      subtreeH += h;
+      if (i < visibleChildren.length - 1) {
+        subtreeH += MAP_METRICS.gapY;
+        if (c.children.length && !collapsed.has(c.id)) subtreeH += MAP_METRICS.cousinGap;
+      }
+    });
     const ownH = MAP_METRICS.boxH;
     const totalH = Math.max(ownH, subtreeH);
-    const y = visibleChildren.length
-      ? top + (subtreeH - ownH) / 2   // center on the span of children
+    const y = childRefs.length
+      ? (childRefs[0].y + childRefs[childRefs.length - 1].y) / 2 // uniform h → midpoint of first/last child
       : top;
     nodes.push({
-      id: n.id, number: n.number, title: n.title, label, status: n.status,
+      id: n.id, number: n.number, title: n.title, label, numW, status: n.status,
       depth, x: colX(depth), y, w, h: ownH,
       childCount: n.children.length, collapsed: collapsed.has(n.id),
       pending: (n.rollup?.hypothesis ?? 0) + (n.rollup?.ai_suggestion ?? 0),
     });
-    for (const c of visibleChildren) {
-      // edge parent-right-center → child-left-center; child boxes already pushed
-      const child = nodes.find((p) => p.id === c.id);
+    for (const child of childRefs) {
       edges.push({
-        from: n.id, to: c.id,
+        from: n.id, to: child.id, toStatus: child.status,
         x1: colX(depth) + w, y1: y + ownH / 2,
         x2: child.x, y2: child.y + child.h / 2,
       });

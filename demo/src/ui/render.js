@@ -357,6 +357,7 @@ function renderBlueprintMapView(numbered) {
   wrap.append(scroller);
   const collapsed = new Set();
   let first = true;
+  let prevPos = new Map(); // id → {x,y} of the previous layout, for the FLIP reflow tween
   const draw = () => {
     const { nodes, edges, width, height } = layoutBlueprintMap(numbered, collapsed);
     const svg = document.createElementNS(SVG_NS, 'svg');
@@ -365,39 +366,61 @@ function renderBlueprintMapView(numbered) {
     svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
     svg.classList.add('bp-map-svg');
     if (first) svg.classList.add('bp-map-enter');
-    for (const e of edges) {
+    edges.forEach((e, i) => {
       const path = document.createElementNS(SVG_NS, 'path');
       path.setAttribute('d', edgePath(e));
-      path.setAttribute('class', 'bp-edge');
+      // Dash carries meaning: only the edge INTO a hypothesis child is dashed
+      // (mirrors the node). Tentative reads as tentative at the connector too.
+      const hyp = e.toStatus === 'hypothesis';
+      path.setAttribute('class', `bp-edge${hyp ? ' bp-edge-hyp' : ''}`);
+      if (first && !hyp) {
+        // Draw-on: branch extends first, then the leaf appears (~120ms behind
+        // its nodes). pathLength=1 normalizes dashoffset for any curve length.
+        path.setAttribute('pathLength', '1');
+        path.classList.add('bp-edge-draw');
+        path.style.animationDelay = `${Math.min(i * 45 + 120, 1020)}ms`;
+      }
       svg.append(path);
-    }
+    });
     nodes.forEach((n, i) => {
       const g = document.createElementNS(SVG_NS, 'g');
       g.setAttribute('class', `bp-mnode bp-m-${n.status}${n.childCount ? ' bp-m-branch' : ''}`);
       g.setAttribute('transform', `translate(${n.x} ${n.y})`);
-      if (first) g.style.animationDelay = `${Math.min(i * 45, 900)}ms`;
+      // Inner group carries ALL motion (entry + FLIP) — the outer g's SVG
+      // transform attribute does positioning and CSS must never touch it.
+      const gi = document.createElementNS(SVG_NS, 'g');
+      gi.setAttribute('class', 'bp-mnode-in');
+      if (first) gi.style.animationDelay = `${Math.min(i * 45, 900)}ms`;
       const rect = document.createElementNS(SVG_NS, 'rect');
       rect.setAttribute('width', n.w);
       rect.setAttribute('height', n.h);
       rect.setAttribute('rx', 8);
-      g.append(rect);
+      gi.append(rect);
       const text = document.createElementNS(SVG_NS, 'text');
-      text.setAttribute('x', n.w / 2);
+      text.setAttribute('x', 10);
       text.setAttribute('y', n.h / 2 + 4.5);
-      text.setAttribute('text-anchor', 'middle');
-      text.textContent = n.label;
-      g.append(text);
+      const num = document.createElementNS(SVG_NS, 'tspan');
+      num.setAttribute('class', 'bp-num');
+      num.textContent = n.number;
+      const title = document.createElementNS(SVG_NS, 'tspan');
+      title.setAttribute('dx', '5');
+      title.textContent = n.label;
+      text.append(num, title);
+      gi.append(text);
       const tip = document.createElementNS(SVG_NS, 'title');
       tip.textContent = `${n.number} ${n.title}${n.childCount ? `（${n.childCount} 项${n.collapsed ? '，已折叠' : ''}）` : ''}`;
-      g.append(tip);
+      gi.append(tip);
       if (n.collapsed && n.childCount) {
+        // Folded + everything beneath confirmed = done, quietly (已齐);
+        // anything unconfirmed keeps the counting persimmon badge.
         const badge = document.createElementNS(SVG_NS, 'text');
         badge.setAttribute('x', n.w + 6);
         badge.setAttribute('y', n.h / 2 + 4);
-        badge.setAttribute('class', 'bp-fold-badge');
-        badge.textContent = `+${n.childCount}`;
-        g.append(badge);
+        badge.setAttribute('class', `bp-fold-badge${n.pending === 0 ? ' bp-fold-ok' : ''}`);
+        badge.textContent = n.pending === 0 ? '已齐' : `+${n.childCount}`;
+        gi.append(badge);
       }
+      g.append(gi);
       if (n.childCount) {
         g.setAttribute('tabindex', '0');
         g.setAttribute('role', 'button');
@@ -412,7 +435,20 @@ function renderBlueprintMapView(numbered) {
         });
       }
       svg.append(g);
+      // FLIP: persisting nodes glide from their previous position to the new
+      // one instead of snapping — the deterministic reflow stays legible.
+      const prev = prevPos.get(n.id);
+      if (!first && prev && (prev.x !== n.x || prev.y !== n.y)) {
+        gi.style.transform = `translate(${prev.x - n.x}px, ${prev.y - n.y}px)`;
+        requestAnimationFrame(() => {
+          gi.classList.add('bp-flip');
+          gi.style.transform = '';
+        });
+      } else if (!first) {
+        gi.classList.add('bp-node-appear'); // newly revealed by an expand
+      }
     });
+    prevPos = new Map(nodes.map((n) => [n.id, { x: n.x, y: n.y }]));
     scroller.replaceChildren(svg);
     first = false;
   };
