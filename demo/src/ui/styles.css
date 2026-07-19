@@ -1457,7 +1457,7 @@ body.rail-pinned .composer { left: 260px; }
 .bp-map::after { top: 0; right: 0; bottom: 0; width: 12px; background: linear-gradient(to left, var(--cream), transparent); }
 .bp-map::before { left: 0; right: 0; bottom: 0; height: 12px; background: linear-gradient(to top, var(--cream), transparent); }
 .bp-map-svg { display: block; }
-.bp-edge { fill: none; stroke: var(--border-warm); stroke-width: 1.5; stroke-linecap: round; }
+.bp-edge { fill: none; stroke: var(--ink-faded); stroke-width: 1.5; stroke-linecap: round; opacity: 0.45; }
 .bp-edge-hyp { stroke: var(--ink-faded); stroke-dasharray: 4 3; opacity: 0.7; }
 /* Status palette (design spec): mostly monochrome-warm — hue lives in the
    border, dash means tentative; the card stays serene. No gold (closure-only). */

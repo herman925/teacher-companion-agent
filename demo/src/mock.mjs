@@ -251,6 +251,11 @@ function turnBlueprintRound1(message, opts = {}) {
           bpNode('depth_network.guanxi', '关系层', '它和家人、社区、生活的联系：访谈、走访。', 'ai_suggestion'),
           bpNode('depth_network.yiyi', '意义层', '孩子可能慢慢多一点亲近和表达——这一层等现场验证，不预写结论。', 'hypothesis'),
         ]),
+        // 完整画面从第一轮就在（骨架先立起来，薄处可见地薄）：下游模块以
+        // hypothesis 粗线条占位，教师确认网络方向后第二轮才细化成 v0.2。
+        bpNode('week_plan', '2–3 周计划（待细化）', '大致节奏：第 1 周共同经验，第 2 周已知与问题墙，第 3 周聚焦调整。确认网络方向后我再按你的资源和班况排细。', 'hypothesis'),
+        bpNode('activity_pack', '活动方案包（待细化）', '五类组织形式各一个方向：集体教学、小组教学、个别指导、自主游戏·环创、亲子活动。细案随第二轮给出。', 'hypothesis'),
+        bpNode('environment', '环境与材料（待细化）', '材料清单、给家长的一封信、问题墙——都会在第二轮给到可直接取用的版本。', 'hypothesis'),
       ],
     },
   };

@@ -65,7 +65,13 @@ test('round 1: planning request → blueprint v0.1 + ≤3 gap cards, zero blocki
   assert.ok(bp, 'blueprint artifact delivered on turn 1 (deliver-then-ask)');
   assert.equal(bp.data.version, 'v0.1');
   const moduleIds = bp.data.modules.map((m) => m.id);
-  assert.deepEqual(moduleIds, ['theme_judgment', 'five_steps', 'network_map', 'depth_network'], 'round 1 = maps only, not the full package');
+  // Full picture from round 1: maps detailed + downstream modules present as
+  // visibly-thin hypothesis placeholders (骨架先立起来).
+  for (const required of ['theme_judgment', 'five_steps', 'network_map', 'depth_network', 'week_plan', 'activity_pack', 'environment']) {
+    assert.ok(moduleIds.includes(required), `round 1 skeleton includes ${required}`);
+  }
+  const placeholders = bp.data.modules.filter((m) => ['week_plan', 'activity_pack', 'environment'].includes(m.id));
+  assert.ok(placeholders.every((m) => m.status === 'hypothesis'), 'downstream modules are marked hypothesis until confirmed');
   assert.ok(turn.questions.length >= 1 && turn.questions.length <= 3, 'card count within planning density guardrail');
   for (const q of turn.questions) assert.ok(q.text && q.examples.length >= 2, 'every card complete');
   // Not-yet-happened child content is marked, not asserted.

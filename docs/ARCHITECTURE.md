@@ -139,6 +139,8 @@ Compliance notes specific to the MP surface (beyond §6):
 - **AI-content labelling**: 《人工智能生成合成内容标识办法》(effective 2025-09-01) requires a visible AI生成 notice on generated content plus an implicit provider identifier in metadata — the runtime output surface needs this label added before any MP release.
 - Child-related media and observations inherit the existing posture: mainland residency, minimal retention, no third-party model sees child photos without a recorded ADR. WeChat login would supply platform-level real-name identity for teacher accounts (`code2Session` — the DATABASE.md §4 account design assumes it).
 
+**One account across web and 小程序.** A 小程序 does not replace the web app — the two are surfaces over the same backend, and course history must follow the teacher across both. The design that makes this work is already half-built: accounts, sessions and courses are **server-side** (auth store → PostgreSQL later), so any authenticated surface retrieves the same history; nothing about history lives in a WeChat identity. What Tier 2+ adds is identity *binding*: WeChat login yields a per-app `openid` (different per 小程序/公众号/网站应用) — cross-surface matching requires `UnionID`, which exists only when the MP and the web's 微信开放平台 app are registered under the same subject (again D1). The account model: our `users` row is primary; `wechat_unionid` (and per-surface openids) are *bindings* on it, so a teacher can log in with password on the web, WeChat on the phone, and land in the same courses. Never make WeChat identity the primary key — teachers without WeChat login (admin-provisioned pilot accounts) must remain first-class.
+
 Open questions (verify before Tier 2 work starts; no guessing):
 
 1. **web-view streaming**: does POST-based `fetch`/`ReadableStream` deliver incrementally inside current X5 (Android) and WKWebView (iOS), or buffer? Real-device measurement required — this gates Tier 2.
@@ -146,6 +148,7 @@ Open questions (verify before Tier 2 work starts; no guessing):
 3. **深度合成 category acceptance**: does a borrowed vendor 算法备案 + 合作协议 suffice for our 教研 framing, and is the 安全评估报告 demanded? — 待核实.
 4. **AI-label placement**: per-message vs page-level for the visible AI生成 notice in a chat UI to pass review — unverified.
 5. `<details>`/CSS-custom-props floor on the oldest X5 kernel we would commit to, and localStorage eviction behavior in iOS WKWebView (visitor 演示模式 relies on it; signed-in courses are server-side and unaffected).
+6. **UnionID mechanics for our subject setup**: confirm the MP and a 网站应用 can share one 微信开放平台 account under the pilot's legal subject, and the web-side 扫码 OAuth flow's requirements/cost — 待核实 during D1.
 
 ## 8. Alternatives considered
 

@@ -96,6 +96,25 @@ The v2 sky carries eleven motifs — boat, pinwheel (turning head), footprint pa
 - The page header is minimal: product name in serif, course name in faded ink, and the settings (API key/provider) gear — no navigation chrome to compete with the conversation.
 - The history rail is the one permitted left surface, and it earns that by staying hidden until asked for (a hover hot-zone, or pinned by explicit choice). First paint is unchanged — one centered column, no competing chrome (§1). Pinned mode reflows the column to the right of a 260px rail rather than overlapping it; hover-reveal overlays the left margin without moving the column.
 
+### 5b. Blueprint workspace — three-panel plan (SPEC, next build; Herman 2026-07-20)
+
+The blueprint outgrows the chat. Cards scroll away with the conversation; a living mother-plan must not. Target layout (desktop):
+
+```
+┌────────┬──────────────────────────┬───────────────────────┐
+│ history│   chat column            │  蓝图 panel            │
+│ rail   │   (existing, narrows)    │  [列表 | 导图] tabs     │
+│ 260px  │   min 480px              │  min 320px, resizable  │
+└────────┴──────────────────────────┴───────────────────────┘
+```
+
+- **Right panel is always-available, always-current**: it renders the LATEST blueprint version from course state (one source of truth — the same normalized tree the chat cards render; cards remain as historical snapshots in the transcript, the panel is the living document). 浩然's progress-board ask (2026-07-17 meeting) is this panel filtered to `confirmed`.
+- **Resizable splits**: drag handles between chat|panel (and the existing rail reflow), persisted per browser (`cst.panelWidth`). Chat column keeps its 720px max-width *reading measure* inside whatever space it gets; below ~1100px total the panel collapses to a toggle strip.
+- **Panel tabs**: 列表 (the collapsible numbered outline — mobile's only view) and 导图 (the SVG tree). The in-card 列表/导图 toggle retires when the panel ships.
+- **Mobile pattern**: hamburger keeps the history rail; a persistent 蓝图 button (right edge, mirrors 历史) opens the structural LIST as a full-height sheet; 导图 does not exist on mobile — a phone-width infinite tree is unreadable, and the list carries identical information.
+- **Node details are first-class in BOTH renderers** (meeting requirement: nodes explain themselves, not just titles). Interaction contract, both views: the fold **arrow/affordance toggles children; clicking anywhere else on the node opens its detail** (popover on the map, inline expansion in the list). Detail contents, in order: ① the node body; ② 依据 — verbatim teacher words or the question+answer that produced it (`rationale.heard`), ③ for guessed content: what was assumed and the pedagogy behind the guess (`rationale.assumed`, `rationale.pedagogy`), ④ what profile/history context informed it (`rationale.profile_basis`). Status chip + provenance shown in the detail header. Until the Phase-3 schema lands, details render `body` only; the rationale fields are the schema's job (DATABASE.md §2b).
+- Depth is unbounded by design: every level folds independently in both renderers (already true); default-collapse policy at depth ≥3 keeps first paint calm.
+
 ## 6. Motion (GSAP + CSS transitions)
 
 Character: **settling paper, morning light — with a child's footstep at the edges.** Three registers, strictly tiered:

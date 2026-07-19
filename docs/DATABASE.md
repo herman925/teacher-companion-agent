@@ -123,6 +123,33 @@ Chat history is not a storage problem — photos are, which is why they live in 
 - **Teachers' own model API keys.** Production model: platform-seeded keys in server env, platform pays for tokens, per-teacher spend tracked via `messages.usage`. A teacher-supplied key (dev/testing) stays in that browser's localStorage and travels per-request, exactly as today — it never lands in a table. Storing vendor keys server-side would add an encryption-at-rest liability for near-zero benefit; if a real need ever appears, that is its own ADR.
 - **Secrets of any kind in `users.settings`** — prefs only; the API layer must reject writes containing key-shaped values (same redaction lexicon as the session-log panel).
 
+### 2b. Blueprint persistence (Phase-3 design; ADR-0003)
+
+The 课程预设蓝图 is a versioned tree that lives **inside `course_state`** as `course_plan_blueprint` — it needs no relational node table. Rationale: the tree is always read and written whole-or-by-delta with the course (never queried across courses by node), JSONB keeps it schema-checked by `course-state.schema.json`, and the existing checkpoint-snapshot machinery gives version history and replay for free — `blueprint_delta`s ride `state_delta` in `course_snapshots`, full documents at checkpoints. A node table would buy cross-course node queries nobody has asked for, at the price of a second consistency domain.
+
+Node shape (each node, arbitrary depth — the mindmap's "relationships" are exactly this containment tree plus `evidence_refs` pointers into the evidence ledger; no separate edge storage):
+
+```jsonc
+{
+  "id": "network_map.guanxi",          // stable slug; display numbers are client-derived, never stored
+  "title": "关系层", "body": "……",
+  "status": "confirmed | teacher_preset | ai_suggestion | hypothesis | pending_validation",
+  "rationale": {                        // why this node exists — powers the detail view (DESIGN.md §5b)
+    "heard":   [{ "quote": "附近有醒狮队，可以约参观", "msg_id": "…" }],  // verbatim teacher words / Q-and-A that produced it
+    "assumed": "班里孩子对面具类道具敏感，入口偏物象层",                 // the guess, when it is one
+    "pedagogy": "共同经验先行——幼儿园教育基于经验（小小探索家五步）",       // why the guess is professionally sound
+    "profile_basis": "教师档案：中班、30人、番禺"                        // which profile/history facts informed it
+  },
+  "evidence_refs": ["ev-…"],           // links into children_evidence once field data confirms it
+  "added_v": "v0.1", "changed_v": "v0.2",
+  "children": [ /* same shape */ ]
+}
+```
+
+Alongside the tree: `blueprint_version`, `revision_log[]` (`{v, node_id, op, basis}` — why the plan changed), `validation_queue[]` (derived from hypothesis-status nodes; drives 轻量回传). Status escalation to `confirmed` is engine-only (teacher UI event or evidence), never model-written — the truth/guess tag pipeline from the 2026-07-17 meeting is this field plus that rule.
+
+**Future profile enrichment (recorded, not designed):** `users.settings.profile` stays the structured v1 profile. A richer longitudinal profile — accumulated preferences, interaction style, vectorized memory over past courses — is a separate post-pilot design with its own PIPL surface (profiling of identifiable persons); park it as open question 6 below and do not bolt vectors onto `users.settings`.
+
 ## 3. Transaction shape of one validated turn
 
 Single transaction, after L2–L4 succeed:
@@ -283,4 +310,5 @@ Everything under `/api/` except `login` and `healthz` requires the session and i
 2. Does stage-5 export need server-side rendering (docx/pdf) or is client-side enough? Affects whether an export worker joins the VM.
 3. Violations table growth policy — keep forever (research value) or aggregate after N months?
 4. Real-name obligations for the 小程序 user base (see §4 auth design) — verify against WeChat platform rules and the education-service category during 备案/登记; do not guess.
-5. **官方服务 vs BYOK (planned end-state for model access).** The provider zoo in the settings modal is a dev-phase tool. Production collapses to two modes: **官方服务** — the platform provides model access as SaaS: keys live server-side in the proxy env (already the production key-custody design, §2 "what we do NOT store"), the platform pays vendors, per-teacher consumption is metered from `messages.usage` for quota/billing; **自备密钥 BYOK** — a teacher/org pastes their own vendor key, which stays per-request/localStorage exactly as today. Decision needed later: quota model (per-seat allowance vs pay-per-use) and whether BYOK survives past the pilot.
+5. **Longitudinal teacher profile.** Post-pilot: demographics + preference signals + possibly vectorized memory of intentions/style across courses, feeding prompt context beyond today's static 教师档案. Needs its own schema and a PIPL profiling assessment before any embedding of teacher-derived text; explicitly out of v1.
+6. **官方服务 vs BYOK (planned end-state for model access).** The provider zoo in the settings modal is a dev-phase tool. Production collapses to two modes: **官方服务** — the platform provides model access as SaaS: keys live server-side in the proxy env (already the production key-custody design, §2 "what we do NOT store"), the platform pays vendors, per-teacher consumption is metered from `messages.usage` for quota/billing; **自备密钥 BYOK** — a teacher/org pastes their own vendor key, which stays per-request/localStorage exactly as today. Decision needed later: quota model (per-seat allowance vs pay-per-use) and whether BYOK survives past the pilot.
