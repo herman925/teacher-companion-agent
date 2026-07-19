@@ -117,6 +117,29 @@ demo/
 - No CloudBase in the demo: course_state persists to localStorage in the browser; the server is stateless (state travels with each request), behind the same turn-pipeline interface a CloudBase function will implement.
 - The `mock` provider runs canned turns through the SAME L2/L3/L4 pipeline — UI and harness are demonstrable without any API key.
 
+## 7b. WeChat 小程序 compatibility & compliance
+
+The product direction includes a WeChat entry point (teachers live in WeChat). Three integration tiers, in ascending cost; the staged path is tier by tier, and tiers 2+ share one critical-path dependency chain: **domain → ICP 备案 → HTTPS**, the same long pole already tracked in [LAUNCH-COMPLIANCE.md](./LAUNCH-COMPLIANCE.md).
+
+**Tier 1 — web app (today).** Teachers open the site in WeChat's built-in browser via a shared link. Works now over bare IP; nothing WeChat-specific required. Limitation: no 小程序 presence, no WeChat identity.
+
+**Tier 2 — 小程序 `web-view` shell (recommended next).** A minimal native shell whose single page hosts our existing web app in a `<web-view>`. Known hard requirements: the hosted page's domain must be configured as a 业务域名 on the MP account, which requires the domain to hold ICP 备案 and serve HTTPS, plus a verification file at the domain root; 个人主体 (individual) MP accounts cannot use `web-view` at all — an organization account is required. Our stack inside the WebView: zero-build ES modules, CSS custom properties, `<details>/<summary>`, localStorage, SSE over fetch, GSAP, and the SVG 导图 are all standard mobile-browser features and are expected to work (the demo already runs in mobile WeChat's browser, which uses the same engines); the blueprint stays list-form on small screens by design. Code reuse ≈ 100%.
+
+**Tier 3 — native 小程序 (only if product demands it).** Full rewrite: WXML/WXSS, no DOM (the entire UI layer, including the SVG map, would be re-implemented on MP `canvas`), and streaming must move from SSE to `wx.request` chunked transfer (`enableChunked`, supported in recent base libraries). The platform-free core (harness, engine, prompts, adapter) ports; everything under `demo/src/ui/` does not. Do not start this before pilot evidence justifies it.
+
+Compliance notes specific to the MP surface (beyond §6):
+
+- Child-related media and observations inside an MP flow inherit the existing posture: mainland residency, minimal retention, and the standing rule that no third-party model sees child photos without a recorded ADR.
+- AI-generated content rules (深度合成 labeling; 生成式AI service filing) apply to the service regardless of surface, but MP review adds a second enforcement gate: WeChat review has been rejecting AI-chat features that lack the underlying filings. Treat MP submission as *after* the compliance track closes, not a way around it.
+
+Open questions (verify before Tier 2 work starts; no guessing):
+
+1. Which MP service category fits (教育信息服务 vs a tool category), and whether that category demands qualifications beyond 备案 for a teacher-facing (not student-facing) tool.
+2. Whether our BYOK/platform-key chat requires 生成式AI 备案 in its own name or can rely on the upstream model vendors' filings at pilot scale.
+3. WeChat login (`code2Session`) from a web-view shell vs native — the account design in [DATABASE.md](./DATABASE.md) §4 assumes it; confirm the web-view OAuth path for our account setup.
+4. Exact minimum MP base-library version for any Tier-3 features we would rely on (chunked transfer, canvas 2D) across the pilot teachers' device fleet.
+5. localStorage eviction behavior inside WeChat's WebView on iOS (visitor 演示模式 relies on it; signed-in courses are server-side and unaffected).
+
 ## 8. Alternatives considered
 
 | Decision | Chosen | Rejected | Why |

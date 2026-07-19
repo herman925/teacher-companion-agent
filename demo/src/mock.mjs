@@ -6,6 +6,8 @@
 // pass validateTurn + the stage gates: the mock goes through the same
 // L2/L3 pipeline as real providers — no special casing.
 
+import { WF_NODES } from './wf-nodes.mjs';
+
 /** Teacher-mode labels used in wf_trace. */
 const MODE_LABELS = {
   from_zero: '从零陪跑',
@@ -33,7 +35,7 @@ export function mockTurn(state, history, message, opts = {}) {
     case 'optimize_existing': return optimizeFlow(state, history, message);
     case 'story_export': return storyFlow(state, history, message);
     case 'mid_course': return midCourseFlow(state, history, message);
-    case 'material_support': return materialFlow(state, history);
+    case 'material_support': return materialFlow(state, history, message);
     default: return fromZeroFlow(state, history, message);
   }
 }
@@ -166,7 +168,7 @@ function fromZeroFlow(state, history, message) {
     if (priorTurnsMatching(history, CYCLE_NUDGE_MARKER) >= MAX_NUDGES) return turnSecondCycleReview();
     return turnCycleWaitNudge(history);
   }
-  return turnHorizon('from_zero', state, history);
+  return turnHorizon('from_zero', state, history, message);
 }
 
 function turnIntentQuestion(message, opts = {}) {
@@ -234,10 +236,10 @@ function turnBlueprintRound1(message, opts = {}) {
       version: 'v0.1',
       modules: [
         bpNode('theme_judgment', '主题判断', `「${resource}」贴近本地生活、有真实场域和人物，适合先做一轮主题探究；若后续孩子的问题持续冒出来、装不下了，再考虑往项目化分支发展，不急着现在定。`),
-        bpNode('five_steps', '五步总览（2–3 周）', '预先计划 → 建立共同经验 → 发掘已有知识 → 发展想探究的问题 → 布置探索环境。五步不严格分先后，都属于阶段一。', 'ai_suggestion', [
-          bpNode('five_steps.evidence', '每步留下什么', '网络图与方向确认；活动照片与儿童原话；「我们已经知道的」记录；问题墙照片；环创与材料清单。'),
+        bpNode('five_steps', '五步总览（2–3 周）', '预先计划 → 建立共同经验 → 发掘已有知识 → 发展想探究的问题 → 布置探索环境。五步不严格分先后，都属于阶段一。为什么先盘已知：幼儿园教育基于经验——孩子早就知道的，不必重教，要在已知之上拔高。', 'ai_suggestion', [
+          bpNode('five_steps.evidence', '每步留下什么', '网络图与方向确认；活动照片与儿童原话；「我们已经知道的」记录（清单／网络图／KWL 都行）；问题墙照片；环创与材料清单。'),
         ]),
-        bpNode('network_map', '主题预设网络图（教师备课用）', '围绕主题的可探究方向，供你筛选教育价值——给了不等于照搬，也不必全部听孩子的。', 'ai_suggestion', [
+        bpNode('network_map', '主题预设网络图（教师备课用）', '围绕主题的可探究方向，供你筛选教育价值。两个误区都别踩：极左是完全不预设、走到哪算哪；极右是全按预设硬做、无视孩子的问题——网络图给了不等于照搬。', 'ai_suggestion', [
           bpNode('network_map.origin', `${resource}的来源与故事`, '它从哪里来、和本地的关系。', 'ai_suggestion'),
           bpNode('network_map.scene', '真实场景', `去看一次真实的${resource}活动／场地。`, 'ai_suggestion'),
           bpNode('network_map.making', '制作与材料', '它是怎么做出来的、用了什么材料。', 'ai_suggestion'),
@@ -305,17 +307,17 @@ function turnBlueprintRound2(state, history, message) {
           bpNode('week_plan.w2', '第 2 周：发掘已知与问题墙', '集体讨论「我们已经知道的」；问题墙上墙，游戏中随手记孩子的问题。', 'ai_suggestion'),
           bpNode('week_plan.w3', '第 3 周：聚焦与调整', '按问题墙的密集处调整活动重心，为下一阶段筛有潜力的问题。', 'ai_suggestion'),
         ]),
-        bpNode('activity_pack', '活动方案包（五类组织形式）', '每类先给一个方向，确认后可展开成完整教案。', 'ai_suggestion', [
-          bpNode('activity_pack.jiti', '集体教学', `观看精彩的${resource}片段，讨论看到了什么、想到了什么。观察点：谁在反复提问。`, 'ai_suggestion'),
-          bpNode('activity_pack.xiaozu', '小组教学', '两人三足式协作小游戏，感受齐心协力。观察点：合作卡点与商量方式。', 'ai_suggestion'),
-          bpNode('activity_pack.gebie', '个别指导', '对特别着迷或还在观望的孩子做一对一跟随记录。', 'ai_suggestion'),
-          bpNode('activity_pack.youxi', '自主游戏·环创', `${resource}体验角持续开放，投放低结构材料。观察点：停留时长与自发语言。`, 'ai_suggestion'),
-          bpNode('activity_pack.qinzi', '亲子活动', `请家长带孩子看一次真实${resource}，或采访见过的长辈。`, 'ai_suggestion'),
+        bpNode('activity_pack', '活动方案包（五类组织形式）', '幼儿园的活动组织形式就这五类。每类给一个方向和一个「换个玩法」——预设是给你选择的起点，不是唯一答案；确认后可展开成完整教案。', 'ai_suggestion', [
+          bpNode('activity_pack.jiti', '集体教学', `观看精彩的${resource}片段，讨论看到了什么、想到了什么。目的：建立共同经验。观察点：谁在反复提问。换个玩法：共读一本相关绘本，让孩子指认见过的部分。`, 'ai_suggestion'),
+          bpNode('activity_pack.xiaozu', '小组教学', '两人三足式协作小游戏，感受齐心协力。目的：体验配合与节奏。观察点：合作卡点与商量方式。换个玩法：小组合作搬运大物件，路线由孩子自己商量。', 'ai_suggestion'),
+          bpNode('activity_pack.gebie', '个别指导', '对特别着迷或还在观望的孩子做一对一跟随记录。目的：看见个体差异——最活跃的和还在观望的都是信息。', 'ai_suggestion'),
+          bpNode('activity_pack.youxi', '自主游戏·环创', `${resource}体验角持续开放，投放低结构材料。目的：让兴趣自己长出来。观察点：停留时长与自发语言。换个玩法：把材料换成半成品，看孩子怎么补全。`, 'ai_suggestion'),
+          bpNode('activity_pack.qinzi', '亲子活动', `请家长带孩子看一次真实${resource}，或采访见过的长辈。目的：把经验连到家庭与社区。换个玩法：亲子手工任务，做一个小${resource}带回班里。`, 'ai_suggestion'),
         ]),
         bpNode('environment', '环境与材料', '', 'ai_suggestion', [
           bpNode('environment.list', '材料清单', '相关照片视频、旧道具、可拆装的低结构材料、记录用便签与画纸。', 'ai_suggestion'),
           bpNode('environment.letter', '给家长的一封信（草稿）', `说明班里正在做${resource}主题，请家长帮忙收集材料、分享经历。`, 'ai_suggestion'),
-          bpNode('environment.wall', '问题墙', '孩子的问题要进环境、贴上墙，不只留在教师记录里。', 'ai_suggestion'),
+          bpNode('environment.wall', '问题墙（KWHL）', '孩子的问题要进环境、贴上墙，不只留在教师记录里。可按 KWHL 排：知道什么、想知道什么、如何去知道、学会了什么——最后一栏留到复盘再填。', 'ai_suggestion'),
         ]),
         bpNode('feedback_card', '轻量回传（3 分钟）', '回来告诉我：儿童原话一两句、作品或问题墙照片、你最困惑的一点。回传是为了优化计划，不是为了解锁下一步。', 'ai_suggestion'),
         bpNode('signal_note', '项目化信号提醒', '若同一问题反复出现、孩子开始说「我们可以做／试」、你的预设装不下他们的问题——这是可以往项目式探究发展的信号，到时我会提醒你，也可以不切换。', 'hypothesis'),
@@ -608,7 +610,7 @@ function optimizeFlow(state, history, message) {
     return turnOptimizeWait(history);
   }
   if (!(state.driving_question || {}).text) return turnOptimizePick(state, message);
-  return turnHorizon('optimize_existing', state, history);
+  return turnHorizon('optimize_existing', state, history, message);
 }
 
 /** Batch fast path: 回填建档 + 原话入池 in one turn (entry cards answered together). */
@@ -810,7 +812,7 @@ function storyFlow(state, history, message) {
     if (!(state.story_materials || {}).export_version) return turnStoryVersion(state, message);
     return turnStoryExpand(state); // whatever comes next, deliver what was promised
   }
-  return turnHorizon('story_export', state, history);
+  return turnHorizon('story_export', state, history, message);
 }
 
 function turnStoryEntry() {
@@ -958,7 +960,7 @@ function midCourseFlow(state, history, message) {
     if (priorTurnsMatching(history, MIDCOURSE_HOLD_MARKER) >= MAX_NUDGES) return turnMidCourseSecond();
     return turnMidCourseHold(history);
   }
-  return turnHorizon('mid_course', state, history);
+  return turnHorizon('mid_course', state, history, message);
 }
 
 function turnMidCourseEntry() {
@@ -1053,12 +1055,12 @@ function turnMidCourseReview() {
 
 // ================================================= 素材支持 material_support
 
-function materialFlow(state, history) {
+function materialFlow(state, history, message) {
   const n = (history || []).filter((m) => m && m.role === 'assistant' && /定稿要点|可选加项|随时把两三件/.test(String(m.content || ''))).length;
   if (n === 0) return turnMaterialDeliver(state);
   if (n === 1) return turnMaterialVariantB(state);
   if (n === 2) return turnMaterialVariantC(state);
-  return turnHorizon('material_support', state, history);
+  return turnHorizon('material_support', state, history, message);
 }
 
 function turnMaterialEntry(message) {
@@ -1743,21 +1745,72 @@ function turnMidCourseHold(history) {
 const HORIZON_MARKER = /演示脚本到这里|演示的边界/;
 
 /** 演示边界: every flow ends HERE on purpose — honest, warm, never a stall. */
-function turnHorizon(mode, state, history) {
-  const v = replyVariant(history, HORIZON_MARKER, 2);
-  const reply = v === 0
-    ? '这条线路的演示脚本到这里就走完了——真实使用中，我会继续陪你一轮一轮循环下去，直到成果展示和完整导出。你现在可以：\n\n- 点右上角「新课程」，换一条入口再走一遍（从零陪跑、已有主题优化、课程故事整理、素材支持都可以）；\n- 打开设置里的「开发者模式」，在调试抽屉的工作流地图里回顾这一路点亮的节点。\n\n谢谢你陪我走完这一段。'
-    : '这条线路走到了演示的边界。往后的部分——继续循环、成果展示、多版本导出——真实使用中我都会接着陪你做，不会停在这里。想再走一条线，点「新课程」换个入口；想复盘，开发者模式的工作流地图里有这一路的完整足迹。';
+/** Per-flow things a teacher can still genuinely do past the demo boundary —
+ * every chip here must route to a REAL handler (story adjusts, 回顾 recap):
+ * a handle the demo cannot honor is a false affordance, worse than none. */
+const HORIZON_HANDLES = {
+  story_export: ['把章节顺序换一下', '换一句章眼原话', '回顾一下这一路点亮的节点'],
+  default: ['回顾一下这一路点亮的节点', '把走过的足迹列给我看看'],
+};
+
+/** Honest recap past the boundary: list the workflow nodes this course really
+ * lit, from state — deterministic, no fabrication, works in every flow. */
+function turnRecap(mode, state) {
+  const lit = (state.completed_nodes || []);
+  const names = lit.map((id) => {
+    const node = WF_NODES.find((n) => n.id === id);
+    return node ? `${id} ${node.name}` : id;
+  });
+  const listText = names.length ? names.map((n) => `- ${n}`).join('\n') : '- 这门课程还没有点亮任何节点';
+  const handleCard = {
+    id: 'q-horizon-next',
+    text: '还想看点什么',
+    why: '演示边界内可以随时回顾走过的路',
+    examples: HORIZON_HANDLES[mode] || HORIZON_HANDLES.default,
+    required: false,
+  };
   return {
-    reply_markdown: reply,
-    question: null,
+    reply_markdown:
+      `好，这一路我们一起点亮了 ${names.length} 个工作流节点：\n\n${listText}\n\n每个节点的详情在开发者模式的工作流地图里都能看到。`,
+    question: handleCard,
+    questions: [handleCard],
     artifacts: [],
     closure_loop: null,
     state_delta: {},
     evidence_refs: [],
     round_complete: false,
     wf_trace: trace(mode, state.stage ?? 0, [
-      { id: 'WF03', name: '使用方式说明', apply: '说明演示边界与下一步的玩法' },
+      { id: 'WF03', name: '使用方式说明', apply: '按教师要求回顾已点亮的节点——从 state 读取，不虚构' },
+    ], ['状态机优先'], '回顾输出，无状态写入'),
+  };
+}
+
+function turnHorizon(mode, state, history, message = '') {
+  if (/回顾|点亮|足迹/.test(message)) return turnRecap(mode, state);
+  const v = replyVariant(history, HORIZON_MARKER, 2);
+  const reply = v === 0
+    ? '这条线路的演示脚本到这里就走完了——真实使用中，我会继续陪你一轮一轮循环下去，直到成果展示和完整导出。你现在可以：\n\n- 点右上角「新课程」，换一条入口再走一遍（从零陪跑、已有主题优化、课程故事整理、素材支持都可以）；\n- 打开设置里的「开发者模式」，在调试抽屉的工作流地图里回顾这一路点亮的节点。\n\n谢谢你陪我走完这一段。'
+    : '这条线路走到了演示的边界。往后的部分——继续循环、成果展示、多版本导出——真实使用中我都会接着陪你做，不会停在这里。想再走一条线，点「新课程」换个入口；想复盘，开发者模式的工作流地图里有这一路的完整足迹。';
+  const handleCard = {
+    id: 'q-horizon-next',
+    text: '接下来想做点什么',
+    why: mode === 'story_export'
+      ? '课程故事的章节与章眼仍然可以调整；也可以回顾走过的路'
+      : '演示边界内可以随时回顾走过的路；继续修改在真实使用中进行',
+    examples: HORIZON_HANDLES[mode] || HORIZON_HANDLES.default,
+    required: false,
+  };
+  return {
+    reply_markdown: reply,
+    question: handleCard,
+    questions: [handleCard],
+    artifacts: [],
+    closure_loop: null,
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace(mode, state.stage ?? 0, [
+      { id: 'WF03', name: '使用方式说明', apply: '说明演示边界与下一步的玩法，留出可回改的抓手' },
     ], ['状态机优先'], '演示脚本边界，无状态写入'),
   };
 }

@@ -216,6 +216,27 @@ test('LINE code-review: SILENT on loopback http:// (local dev servers, no TLS)',
   assert.equal(r.code, 0, 'loopback http:// must not fire\n' + r.stdout + r.stderr);
   assert.ok(!JSON.parse(r.stdout).findings.some(x => /http:\/\//.test(x.title)), 'no http:// finding on loopback');
 });
+test('LINE code-review: SILENT on XML namespace identifiers (w3.org — never fetched)', () => {
+  const d = mkTmp();
+  const f = path.join(d, 'map.js');
+  fs.writeFileSync(f,
+    'const SVG_NS = "http://www.w3.org/2000/svg";\n' +
+    'const XLINK = "http://www.w3.org/1999/xlink";\n', 'utf8');
+  const r = runNode([H.codeReview, f, '--json']);
+  assert.equal(r.code, 0, 'w3.org namespaces must not fire\n' + r.stdout + r.stderr);
+  assert.ok(!JSON.parse(r.stdout).findings.some(x => /http:\/\//.test(x.title)), 'no http:// finding on namespaces');
+});
+test('LINE code-review: FLAGS insecure URL even when an exempt string shares the line', () => {
+  const d = mkTmp();
+  const f = path.join(d, 'mixed.js');
+  fs.writeFileSync(f,
+    'const NS = "http://www.w3.org/2000/svg"; fetch("http://api.example.com/data");\n' +
+    'fetch("http://www.w3.org/TR/spec");\n', 'utf8');
+  const r = runNode([H.codeReview, f, '--json']);
+  assert.equal(r.code, 1, 'per-URL check must fire on the mixed line and the w3.org REQUEST\n' + r.stdout + r.stderr);
+  const httpFindings = JSON.parse(r.stdout).findings.filter(x => /http:\/\//.test(x.title));
+  assert.equal(httpFindings.length, 2, 'both the mixed line and the non-namespace w3.org fetch fire');
+});
 test('LINE code-review: SILENT when DOM writes go through sanitize*()', () => {
   const d = mkTmp();
   const f = path.join(d, 'chat.js');

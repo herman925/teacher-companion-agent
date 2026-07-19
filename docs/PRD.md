@@ -192,7 +192,7 @@ Violation logs are a first-class artifact (P3's observability).
 3. 八乡资料 / local culture knowledge base: static curated corpus first, or RAG from day one?
 4. Does the pilot need 教研员 accounts (read-only course view) in v1?
 5. Exact MiniMax/GLM/Kimi model SKUs and JSON-mode reliability — pending [MODEL-APIS.md](./MODEL-APIS.md) research.
-6. 预设/生成 rebalance (upstream proposal [workflow-v1.3-contradictions](../source-docs/workflow-v1.3-contradictions.zh-CN.md) + pilot-teacher feedback): how much complete blueprint to generate from how little input — the "sweet spot" between elicit-more-first and always-generate is an empirical question for a prompt-level spike, not a design debate. Adoption of the proposal (dual scenes, blueprint mother object, soft state machine) awaits an ADR.
+6. 预设/生成 rebalance — direction ADOPTED via [ADR-0003](./adr/0003-blueprint-first-planning-lens.md) (blueprint-first planning lens, 锋's Stage-1 five steps, two-round delivery; Tier-0 shipped in the demo: client-numbered collapsible blueprint + PC 导图 view). Still open and empirical: the "sweet spot" — how complete a blueprint to generate from how little input — to be answered by pilot measurement (turns-to-first-blueprint, questions per turn, share of `ai_suggestion` vs `confirmed`), not design debate.
 
 ## 11. Glossary Anchors
 

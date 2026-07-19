@@ -1441,3 +1441,36 @@ body.rail-pinned .composer { left: 260px; }
 .bp-hypothesis { background: transparent; border-color: var(--persimmon); color: var(--persimmon); }
 .bp-rollup { font-size: 11px; color: var(--persimmon); }
 .bp-legend { display: flex; gap: 8px; flex-wrap: wrap; margin-top: calc(var(--sp) * 1); opacity: 0.85; }
+
+/* -- blueprint 导图 view (PC only; deterministic SVG from blueprint-map-layout) */
+.bp-view-toggle { display: inline-flex; gap: 0; margin-left: auto; border: 1px solid var(--green-wash); border-radius: 999px; overflow: hidden; }
+.bp-view-toggle + .bp-version { margin-left: 10px; }
+.bp-view-btn {
+  border: 0; background: transparent; color: var(--ink-faded); font-size: 12px;
+  padding: 3px 12px; cursor: pointer; font-family: inherit;
+}
+.bp-view-btn.active { background: var(--green-wash); color: var(--green); }
+.bp-map-scroll { overflow: auto; max-height: 520px; padding: calc(var(--sp) * 1.5) 2px; }
+.bp-map-svg { display: block; }
+.bp-edge { fill: none; stroke: var(--green-wash); stroke-width: 1.5; }
+.bp-mnode rect { fill: var(--paper); stroke: var(--ink-faded); stroke-width: 1; }
+.bp-mnode text { font-size: 13px; fill: var(--ink); font-family: var(--font-serif); }
+.bp-m-confirmed rect { fill: var(--green-wash); stroke: var(--green); stroke-width: 1.5; }
+.bp-m-confirmed text { fill: var(--green); }
+.bp-m-teacher_preset rect { fill: var(--persimmon-wash); stroke: var(--persimmon); }
+.bp-m-hypothesis rect { fill: transparent; stroke: var(--persimmon); stroke-dasharray: 5 4; }
+.bp-m-hypothesis text { fill: var(--persimmon); }
+.bp-m-branch { cursor: pointer; }
+.bp-m-branch:hover rect { stroke-width: 2; }
+.bp-fold-badge { font-size: 11px; fill: var(--persimmon); }
+/* g carries the layout translate as an SVG attribute — CSS keyframes must not
+   touch the group's transform or they override positioning. Fade the group,
+   grow the box (fill-box keeps the scale local to each rect). */
+.bp-map-enter .bp-mnode { animation: bp-fade 480ms ease-out both; animation-delay: inherit; }
+.bp-map-enter .bp-mnode rect { animation: bp-grow 480ms cubic-bezier(0.22, 1, 0.36, 1) both; animation-delay: inherit; transform-origin: left center; transform-box: fill-box; }
+@keyframes bp-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes bp-grow { from { transform: scaleX(0.6); } to { transform: scaleX(1); } }
+.bp-map-enter .bp-edge { animation: bp-fade 600ms ease-out both; }
+@media (prefers-reduced-motion: reduce) { .bp-map-enter .bp-mnode, .bp-map-enter .bp-mnode rect, .bp-map-enter .bp-edge { animation: none; } }
+.bp-mnode:focus-visible rect { outline: none; stroke: var(--green); stroke-width: 2.5; }
+.bp-mnode:focus-visible { outline: none; }

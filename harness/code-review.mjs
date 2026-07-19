@@ -127,10 +127,21 @@ for (const file of uniqueFiles) {
       add('P2', file, n, 'loose equality (== or !=)', 'Use strict equality === / !== to avoid coercion bugs.');
     }
 
-    // P1: hardcoded http:// URL — HTTPS only. Loopback is exempt: local dev
-    // servers (opencode serve, the demo proxy) run plain HTTP with no TLS.
-    if (/["'`]http:\/\//.test(raw) && !/["'`]http:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/.test(raw)) {
-      add('P1', file, n, 'hardcoded http:// URL', 'Use https:// for all network requests.');
+    // P1: hardcoded http:// URL — HTTPS only. Checked PER URL (a line mixing
+    // an exempt string with a real insecure URL must still fire). Exempt:
+    //  · loopback — local dev servers (opencode serve, the demo proxy) run
+    //    plain HTTP with no TLS;
+    //  · XML namespace identifiers (http://www.w3.org/<year>/…) — opaque
+    //    names createElementNS never fetches. Only the dated namespace paths
+    //    are exempt; a real request to www.w3.org still fires.
+    for (const m of raw.matchAll(/["'`](http:\/\/[^"'`\s]+)/g)) {
+      const url = m[1];
+      const loopback = /^http:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/.test(url);
+      const xmlNs = /^http:\/\/www\.w3\.org\/(19|20)\d\d\//.test(url) || url === 'http://www.w3.org/XML/1998/namespace';
+      if (!loopback && !xmlNs) {
+        add('P1', file, n, 'hardcoded http:// URL', 'Use https:// for all network requests.');
+        break;
+      }
     }
 
     // P0: eval(

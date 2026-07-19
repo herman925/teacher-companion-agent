@@ -7,6 +7,7 @@
 import { STAGE_NAMES } from '../engine.mjs';
 import { WF_NODES, NODE_PREREQS } from '../wf-nodes.mjs';
 import { BLUEPRINT_STATUS, normalizeBlueprint, numberBlueprint } from '../blueprint-util.mjs';
+import { layoutBlueprintMap, edgePath } from '../blueprint-map-layout.mjs';
 
 // ---------------------------------------------------------------- sanitizer
 
@@ -295,13 +296,128 @@ export function renderBlueprintCard(artifact) {
   head.append(el('h3', 'artifact-title', artifact.title ?? '阶段一预设蓝图'));
   head.append(el('span', 'bp-version', version));
   card.append(head);
-  for (const mod of numbered) card.append(renderBlueprintNode(mod, true));
+
+  const listView = el('div', 'bp-list-view');
+  for (const mod of numbered) listView.append(renderBlueprintNode(mod, true));
+  card.append(listView);
+
+  // 导图 view: PC only (mobile keeps the list — DESIGN.md §4). Same tree,
+  // second renderer; the list stays the source of truth for interaction.
+  // The media query is LIVE: crossing 880px shows/hides the toggle and drops
+  // back to the list, so a resized window never strands a map-only card.
+  if (numbered.length && typeof window !== 'undefined' && window.matchMedia) {
+    const mq = window.matchMedia('(min-width: 880px)');
+    const toggle = el('div', 'bp-view-toggle');
+    const btnList = el('button', 'bp-view-btn active', '列表');
+    const btnMap = el('button', 'bp-view-btn', '导图');
+    btnList.type = btnMap.type = 'button';
+    toggle.append(btnList, btnMap);
+    head.insertBefore(toggle, head.querySelector('.bp-version'));
+    let mapView = null;
+    const show = (map) => {
+      btnList.classList.toggle('active', !map);
+      btnMap.classList.toggle('active', map);
+      listView.hidden = map;
+      if (map && !mapView) {
+        mapView = renderBlueprintMapView(numbered);
+        card.insertBefore(mapView, listView.nextSibling);
+      }
+      if (mapView) mapView.hidden = !map;
+    };
+    btnList.addEventListener('click', () => show(false));
+    btnMap.addEventListener('click', () => show(true));
+    const applyMq = () => {
+      toggle.hidden = !mq.matches;
+      if (!mq.matches) show(false); // narrow screens always fall back to the list
+    };
+    applyMq();
+    mq.addEventListener('change', applyMq);
+  }
+
   const legend = el('div', 'bp-legend');
   for (const [key, label] of Object.entries(BLUEPRINT_STATUS)) {
     legend.append(el('span', `bp-chip bp-${key}`, label));
   }
   card.append(legend);
   return card;
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/**
+ * 导图 view: deterministic SVG tidy tree over the SAME numbered tree the list
+ * renders — geometry from blueprint-map-layout (pure), zero dependencies,
+ * all client-side. Click a parent node to fold/unfold its branch; collapse
+ * state lives here (UI state), never in the data. First render grows in with
+ * a stagger (feedback register); re-layouts after a fold are instant.
+ */
+function renderBlueprintMapView(numbered) {
+  const wrap = el('div', 'bp-map');
+  const scroller = el('div', 'bp-map-scroll');
+  wrap.append(scroller);
+  const collapsed = new Set();
+  let first = true;
+  const draw = () => {
+    const { nodes, edges, width, height } = layoutBlueprintMap(numbered, collapsed);
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('width', width);
+    svg.setAttribute('height', height);
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.classList.add('bp-map-svg');
+    if (first) svg.classList.add('bp-map-enter');
+    for (const e of edges) {
+      const path = document.createElementNS(SVG_NS, 'path');
+      path.setAttribute('d', edgePath(e));
+      path.setAttribute('class', 'bp-edge');
+      svg.append(path);
+    }
+    nodes.forEach((n, i) => {
+      const g = document.createElementNS(SVG_NS, 'g');
+      g.setAttribute('class', `bp-mnode bp-m-${n.status}${n.childCount ? ' bp-m-branch' : ''}`);
+      g.setAttribute('transform', `translate(${n.x} ${n.y})`);
+      if (first) g.style.animationDelay = `${Math.min(i * 45, 900)}ms`;
+      const rect = document.createElementNS(SVG_NS, 'rect');
+      rect.setAttribute('width', n.w);
+      rect.setAttribute('height', n.h);
+      rect.setAttribute('rx', 8);
+      g.append(rect);
+      const text = document.createElementNS(SVG_NS, 'text');
+      text.setAttribute('x', n.w / 2);
+      text.setAttribute('y', n.h / 2 + 4.5);
+      text.setAttribute('text-anchor', 'middle');
+      text.textContent = n.label;
+      g.append(text);
+      const tip = document.createElementNS(SVG_NS, 'title');
+      tip.textContent = `${n.number} ${n.title}${n.childCount ? `（${n.childCount} 项${n.collapsed ? '，已折叠' : ''}）` : ''}`;
+      g.append(tip);
+      if (n.collapsed && n.childCount) {
+        const badge = document.createElementNS(SVG_NS, 'text');
+        badge.setAttribute('x', n.w + 6);
+        badge.setAttribute('y', n.h / 2 + 4);
+        badge.setAttribute('class', 'bp-fold-badge');
+        badge.textContent = `+${n.childCount}`;
+        g.append(badge);
+      }
+      if (n.childCount) {
+        g.setAttribute('tabindex', '0');
+        g.setAttribute('role', 'button');
+        g.setAttribute('aria-expanded', String(!n.collapsed));
+        const toggleFold = () => {
+          if (collapsed.has(n.id)) collapsed.delete(n.id); else collapsed.add(n.id);
+          draw();
+        };
+        g.addEventListener('click', toggleFold);
+        g.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggleFold(); }
+        });
+      }
+      svg.append(g);
+    });
+    scroller.replaceChildren(svg);
+    first = false;
+  };
+  draw();
+  return wrap;
 }
 
 /** One blueprint node → <details> (has children) or leaf row. */
