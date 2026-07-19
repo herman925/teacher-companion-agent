@@ -2,6 +2,13 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-19 — 锋's Stage-1 workflow landed; ADR-0003 ACCEPTED with amendments; blueprint-list design
+
+- **Four upstream files ingested** (plus date-prefix renames of the three earlier docx): ① [source-docs/stage1-workflow-v1.0.zh-CN.md](source-docs/stage1-workflow-v1.0.zh-CN.md) (extraction of 20260719_第一阶段工作流1.0.docx) — 锋's reworked Stage 1, **resolves the guide-vs-call conflict** (主题探究主轴 explicit; WF-01…09 node table, WF-10 self-annotated as misplaced; 预设包 9-module template incl. 主题判断 + 信号提醒卡; activity library by 5 organization types; 轻量回传卡; prompt skeleton §7; 禁止规则 §8 incl. NEW rule 备课网络图≠儿童任务清单). ② 20260719_Team Meeting.md — 7/17 four-person meeting 逐字稿 (Herman present). ③ 20260717_陳楓Comment.txt — official 逐字稿 of the 7/16 枫 call (dup of prior analysis). ④ Book_小小探索家 PDF (49MB) — **left untracked**: team decided not to feed it to the model, and 49MB in git history would ride every mainland deploy push; Herman to decide gitignore-vs-track.
+- **[ADR-0003](docs/adr/0003-blueprint-first-planning-lens.md) flipped to Accepted** with six acceptance amendments: two-round delivery (maps confirm → full 预设包), 蓝图共创 as default, truth-tagging + all-confirmed delivery gate, 备课图≠儿童任务 rule, list-first/map-later rendering, book not fed.
+- **Meeting decisions worth remembering**: teacher-visible progress board (confirmed-content panel) endorsed; per-activity 观察点 with concrete examples in every activity plan; 项目化 switch stays soft/declinable/reversible; risk — 枫 may read card-questions as disguised 一问一答, Herman's framing (cards demonstrate understanding) must reach her; Herman committed blueprint generation by Sunday 2026-07-20.
+- **Next**: Phase 1 build per ADR — blueprint markdown artifact (Tier-0 collapsible numbered list), contract rewrite from 锋's §7 skeleton + §8 rules, mock planning path. 枫's PPT still not archived (浩然 to send). Pollution guard: existing fixtures pass with zero edits.
+
 ## 2026-07-17 — 预设/生成 rebalance: upstream blessed, ADR-0003 drafted (uncommitted)
 
 - **锋×枫 call transcript reviewed** (Herman pasted; not archived in repo yet). 枫's verdicts: product = 主题探究 agent, 项目式 is a Stage-3-signal branch, never the spine; workflow needs no rewrite — agent never implemented her Stage 1 = five steps from 小小探索家 (预先计划网络图 with 极左/极右 warnings → 建立共同经验 in exactly 5 activity types 集体/小组/个别/自主游戏·环创/亲子 → 发掘已有知识 KWL → 发展探究问题 问题墙/KWHL → 创设环境 材料清单+家长信+周月计划); delivery contract = 「不要一点一点吐给我，直接给我一个比较明确的蓝图」. Validates the contradictions doc AND Herman's information-starvation layer. 锋 reworks Stage 1 next, then Stages 2–3 with 枫.

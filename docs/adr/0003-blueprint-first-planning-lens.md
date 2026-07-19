@@ -1,6 +1,6 @@
 # ADR-0003: Blueprint-first planning lens (预设/生成 rebalance)
 
-**Status:** Proposed · 2026-07-17 — accept once 锋's reworked Stage-1 workflow doc arrives and Herman signs off
+**Status:** Accepted · 2026-07-19 (proposed 2026-07-17; 锋's Stage-1 workflow V1.0 landed and the 2026-07-17 team meeting ratified the direction — see Acceptance amendments)
 
 ## Context
 
@@ -22,6 +22,17 @@ Adopt the contradictions doc's direction — 「先充分预设、再真实生�
 6. **Template mimicry is a planned capability, not now.** Teachers uploading their own 周/月计划 templates for the agent to fill (枫's most concrete feature ask) is deferred: Phase 1 outputs a generic 周/月计划 format; upload lands with the file-upload surface and its child-data posture review.
 
 Rollout is phased: this ADR (Phase 0) → prompt-only spike with blueprint as a markdown artifact, validated against the doc's five acceptance scenarios (Phase 1) → pilot measurement: turns-to-first-blueprint, questions/turn, %ai_suggestion vs confirmed (Phase 2) → schema hardening: `blueprint_delta` turn field, engine versioning, lens-gated harness rules with both-direction fixtures (Phase 3) → blueprint panel UI (Phase 4). Phases 1+ start after 锋's reworked Stage-1 doc and 枫's PPT are archived in `source-docs/` as faithful extractions.
+
+## Acceptance amendments (2026-07-19)
+
+Ratified against [source-docs/stage1-workflow-v1.0.zh-CN.md](../../source-docs/stage1-workflow-v1.0.zh-CN.md) (锋's reworked Stage 1 — now the canonical Stage-1 content; the generic PBL guide is branch/reference material only) and the 2026-07-17 team meeting ([source-docs/20260719_Team Meeting.md](../../source-docs/20260719_Team%20Meeting.md)):
+
+1. **Delivery is two rounds, not one shot.** Round 1: intent intake (unstructured 大白话 accepted; agent summarizes and extends it, 亮灯 skips what's already known, card-questions cover only gaps) + 主题预设网络图 + 资源深度网络图 for teacher confirmation. Round 2 (after confirmation): the full 预设包 — activities across the five organization types, environment/materials/家长信, 2–3 周计划.
+2. **蓝图共创 becomes the default planning behavior** rather than folding away; the other response styles remain selectable options.
+3. **Truth-tagging pipeline**: every generated blueprint node carries a backend guess/fact tag; a forced verification pass before final delivery requires all-confirmed content; the agent reminds the teacher which parts are unconfirmed. (Implements the marking rules in Decision §1 as an explicit delivery gate.)
+4. **New rule direction**: teacher-facing 备课网络图 content must never be presented as child-facing task lists (Stage-1 workflow 禁止规则 §8).
+5. **Blueprint rendering**: hierarchical collapsible numbered list first; interactive map later via a deterministic converter (model emits structure, never draws); PC gets the map, mobile keeps the list.
+6. **《小小探索家》 is not fed to the model** — 枫's workflow is the book condensed; revisit only if pilot teachers report depth gaps.
 
 ## Consequences
 
