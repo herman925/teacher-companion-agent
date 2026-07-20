@@ -281,6 +281,48 @@
   </aside>
 
   <!-- GSAP from CDN; motion.js no-ops (content stays visible) if this fails to load. -->
+  <!-- Public-channel login gate (SECURITY.md §3): on the public instance there
+       is no guest mode — nothing renders behind this until a session exists.
+       Hidden by default; main.js reveals it only when channel=public and the
+       visitor has no session. -->
+  <div id="login-gate" class="login-gate" hidden>
+    <div class="login-gate-card">
+      <span class="app-logo login-gate-logo" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none">
+          <circle cx="14" cy="13" r="9" stroke="var(--green)" stroke-width="2.5"/>
+          <path d="M6.8 9.4a9 9 0 0 1 3.4-3.6" stroke="var(--gold)" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>
+          <line x1="20.5" y1="19.5" x2="27" y2="26" stroke="var(--green)" stroke-width="3" stroke-linecap="round"/>
+          <g class="logo-foot" fill="var(--persimmon)">
+            <ellipse cx="13.6" cy="14.6" rx="2.6" ry="3.4"/>
+            <circle cx="10.9" cy="10.4" r="1.05"/>
+            <circle cx="13.3" cy="9.4" r="1.05"/>
+            <circle cx="15.7" cy="9.7" r="1.05"/>
+            <circle cx="17.6" cy="11.3" r="0.95"/>
+          </g>
+        </svg>
+      </span>
+      <h1 class="login-gate-title">小小探索家</h1>
+      <p class="login-gate-sub">学前教育主题探究课程助手</p>
+      <div id="login-gate-form">
+        <label class="settings-label" for="gate-username">用户名</label>
+        <input class="settings-input" id="gate-username" autocomplete="username" placeholder="账号由管理员创建">
+        <label class="settings-label" for="gate-password">密码</label>
+        <input class="settings-input" id="gate-password" type="password" autocomplete="current-password">
+        <button type="button" class="text-btn login-gate-btn" id="gate-login">登录</button>
+        <p class="login-gate-msg" id="gate-msg" role="status"></p>
+        <button type="button" class="login-gate-register" id="gate-register">还没有账号？</button>
+      </div>
+      <div id="login-gate-signup" hidden>
+        <p class="login-gate-signup-now"><b>开通账号：</b>请联系项目管理员为你创建账号。你会收到一次性初始密码，首次登录后需要改成自己的密码。</p>
+        <!-- Future sign-in methods (PRD §Web/CloudBase: 手机号/微信认证; ARCHITECTURE:
+             微信扫码 OAuth). Placeholders only — wire them when the CloudBase tier lands. -->
+        <button type="button" class="login-gate-alt" disabled>微信扫码登录（筹备中）</button>
+        <button type="button" class="login-gate-alt" disabled>手机号短信登录（筹备中）</button>
+        <button type="button" class="login-gate-register" id="gate-back">返回登录</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>
   <script type="module" src="src/ui/main.js"></script>
 </body>

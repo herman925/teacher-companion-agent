@@ -1641,3 +1641,41 @@ body.rail-pinned .composer { left: 260px; }
 .bp-filter-pill.bp-ai_suggestion.active { background: var(--persimmon-wash); color: var(--status-ai); border-color: var(--status-ai); }
 .bp-filter-pill.bp-hypothesis.active { background: var(--status-guess-wash); color: var(--status-guess); border-color: var(--status-guess); }
 .bp-bulk { font-size: 11px; min-height: 26px; padding: 2px 10px; color: var(--status-truth); border-color: var(--status-truth); margin-left: auto; }
+
+/* ---- public-channel login gate (SECURITY.md §3: no guest mode on public) ---- */
+.login-gate {
+  position: fixed; inset: 0; z-index: 200;
+  background: var(--paper);
+  display: flex; align-items: center; justify-content: center;
+  padding: calc(var(--sp) * 3);
+}
+.login-gate-card {
+  width: min(360px, 100%);
+  background: var(--surface); border: 1px solid var(--border-warm);
+  border-radius: 14px; box-shadow: var(--shadow-card);
+  padding: calc(var(--sp) * 4) calc(var(--sp) * 4) calc(var(--sp) * 3);
+  text-align: center;
+}
+.login-gate-logo svg { width: 56px; height: 56px; }
+.login-gate-title { font-family: var(--font-serif); font-size: 26px; font-weight: 700; margin: 8px 0 2px; }
+.login-gate-sub { color: var(--ink-faded); font-size: 13px; margin: 0 0 calc(var(--sp) * 3); }
+.login-gate-card .settings-label { display: block; text-align: left; margin: 10px 0 4px; }
+.login-gate-card .settings-input { width: 100%; }
+.login-gate-btn {
+  width: 100%; margin-top: calc(var(--sp) * 2); min-height: 42px;
+  background: var(--green); border-color: var(--green); color: var(--on-accent, #fff);
+  font-weight: 500;
+}
+.login-gate-btn:hover { color: var(--on-accent, #fff); opacity: 0.92; }
+.login-gate-msg { min-height: 1.4em; font-size: 13px; color: var(--brick); margin: 8px 0 0; }
+.login-gate-register {
+  background: none; border: none; cursor: pointer; margin-top: 6px;
+  color: var(--green); font-size: 13px; text-decoration: underline; text-underline-offset: 3px;
+}
+.login-gate-signup-now { text-align: left; font-size: 13px; line-height: 1.8; }
+.login-gate-alt {
+  display: block; width: 100%; margin-top: 8px; min-height: 40px;
+  border-radius: 999px; border: 1px dashed var(--border-warm);
+  background: var(--paper); color: var(--ink-faded); font-size: 13px; cursor: not-allowed;
+}
+.login-gate[hidden] { display: none; }

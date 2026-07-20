@@ -1776,6 +1776,53 @@ function paneMsg() {
   return m;
 }
 
+/** Sign in and bring the signed-in UI up. Shared by the 用户中心 login pane and
+ * the public-channel login gate. @returns {{ok: boolean, message?: string}} */
+async function performLogin(username, password) {
+  const res = await fetch(apiUrl('/api/auth/login'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await res.json();
+  if (!data.ok) return { ok: false, message: data.message || '登录失败' };
+  me = data.user;
+  logEvent('session', 'login', { user: me.username });
+  if (me.profile) { profile = { ...profile, ...me.profile }; save(LS.profile, profile); }
+  buildProviderSections();
+  applyDevInstruments(); // an admin logging in on public gains the spanner
+  await enablePersistence();
+  hideLoginGate();
+  return { ok: true };
+}
+
+// ---- public-channel login gate (SECURITY.md §3): the public instance has no
+// guest mode — an anonymous visitor sees only this, never the app. Dev/tunnel
+// channels and offline/static hosting keep the 演示模式 path. Logout reloads
+// the page, which re-runs boot and re-raises the gate.
+function showLoginGate() {
+  const gate = $('#login-gate');
+  gate.hidden = false;
+  const doGateLogin = async () => {
+    $('#gate-msg').textContent = '登录中…';
+    try {
+      const result = await performLogin($('#gate-username').value.trim(), $('#gate-password').value);
+      if (!result.ok) { $('#gate-msg').textContent = result.message; return; }
+      $('#gate-msg').textContent = '';
+      if (me.must_change_password) openUserModal('account', '请先修改初始密码，再开始使用。');
+    } catch (e) { $('#gate-msg').textContent = e?.message ?? '连接失败'; }
+  };
+  if (!gate.dataset.wired) {
+    gate.dataset.wired = '1';
+    $('#gate-login').addEventListener('click', doGateLogin);
+    $('#gate-password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doGateLogin(); });
+    $('#gate-register').addEventListener('click', () => { $('#login-gate-form').hidden = true; $('#login-gate-signup').hidden = false; });
+    $('#gate-back').addEventListener('click', () => { $('#login-gate-signup').hidden = true; $('#login-gate-form').hidden = false; });
+  }
+  $('#gate-username').focus();
+}
+function hideLoginGate() { const g = $('#login-gate'); if (g) g.hidden = true; }
+
 /** Rebuild the 用户中心 modal for the current login state and open it. */
 /** Switch the 用户中心 modal to one pane (shared by nav clicks and deep links). */
 function activateUserPane(key) {
@@ -1810,19 +1857,8 @@ function openUserModal(startPane, notice) {
     const doLogin = async () => {
       msg.textContent = '登录中…';
       try {
-        const res = await fetch(apiUrl('/api/auth/login'), {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ username: userInput.value.trim(), password: pwInput.value }),
-        });
-        const data = await res.json();
-        if (!data.ok) { msg.textContent = data.message || '登录失败'; return; }
-        me = data.user;
-        logEvent('session', 'login', { user: me.username });
-        if (me.profile) { profile = { ...profile, ...me.profile }; save(LS.profile, profile); }
-        buildProviderSections();
-        applyDevInstruments(); // an admin logging in on public gains the spanner
-        await enablePersistence();
+        const result = await performLogin(userInput.value.trim(), pwInput.value);
+        if (!result.ok) { msg.textContent = result.message; return; }
         if (me.must_change_password) openUserModal('account', '请先修改初始密码，再开始使用。');
         else closeDrawers();
       } catch (err2) { msg.textContent = err2?.message ?? '连接失败'; }
@@ -2133,8 +2169,12 @@ function boot() {
       logEvent('session', 'auth_state', { signed_in: Boolean(me), user: me?.username ?? null });
     }
     applyDevInstruments(); // spanner: dev channels always; public = admin-only
+    if (backendChannel === 'public' && authRequired && !me) {
+      showLoginGate();                        // public: no guest mode — gate everything
+      return;
+    }
     if (!persistent) return;
-    if (authRequired && !me) return;          // visitor: localStorage-only 演示模式
+    if (authRequired && !me) return;          // dev/tunnel visitor: localStorage-only 演示模式
     await enablePersistence();
     if (me?.must_change_password) openUserModal('account', '请先修改初始密码，再开始使用。');
   });

@@ -657,7 +657,23 @@
       const code = document.createElement('b');
       code.textContent = temp;
       b.append(code, '　（只显示这一次——请立刻复制发给对方。再点一次重置会作废这个密码）　');
-      b.append(mkbtn('复制', () => navigator.clipboard?.writeText(temp)));
+      // navigator.clipboard exists only in secure contexts (https / localhost);
+      // the bare-IP HTTP admin gets the execCommand fallback. Either way the
+      // button must say whether it worked — it used to fail silently.
+      const copyBtn = mkbtn('复制', async () => {
+        let done = false;
+        try { await navigator.clipboard.writeText(temp); done = true; } catch { /* fall through */ }
+        if (!done) {
+          const ta = document.createElement('textarea');
+          ta.value = temp; ta.style.position = 'fixed'; ta.style.opacity = '0';
+          document.body.append(ta); ta.select();
+          try { done = document.execCommand('copy'); } catch { done = false; }
+          ta.remove();
+        }
+        copyBtn.textContent = done ? '已复制 ✓' : '复制失败——请手动选中';
+        setTimeout(() => { if (copyBtn.isConnected) copyBtn.textContent = '复制'; }, 2500);
+      });
+      b.append(copyBtn);
     }
 
     async function userAction(id, body) {
