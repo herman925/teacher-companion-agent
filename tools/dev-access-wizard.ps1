@@ -122,16 +122,30 @@ if (-not $probe -or $probe.StatusCode -ne 200) {
 }
 
 # ---- Step 3: tunnel is up, open the browser ---------------------------
-Write-Step 3 "Access granted - opening DEV platform"
+Write-Step 3 "Access granted - tunnel is running"
 Write-Host ""
 if ($LocalPort -ne $PortCandidates[0]) {
     Write-Host "  (Port $($PortCandidates[0]) was busy on this PC - using $LocalPort instead.)" -ForegroundColor Yellow
 }
-Write-Host "  Tunnel is running." -ForegroundColor Green
-Write-Host "    [1] DEV platform:        http://localhost:$LocalPort/" -ForegroundColor Green
-Write-Host "    [2] Admin data console:  http://localhost:$LocalPort/admin" -ForegroundColor Green
+
+# Teammates kept missing the quiet one-line prompt and thought the wizard had
+# stalled. Loud block + a re-ask on invalid input; plain Enter still means 1.
 Write-Host ""
-$choice = Read-Host "  Open which page? 1 = platform (default), 2 = admin console, 3 = both"
+Write-Host ("  " + ("=" * 56)) -ForegroundColor Yellow
+Write-Host "   >>> YOUR TURN - TYPE A NUMBER AND PRESS Enter <<<   " -ForegroundColor Black -BackgroundColor Yellow
+Write-Host ("  " + ("=" * 56)) -ForegroundColor Yellow
+Write-Host ""
+Write-Host "     1   DEV platform (chat)      http://localhost:$LocalPort/" -ForegroundColor Cyan
+Write-Host "     2   Admin data console       http://localhost:$LocalPort/admin" -ForegroundColor Cyan
+Write-Host "     3   Both pages" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "     (just pressing Enter opens the platform)" -ForegroundColor DarkGray
+Write-Host ""
+do {
+    $choice = Read-Host "  ==> Open which page? [1 / 2 / 3]"
+    $ok = ($choice -in '', '1', '2', '3')
+    if (-not $ok) { Write-Host "  '$choice' is not an option - type 1, 2 or 3 (or just Enter)." -ForegroundColor Red }
+} until ($ok)
 if ($choice -eq '2' -or $choice -eq '3') { Start-Process "http://localhost:$LocalPort/admin" }
 if ($choice -ne '2') { Start-Process "http://localhost:$LocalPort/" }
 Write-Host ""
