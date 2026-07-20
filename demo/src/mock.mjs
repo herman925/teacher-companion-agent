@@ -29,6 +29,11 @@ function trace(mode, stage, nodes, principles, stateNotes) {
  * @returns {Object} a turn-contract object (see contract.zh.md)
  */
 export function mockTurn(state, history, message, opts = {}) {
+  // 蓝图批注 (spec 2026-07-20): a packaged per-node comment message answers
+  // with blueprint_delta refinements, whatever mode the course is in.
+  if (/^【蓝图批注】/.test(message) && state.course_plan_blueprint?.modules?.length) {
+    return turnBlueprintComments(state, message);
+  }
   // WF01 has not run yet → entry recognition on first contact (状态机优先).
   if (!(state.completed_nodes || []).includes('WF01')) return turnEntry(message, opts);
   switch (state.teacher_mode) {
@@ -309,6 +314,45 @@ const RESOURCE_MATERIALS = {
   趁墟: '摊位小桌布×4、玩具秤与篮子、自制纸币卡、当地特产实物或图片、叫卖牌',
   祠堂: '祠堂照片放大图、可拼搭的积木梁柱、灯笼半成品、族谱式大画纸、瓦当拓印材料',
 };
+
+// ------------------------------------------------ 蓝图批注 → delta refinement
+
+/** Parse packaged 批注 lines: `N. 「1.2 标题」(id: node_id)：批注内容`. */
+export function parseBlueprintComments(message) {
+  const rows = [];
+  for (const m of String(message).matchAll(/^\d+[.、]\s*「([^」]*)」\(id:\s*([^)]+)\)：(.+)$/gm)) {
+    rows.push({ label: m[1].trim(), id: m[2].trim(), text: m[3].trim() });
+  }
+  return rows;
+}
+
+function turnBlueprintComments(state, message) {
+  const rows = parseBlueprintComments(message);
+  const known = new Set();
+  const walk = (n) => { known.add(n.id); (n.children || []).forEach(walk); };
+  (state.course_plan_blueprint?.modules || []).forEach(walk);
+  const hits = rows.filter((r) => known.has(r.id));
+  const delta = hits.map((r) => ({
+    op: 'update',
+    id: r.id,
+    node: { body: `已按你的批注调整：${r.text}。原方向里仍可用的部分保留，不合适的部分替换。`, status: 'teacher_preset' },
+  }));
+  const lines = hits.map((r, i) => `${i + 1}. 「${r.label}」：收到。已按批注更新该节点，方向以你的现场判断为准。`);
+  return {
+    reply_markdown: hits.length
+      ? `你的 ${hits.length} 条批注我逐条处理了：\n\n${lines.join('\n')}\n\n改动都落在右侧蓝图面板对应节点里，贴不贴你的想法请到面板里核对；不对的地方继续批注，认可的直接点确认。`
+      : '这批批注没有对上蓝图里的节点（蓝图可能已更新过版本）。请在面板里对着最新版本重新批注一次。',
+    questions: [],
+    artifacts: [],
+    blueprint_delta: delta,
+    closure_loop: null,
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace(state.teacher_mode || 'from_zero', state.stage ?? 0, [],
+      ['先给完整方案再一起改', '预设必须标注'], `蓝图批注 ${hits.length} 条 → blueprint_delta 更新`),
+  };
+}
 
 function turnBlueprintRound2(state, history, message) {
   const resource = (state.theme_resource || {}).name || '醒狮';

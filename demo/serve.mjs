@@ -24,6 +24,7 @@ import { applyDelta, absorbBlueprint, applyBlueprintDelta, confirmBlueprintNode,
 import { buildSystemPrompt, stageModuleName, profileSectionText } from './src/prompt-builder.mjs';
 import { store } from './src/store.mjs';
 import { deriveCourseTitle, TITLE_MAX } from './src/store/json-store.mjs';
+import { shouldRegenTitle, buildTitleMessages, sanitizeTitle, TITLE_INTERVALS, TITLE_INTERVAL_DEFAULT } from './src/title-agent.mjs';
 import { parseCookies, sessionCookie, clearSessionCookie, SESSION_COOKIE, displayNameError } from './src/auth-util.mjs';
 
 // Auth (SECURITY.md): opaque session cookie → store lookup. Courses are scoped
@@ -154,10 +155,25 @@ async function runTurn(req, emit) {
     // Snapshot the exact messages sent before the call (the array mutates on L4 retry).
     const sentMessages = debug ? messages.map((m) => ({ role: m.role, content: m.content })) : null;
     const t0 = Date.now();
+    // Live progress out of the model stream (adapter onDelta): 'thinking' text
+    // chunks batched ~300ms, 'progress' char counts throttled ~1s, TTFT once.
+    // Doubles as an SSE heartbeat — long silent vendor calls no longer look
+    // dead to the teacher or to any proxy read-timeout in front.
+    emit('phase', { attempt }); // each attempt starts a fresh thinking panel client-side
+    let thinkBuf = '';
+    let lastThink = 0;
+    let lastProgress = 0;
+    const flushThink = () => { if (thinkBuf) { emit('thinking', { text: thinkBuf }); thinkBuf = ''; lastThink = Date.now(); } };
+    const onDelta = (d) => {
+      if (d.kind === 'first') emit('ttft', { ms: d.ms });
+      else if (d.kind === 'thinking') { thinkBuf += d.text; if (Date.now() - lastThink > 300) flushThink(); }
+      else if (d.kind === 'content' && Date.now() - lastProgress > 1000) { lastProgress = Date.now(); emit('progress', { chars: d.chars, elapsed_ms: Date.now() - t0 }); }
+    };
     // 'mock' provider: scripted walkthrough through the SAME L2/L3/L4 pipeline.
     const result = preferred === 'mock'
       ? { payload: mockTurn(state, req.history || [], req.message, { profile: req.profile }), usage: null, provider: 'mock', errors: [] }
-      : await callWithFailover(preferred, keys, messages, { registry });
+      : await callWithFailover(preferred, keys, messages, { registry, onDelta });
+    flushThink();
     const elapsedMs = Date.now() - t0;
     provider = result.provider;
     usage = result.usage;
@@ -309,6 +325,40 @@ async function runCourseTurn(userId, courseId, body, emit) {
         if (t) {
           const renamed = await store.renameCourse(userId, courseId, t, { auto: true });
           emit('course', { id: courseId, title: renamed.title }); // client refreshes its rail row
+        }
+      }
+    } catch { /* naming is cosmetic — never fail the turn over it */ }
+    // Interval regen (title-agent harness, spec 2026-07-20): opt-in via
+    // profile.autoTitle; every Nth teacher prompt a PLAIN side-channel
+    // completion renames the course. renameCourse's auto guard keeps human
+    // renames untouchable; any failure falls back to the theme heuristic.
+    try {
+      const cfg = body.profile?.autoTitle;
+      if (cfg?.enabled) {
+        const every = TITLE_INTERVALS.includes(Number(cfg.every)) ? Number(cfg.every) : TITLE_INTERVAL_DEFAULT;
+        const all = await store.getMessages(courseId);
+        const teacherTurns = all.filter((m) => m.role === 'teacher').length;
+        if (shouldRegenTitle({ teacherTurns, every, enabled: true, titleLocked: false })) {
+          let t = null;
+          if (body.provider && body.provider !== 'mock') {
+            try {
+              const keys = { ...ENV_KEYS, ...(body.keys || {}) };
+              const registry = effectiveRegistry(body);
+              const msgs = buildTitleMessages(
+                all.map((m) => ({ role: m.role === 'agent' ? 'assistant' : 'user', content: m.content })),
+                captured.state,
+              );
+              // 15s cap: this runs inside the turn's SSE tail — a slow naming
+              // call must not hold the teacher's reply stream hostage.
+              const r = await callWithFailover(body.provider, keys, msgs, { registry, plain: true, timeoutMs: 15000 });
+              t = sanitizeTitle(typeof r.payload === 'string' ? r.payload : '');
+            } catch { /* side-channel only — fall through to the heuristic */ }
+          }
+          if (!t) t = deriveCourseTitle(captured.state, body.message);
+          if (t) {
+            const renamed = await store.renameCourse(userId, courseId, t, { auto: true });
+            emit('course', { id: courseId, title: renamed.title });
+          }
         }
       }
     } catch { /* naming is cosmetic — never fail the turn over it */ }
@@ -567,7 +617,10 @@ const server = http.createServer(async (req, res) => {
     const accept = req.headers.accept || '';
     if (accept.includes('application/json') && !accept.includes('text/event-stream')) {
       const events = [];
-      const emit = (event, data) => events.push({ event, data });
+      // Live-progress events (thinking/progress/ttft/phase) are pointless after
+      // the fact and can be large — buffered replies carry only the outcome.
+      const LIVE = new Set(['thinking', 'progress', 'ttft', 'phase']);
+      const emit = (event, data) => { if (!LIVE.has(event)) events.push({ event, data }); };
       try {
         await runTurn(JSON.parse(body), emit);
       } catch (e) {

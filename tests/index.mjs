@@ -20,3 +20,4 @@ import '../demo/tests/question-cards.test.mjs';
 import '../demo/tests/blueprint.test.mjs';
 import '../demo/tests/blueprint-map.test.mjs';
 import '../demo/tests/blueprint-state.test.mjs';
+import '../demo/tests/blueprint-comments.test.mjs';

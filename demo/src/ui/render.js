@@ -348,9 +348,68 @@ function confirmButton(node, onConfirm) {
   return btn;
 }
 
+/**
+ * Chat-side blueprint pointer chip (spec 2026-07-20): the blueprint itself
+ * lives ONLY in the workspace panel; chat gets a one-line pointer with the
+ * version, the outstanding count, and a click-through that opens the panel.
+ * @param {{version: string, pending: number, onOpen?: () => void}} p
+ */
+export function renderBlueprintChip({ version, pending, onOpen }) {
+  const chip = el('button', 'bp-chat-chip');
+  chip.type = 'button';
+  chip.append(el('span', 'artifact-seal', ARTIFACT_SEALS.blueprint));
+  // Display-cap the model-authored version string — a rambling version must
+  // not blow up the one-line chip.
+  chip.append(el('span', 'bp-chat-chip-text', `预设蓝图 ${[...String(version)].slice(0, 20).join('')} 已更新`));
+  if (pending > 0) chip.append(el('span', 'bp-chat-chip-pending', `${pending} 项待确认`));
+  chip.append(el('span', 'bp-chat-chip-cta', '去面板查看确认 →'));
+  if (onOpen) chip.addEventListener('click', onOpen);
+  return chip;
+}
+
+/** 批注 affordance (spec 2026-07-20): every panel node gets a comment button;
+ * the editor saves through opts.onCommentChange(node, text) and the send is a
+ * single packaged message wired by the panel footer (main.js). */
+function commentButton(node, opts) {
+  const current = () => String(opts.comments?.[node.id] ?? '');
+  const btn = el('button', 'bp-comment-btn', current().trim() ? '已批注' : '批注');
+  btn.type = 'button';
+  btn.title = '给这一项写批注（发给 AI 用于修改蓝图）';
+  btn.classList.toggle('has-comment', Boolean(current().trim()));
+  btn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    const host = btn.closest('.bp-leaf, details, .bp-pop');
+    const existing = host?.querySelector(':scope > .bp-comment-editor');
+    if (existing) { existing.remove(); return; }
+    const editor = el('div', 'bp-comment-editor');
+    const ta = document.createElement('textarea');
+    ta.className = 'bp-comment-input';
+    ta.placeholder = '想改什么、为什么——写给 AI 的修改意见';
+    ta.maxLength = 500; // one comment = one packed line; keep it a note, not an essay
+    ta.value = current();
+    ta.addEventListener('input', () => {
+      opts.onCommentChange?.(node, ta.value);
+      btn.textContent = ta.value.trim() ? '已批注' : '批注';
+      btn.classList.toggle('has-comment', Boolean(ta.value.trim()));
+    });
+    const close = el('button', 'bp-comment-close', '收起');
+    close.type = 'button';
+    close.addEventListener('click', (e2) => { e2.stopPropagation(); editor.remove(); });
+    editor.append(ta, close);
+    // Leaf rows and popovers append at the end; branches slot in right after
+    // the summary so the editor stays visually attached to the header row.
+    if (host?.tagName === 'DETAILS') host.querySelector(':scope > summary')?.after(editor);
+    else host?.append(editor);
+    ta.focus();
+  });
+  return btn;
+}
+
 /** Collapsible numbered outline over a numbered blueprint tree — shared by
  * the chat card (snapshot) and the workspace panel (living document).
- * opts.onConfirm(nodeId): render ✓确认 on unconfirmed nodes (panel only). */
+ * opts.onConfirm(nodeId): render ✓确认 on unconfirmed nodes (panel only).
+ * opts.onCommentChange(node, text) + opts.comments: render 批注 (panel only). */
 export function renderBlueprintList(numbered, opts = {}) {
   const listView = el('div', 'bp-list-view');
   for (const mod of numbered || []) listView.append(renderBlueprintNode(mod, true, opts));
@@ -397,6 +456,7 @@ export function renderBlueprintMapView(numbered, opts = {}) {
     const source = findInTree(numbered, n.id);
     if (source?.rationale) pop.append(renderRationale(source.rationale));
     if (opts.onConfirm && n.status !== 'confirmed') pop.append(confirmButton(n, opts.onConfirm));
+    if (opts.onCommentChange && source) pop.append(commentButton(source, opts));
     const gBox = g.getBoundingClientRect();
     const wBox = wrap.getBoundingClientRect();
     pop.hidden = false;
@@ -551,6 +611,7 @@ function renderBlueprintNode(node, isModule, opts = {}) {
     const gutter = el('span', 'bp-gutter');
     gutter.append(chip);
     if (opts.onConfirm && node.status !== 'confirmed') gutter.append(confirmButton(node, opts.onConfirm));
+    if (opts.onCommentChange) gutter.append(commentButton(node, opts));
     line.append(title, gutter);
     row.dataset.status = node.status;
     row.append(line);
@@ -576,6 +637,7 @@ function renderBlueprintNode(node, isModule, opts = {}) {
   gutter.append(chip);
   if (pending > 0) gutter.append(el('span', 'bp-rollup', `${pending} 项待确认`));
   if (opts.onConfirm && node.status !== 'confirmed') gutter.append(confirmButton(node, opts.onConfirm));
+  if (opts.onCommentChange) gutter.append(commentButton(node, opts));
   summary.append(title, gutter);
   details.dataset.status = node.status;
   details.append(summary);

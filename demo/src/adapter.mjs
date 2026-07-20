@@ -187,9 +187,12 @@ export const TURN_SCHEMA = {
  * Build the chat-completions request body for a provider.
  * @param {import('./types.mjs').ProviderConfig} p
  * @param {Array<{role: string, content: string}>} messages
+ * @param {{plain?: boolean}} [opts] plain: skip the turn-contract JSON strategy —
+ *   side-channel calls (title-agent) want a bare text completion.
  */
-export function buildRequest(p, messages) {
+export function buildRequest(p, messages, opts = {}) {
   const body = { model: p.model, messages: [...messages], temperature: 0.6, stream: false };
+  if (opts.plain) return body;
   switch (p.jsonStrategy) {
     case 'json_schema':
       body.response_format = { type: 'json_schema', json_schema: { name: 'turn', schema: TURN_SCHEMA } };
@@ -246,8 +249,12 @@ export class AdapterError extends Error {
 // overloaded"). Any honest UA passes, so always send one.
 const USER_AGENT = 'teacher-platform-demo/0.1';
 
-/** One POST to a node's /chat/completions; throws AdapterError on any failure. */
-async function callNode(p, base, apiKey, body, timeoutMs) {
+/** One POST to a node's /chat/completions; throws AdapterError on any failure.
+ * With onDelta the request streams (stream:true) and progress flows out as
+ * onDelta({kind:'first'|'thinking'|'content', …}); the RESULT is identical to
+ * the non-streaming path — chunks are accumulated and go through the same
+ * extractPayload, so the harness never knows the difference. */
+async function callNode(p, base, apiKey, body, timeoutMs, onDelta) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   let res;
@@ -255,20 +262,105 @@ async function callNode(p, base, apiKey, body, timeoutMs) {
     res = await fetch(`${base}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}`, 'user-agent': USER_AGENT },
-      body: JSON.stringify(body),
+      body: JSON.stringify(onDelta ? { ...body, stream: true } : body),
       signal: ctl.signal,
     });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new AdapterError('http', `${p.label}（${base}）返回 ${res.status}：${text.slice(0, 300)}`, res.status);
+    }
+    const completion = onDelta ? await readStream(p, res, onDelta) : await res.json();
+    return { payload: extractPayload(p, completion), usage: completion.usage ?? null, base_url_used: base };
   } catch (e) {
+    if (e instanceof AdapterError) throw e;
     throw new AdapterError('network', `无法连接 ${p.label}（${base}）：${e.message}`);
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new AdapterError('http', `${p.label}（${base}）返回 ${res.status}：${text.slice(0, 300)}`, res.status);
+}
+
+/**
+ * Read an OpenAI-compatible SSE stream and rebuild the non-streaming
+ * completion shape. Universal across our providers; the only per-model
+ * difference is where thinking lives, and both shapes are handled:
+ *   - delta.reasoning_content  (GLM / Z.AI, some aggregator models)
+ *   - <think>…</think> inside delta.content (MiniMax M3 — stripThinking set)
+ * Tool-call argument chunks count as content progress (raw JSON args are not
+ * teacher-facing thinking). Usage is whatever the final chunk carries.
+ */
+async function readStream(p, res, onDelta) {
+  const decoder = new TextDecoder();
+  let buf = '';
+  let content = '';
+  let toolArgs = '';
+  let toolName = '';
+  let usage = null;
+  let finishReason = null;
+  let sawFirst = false;
+  let inThink = false; // <think> scanner state for stripThinking providers
+  const t0 = Date.now();
+
+  const feed = (data) => {
+    let chunk;
+    try { chunk = JSON.parse(data); } catch { return; }
+    if (chunk.usage) usage = chunk.usage;
+    const choice = chunk.choices?.[0];
+    if (!choice) return;
+    if (choice.finish_reason) finishReason = choice.finish_reason;
+    const delta = choice.delta ?? {};
+    if (!sawFirst && (delta.content || delta.reasoning_content || delta.tool_calls)) {
+      sawFirst = true;
+      onDelta({ kind: 'first', ms: Date.now() - t0 });
+    }
+    if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
+      onDelta({ kind: 'thinking', text: delta.reasoning_content });
+    }
+    if (typeof delta.content === 'string' && delta.content) {
+      content += delta.content;
+      if (p.stripThinking) {
+        // Forward the inside of <think>…</think> as thinking, the rest as content.
+        let text = delta.content;
+        while (text) {
+          if (inThink) {
+            const end = text.indexOf('</think>');
+            if (end === -1) { onDelta({ kind: 'thinking', text }); text = ''; }
+            else { onDelta({ kind: 'thinking', text: text.slice(0, end) }); text = text.slice(end + 8); inThink = false; }
+          } else {
+            const start = text.indexOf('<think>');
+            if (start === -1) { onDelta({ kind: 'content', chars: content.length }); text = ''; }
+            else { text = text.slice(start + 7); inThink = true; }
+          }
+        }
+      } else {
+        onDelta({ kind: 'content', chars: content.length });
+      }
+    }
+    const tc = delta.tool_calls?.[0];
+    if (tc?.function) {
+      if (tc.function.name) toolName = tc.function.name;
+      if (tc.function.arguments) {
+        toolArgs += tc.function.arguments;
+        onDelta({ kind: 'content', chars: toolArgs.length });
+      }
+    }
+  };
+
+  for await (const part of res.body) {
+    buf += decoder.decode(part, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) !== -1) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line.startsWith('data:')) continue;
+      const data = line.slice(5).trim();
+      if (data === '[DONE]') continue;
+      feed(data);
+    }
   }
-  const completion = await res.json();
-  return { payload: extractPayload(p, completion), usage: completion.usage ?? null, base_url_used: base };
+
+  const message = { content };
+  if (toolArgs) message.tool_calls = [{ type: 'function', function: { name: toolName || 'emit_turn', arguments: toolArgs } }];
+  return { choices: [{ message, finish_reason: finishReason }], usage };
 }
 
 /** Node failures worth retrying on an alternate node of the SAME provider:
@@ -288,13 +380,13 @@ function nodeHopWorthy(e) {
 // 180s under load (2026-07-20 feng session). Keep BELOW every proxy in front —
 // the public nginx reads at 660s — so the adapter aborts first and the teacher
 // gets a real error instead of a dead stream.
-export async function callProvider(p, apiKey, messages, { timeoutMs = 600000 } = {}) {
-  const body = buildRequest(p, messages);
+export async function callProvider(p, apiKey, messages, { timeoutMs = 600000, plain = false, onDelta = null } = {}) {
+  const body = buildRequest(p, messages, { plain });
   const bases = [p.baseURL, ...(Array.isArray(p.altBaseURLs) ? p.altBaseURLs : [])];
   let lastErr = null;
   for (const base of bases) {
     try {
-      return await callNode(p, base, apiKey, body, timeoutMs);
+      return await callNode(p, base, apiKey, body, timeoutMs, onDelta);
     } catch (e) {
       lastErr = e;
       if (!(e instanceof AdapterError) || !nodeHopWorthy(e) || base === bases[bases.length - 1]) throw e;

@@ -75,6 +75,40 @@ export function numberBlueprint(modules) {
 }
 
 /**
+ * Count nodes not yet confirmed — the chip's 「N 项待确认」. Counts every node
+ * (branch + leaf), matching the panel's per-branch rollup arithmetic.
+ * @param {Array} modules normalized modules from normalizeBlueprint()
+ */
+export function countUnconfirmed(modules) {
+  let n = 0;
+  const walk = (node) => {
+    if (node.status !== 'confirmed') n += 1;
+    node.children.forEach(walk);
+  };
+  (modules || []).forEach(walk);
+  return n;
+}
+
+/**
+ * Package per-node 批注 into ONE teacher message (mirror of the question-card
+ * packaging): numbered lines quoting the node the teacher saw, with the stable
+ * id the model needs to answer via blueprint_delta.
+ * @param {Array<{id: string, number: string, title: string, text: string}>} comments
+ * @returns {string|null} packed message, or null when nothing to send
+ */
+export function packBlueprintComments(comments) {
+  const rows = (comments || []).filter((c) => c && String(c.text ?? '').trim());
+  if (!rows.length) return null;
+  // One comment = ONE line (the parse side is line-anchored): newlines in the
+  // teacher's text collapse to spaces; 「」 in titles would break the quoting.
+  const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+  const safeTitle = (s) => oneLine(s).replace(/[「」]/g, '');
+  const lines = rows.map((c, i) =>
+    `${i + 1}. 「${c.number} ${safeTitle(c.title)}」(id: ${c.id})：${oneLine(c.text)}`);
+  return `【蓝图批注】\n${lines.join('\n')}`;
+}
+
+/**
  * Flatten a numbered tree into [{number, id, title, status}] rows — the
  * number→id snapshot that later lets a teacher's 「把2.3换掉」 resolve against
  * the version they actually saw (Phase 3 uses this; kept here so the mapping

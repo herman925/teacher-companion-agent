@@ -10,9 +10,10 @@ import {
   renderQuestionBlock, renderQuestionCards, freezeQuestionCards,
   renderClosureCard, renderAwaitingNote,
   renderErrorNotice, renderDebug, renderWfTrace, el,
-  renderBlueprintList, renderBlueprintMapView,
+  renderBlueprintList, renderBlueprintMapView, renderBlueprintChip,
 } from './render.js';
-import { normalizeBlueprint, numberBlueprint } from '../blueprint-util.mjs';
+import { normalizeBlueprint, numberBlueprint, countUnconfirmed, packBlueprintComments } from '../blueprint-util.mjs';
+import { TITLE_INTERVALS, TITLE_INTERVAL_DEFAULT } from '../title-agent.mjs';
 import { confirmBlueprintNode } from '../engine.mjs';
 import { messageIn, cardIn, cardsIn, chipsIn, closureIn, fadeIn } from './motion.js';
 import { runLocalMockTurn } from './local-turn.mjs';
@@ -38,6 +39,7 @@ const LS = {
   bpW: 'cst.bpW',             // blueprint panel width (desktop, px)
   bpTab: 'cst.bpTab',         // blueprint panel view: 'list' | 'map'
   bpHidden: 'cst.bpHidden',   // teacher chose to collapse the panel
+  bpComments: 'cst.bpComments', // unsent per-node 批注, keyed by course
 };
 
 function load(key, fallback) {
@@ -85,6 +87,9 @@ const logEvent = (cat, event, data) => logStore.log(cat, event, data);
 let profile = {
   province: '', region: '', ageRange: '', teachYears: '', tenureYears: '',
   role: '', classBands: [], classSize: '', stylePref: '', ageBand: '',
+  // title-agent harness config (spec 2026-07-20): rides in the profile so the
+  // existing account sync carries it; the server reads profile.autoTitle.
+  autoTitle: { enabled: false, every: TITLE_INTERVAL_DEFAULT },
   ...load(LS.profile, {}),
 };
 let profileSyncTimer = null;
@@ -103,7 +108,9 @@ function saveProfile() {
   }
 }
 function profileIsEmpty() {
-  return !Object.values(profile).some((v) => (Array.isArray(v) ? v.length : String(v ?? '').trim()));
+  // autoTitle is harness config, not 档案 content — it never counts as "filled".
+  return !Object.entries(profile).some(([k, v]) => k !== 'autoTitle'
+    && (Array.isArray(v) ? v.length : String(v ?? '').trim()));
 }
 
 /** Fixed choice lists for the 教师档案 pane (DESIGN.md §4). */
@@ -124,8 +131,12 @@ const TENURE_YEARS = ['1年以内', '1–3年', '4–6年', '7–10年', '10年�
 const KG_ROLES = ['班主任', '配班教师', '保育员', '年级组长', '保教主任', '园内教研员', '副园长', '园长', '实习教师', '其他'];
 const CLASS_BANDS = ['小班', '中班', '大班', '混龄'];
 const RESPONSE_STYLES = Object.keys(STYLE_DIRECTIVES);
-/** The profile as sent with requests (undefined when empty). */
-function profileForRequest() { return profileIsEmpty() ? undefined : { ...profile }; }
+/** The profile as sent with requests (undefined when empty). An enabled
+ * autoTitle still ships alone — the server's title harness needs it. */
+function profileForRequest() {
+  if (profileIsEmpty() && !profile.autoTitle?.enabled) return undefined;
+  return { ...profile };
+}
 
 // Dev-mode prompt reconstruction (演示模式): fetch-backed cached prompt loader.
 // The prompt files are static-served both locally and on GitHub Pages.
@@ -378,14 +389,28 @@ function renderTurnGroup(ev, opts = {}) {
   if (devMode && turn.wf_trace) group.append(renderWfTrace(turn.wf_trace));
 
   const cards = [];
-  if (turn.artifacts?.length) {
+  // Blueprint content lives ONLY in the workspace panel (spec 2026-07-20) —
+  // chat gets a pointer chip; delta-only turns get one too.
+  const bpArtifacts = (turn.artifacts ?? []).filter((a) => a.type === 'blueprint');
+  const otherArtifacts = (turn.artifacts ?? []).filter((a) => a.type !== 'blueprint');
+  if (otherArtifacts.length) {
     const wrap = el('div', 'artifacts');
-    for (const artifact of turn.artifacts) {
+    for (const artifact of otherArtifacts) {
       const card = renderArtifactCard(artifact);
       cards.push(card);
       wrap.append(card);
     }
     group.append(wrap);
+  }
+  if (bpArtifacts.length || (Array.isArray(turn.blueprint_delta) && turn.blueprint_delta.length)) {
+    const bp = ev.state?.course_plan_blueprint;
+    const chip = renderBlueprintChip({
+      version: bp?.display_version || (bp ? `v${bp.version}` : 'v0.1'),
+      pending: bp ? countUnconfirmed(normalizeBlueprint({ modules: bp.modules }).modules) : 0,
+      onOpen: openBlueprintPanel,
+    });
+    cards.push(chip);
+    group.append(chip);
   }
 
   let questionEl = null;
@@ -1127,6 +1152,31 @@ function buildProfilePane(target) {
     describe: (v) => (v ? `会这样要求陪跑智能体：${STYLE_DIRECTIVES[v]}` : '选一个风格，陪跑智能体会按它回应你；下方会显示给模型的原话。'),
   }));
 
+  // 自动更新课程名 (title-agent harness): default off; every N teacher prompts
+  // a side-channel model call renames the course (human rename always wins).
+  const at = { enabled: false, every: TITLE_INTERVAL_DEFAULT, ...(profile.autoTitle ?? {}) };
+  const atField = el('div', 'settings-field');
+  const atRow = el('div', 'checkbox-row');
+  const atLab = el('label', '');
+  const atBox = document.createElement('input');
+  atBox.type = 'checkbox';
+  atBox.checked = Boolean(at.enabled);
+  atBox.addEventListener('change', () => {
+    profile.autoTitle = { ...at, enabled: atBox.checked };
+    at.enabled = atBox.checked;
+    saveProfile();
+  });
+  atLab.append(atBox, document.createTextNode('自动更新课程名（AI 根据对话起名，手动改过名的课程不受影响）'));
+  atRow.append(atLab);
+  atField.append(el('label', 'settings-label', '课程名'), atRow);
+  pane.append(atField);
+  pane.append(selectField('每隔多少条你的消息更新一次', 'profile-autotitle-every',
+    TITLE_INTERVALS.map(String), String(at.every ?? TITLE_INTERVAL_DEFAULT), (v) => {
+      profile.autoTitle = { ...at, every: Number(v) || TITLE_INTERVAL_DEFAULT };
+      at.every = profile.autoTitle.every;
+      saveProfile();
+    }));
+
   pane.append(el('p', 'settings-note', '档案只保存在这台设备，作为只读背景提供给陪跑智能体（不会写入课程状态）。将来有账号后，这一页会搬进「用户中心」。'));
 }
 
@@ -1390,6 +1440,15 @@ let bpTab = load(LS.bpTab, 'list');
 let bpHidden = load(LS.bpHidden, false);
 let bpRenderKey = ''; // courseId:version:tab — unchanged key skips the re-render, keeping fold/scroll state
 
+/** Reveal the workspace panel (chat chip / FAB click-through). Below the
+ * desktop breakpoint it opens as the full-height sheet. */
+function openBlueprintPanel() {
+  bpHidden = false;
+  save(LS.bpHidden, false);
+  if (!window.matchMedia('(min-width: 1100px)').matches) document.body.classList.add('bp-sheet');
+  refreshBlueprintPanel();
+}
+
 function refreshBlueprintPanel() {
   const panel = $('#bp-panel');
   const fab = $('#btn-blueprint');
@@ -1411,9 +1470,68 @@ function refreshBlueprintPanel() {
   if (key === bpRenderKey) return; // same plan, same view → keep the teacher's fold/scroll state
   bpRenderKey = key;
   const body = $('#bp-panel-body');
-  const opts = { onConfirm: confirmNode, posKey: courseState?.course_id };
+  pruneOrphanComments(numbered);
+  const opts = {
+    onConfirm: confirmNode,
+    posKey: courseState?.course_id,
+    comments: Object.fromEntries(Object.entries(commentsForCourse()).map(([id, c]) => [id, c.text])),
+    onCommentChange: setNodeComment,
+  };
   body.replaceChildren(bpTab === 'map' ? renderBlueprintMapView(numbered, opts) : renderBlueprintList(numbered, opts));
   applyBpFilter();
+  refreshCommentBar();
+}
+
+// -- per-node 批注 (spec 2026-07-20): unsent comments live locally per course;
+// one 「一起发送」 packages them into a single teacher message the model
+// answers with blueprint_delta refinements.
+let bpComments = load(LS.bpComments, {});
+function commentCourseKey() { return activeCourseId || courseState?.course_id || 'local'; }
+function commentsForCourse() { return bpComments[commentCourseKey()] ?? {}; }
+function setNodeComment(node, text) {
+  const key = commentCourseKey();
+  const bucket = { ...(bpComments[key] ?? {}) };
+  if (String(text ?? '').trim()) bucket[node.id] = { id: node.id, number: node.number, title: node.title, text };
+  else delete bucket[node.id];
+  bpComments[key] = bucket;
+  save(LS.bpComments, bpComments);
+  refreshCommentBar();
+}
+/** A node removed by a delta takes its unsent comment with it — an invisible
+ * comment the bar still counts would be a lie the teacher can't act on. */
+function pruneOrphanComments(numbered) {
+  const known = new Set();
+  const walk = (n) => { known.add(n.id); n.children.forEach(walk); };
+  (numbered || []).forEach(walk);
+  const key = commentCourseKey();
+  const bucket = bpComments[key];
+  if (!bucket) return;
+  const kept = Object.fromEntries(Object.entries(bucket).filter(([id]) => known.has(id)));
+  if (Object.keys(kept).length !== Object.keys(bucket).length) {
+    bpComments[key] = kept;
+    save(LS.bpComments, bpComments);
+  }
+}
+
+function refreshCommentBar() {
+  const bar = $('#bp-comment-bar');
+  if (!bar) return;
+  const n = Object.keys(commentsForCourse()).length;
+  bar.hidden = n === 0;
+  $('#bp-comment-count').textContent = `未发送批注 ${n} 条`;
+}
+function sendBlueprintComments() {
+  const rows = Object.values(commentsForCourse());
+  const packed = packBlueprintComments(rows);
+  if (!packed || busy) return;
+  logEvent('user_input', 'blueprint_comments_submit', { count: rows.length, node_ids: rows.map((r) => r.id) });
+  bpComments = { ...bpComments, [commentCourseKey()]: {} };
+  save(LS.bpComments, bpComments);
+  bpRenderKey = ''; // re-render clears the 已批注 button states
+  refreshBlueprintPanel();
+  // Mobile sheet: sending hands the floor back to the chat.
+  document.body.classList.remove('bp-sheet');
+  send(packed);
 }
 
 // -- status filter + bulk confirm (Herman: MS-Word-comments ergonomics) --
@@ -1505,6 +1623,7 @@ function wireBlueprintPanel() {
     });
   }
   $('#bp-bulk-confirm')?.addEventListener('click', bulkConfirmVisible);
+  $('#bp-comment-send')?.addEventListener('click', sendBlueprintComments);
   $('#bp-tab-list').addEventListener('click', () => setTab('list'));
   $('#bp-tab-map').addEventListener('click', () => setTab('map'));
   $('#bp-panel-close').addEventListener('click', () => {
