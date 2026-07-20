@@ -31,12 +31,12 @@ export function messageIn(node, delay = 0, opts = {}) {
   const gsap = gsapOrNull();
   if (!gsap || !node) return;
   if (reducedMotion()) {
-    gsap.from(node, { opacity: 0, duration: 0.28, delay });
+    gsap.from(node, { opacity: 0, duration: 0.28, delay, clearProps: 'all' });
     return;
   }
   const x = opts.from === 'left' ? -32 : opts.from === 'right' ? 32 : 0;
   const y = opts.from === 'up' || !opts.from ? 18 : 8;
-  gsap.from(node, { opacity: 0, x, y, duration: 0.8, ease: 'power2.out', delay });
+  gsap.from(node, { opacity: 0, x, y, duration: 0.8, ease: 'power2.out', delay, clearProps: 'all' });
 }
 
 /**
@@ -50,7 +50,7 @@ export function cardIn(node, index = 0) {
   if (!gsap || !node) return;
   const delay = index * 0.08;
   if (reducedMotion()) {
-    gsap.from(node, { opacity: 0, duration: 0.28, delay });
+    gsap.from(node, { opacity: 0, duration: 0.28, delay, clearProps: 'all' });
     return;
   }
   gsap.from(node, {
@@ -61,6 +61,7 @@ export function cardIn(node, index = 0) {
     duration: 0.9,
     ease: 'power2.out',
     delay,
+    clearProps: 'all',
   });
 }
 
@@ -74,10 +75,10 @@ export function chipsIn(chips, delay = 0.15) {
   const nodes = Array.from(chips ?? []);
   if (!gsap || !nodes.length) return;
   if (reducedMotion()) {
-    gsap.from(nodes, { opacity: 0, duration: 0.28, delay, stagger: 0.07 });
+    gsap.from(nodes, { opacity: 0, duration: 0.28, delay, stagger: 0.07, clearProps: 'all' });
     return;
   }
-  gsap.from(nodes, { opacity: 0, y: 14, duration: 0.6, ease: 'power2.out', delay, stagger: 0.1 });
+  gsap.from(nodes, { opacity: 0, y: 14, duration: 0.6, ease: 'power2.out', delay, stagger: 0.1, clearProps: 'all' });
 }
 
 /**
@@ -91,10 +92,10 @@ export function cardsIn(cards, delay = 0.1) {
   const nodes = Array.from(cards ?? []);
   if (!gsap || !nodes.length) return;
   if (reducedMotion()) {
-    gsap.from(nodes, { opacity: 0, duration: 0.28, delay, stagger: 0.08 });
+    gsap.from(nodes, { opacity: 0, duration: 0.28, delay, stagger: 0.08, clearProps: 'all' });
     return;
   }
-  gsap.from(nodes, { opacity: 0, x: 44, duration: 0.85, ease: 'power2.out', delay, stagger: 0.16 });
+  gsap.from(nodes, { opacity: 0, x: 44, duration: 0.85, ease: 'power2.out', delay, stagger: 0.16, clearProps: 'all' });
 }
 
 /**
@@ -107,13 +108,13 @@ export function closureIn(card) {
   if (!gsap || !card) return;
   const rows = Array.from(card.querySelectorAll('.closure-row'));
   if (reducedMotion()) {
-    gsap.from(card, { opacity: 0, duration: 0.28 });
-    if (rows.length) gsap.from(rows, { opacity: 0, duration: 0.28, stagger: 0.09 });
+    gsap.from(card, { opacity: 0, duration: 0.28, clearProps: 'all' });
+    if (rows.length) gsap.from(rows, { opacity: 0, duration: 0.28, stagger: 0.09, clearProps: 'all' });
     return;
   }
-  gsap.from(card, { opacity: 0, y: 16, duration: 0.7, ease: 'power2.out' });
+  gsap.from(card, { opacity: 0, y: 16, duration: 0.7, ease: 'power2.out', clearProps: 'all' });
   if (rows.length) {
-    gsap.from(rows, { opacity: 0, y: 10, duration: 0.6, ease: 'power2.out', stagger: 0.12, delay: 0.1 });
+    gsap.from(rows, { opacity: 0, y: 10, duration: 0.6, ease: 'power2.out', stagger: 0.12, delay: 0.1, clearProps: 'all' });
   }
   rows.forEach((row, i) => {
     const circle = row.querySelector('.gold-circle circle');

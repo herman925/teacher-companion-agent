@@ -124,10 +124,12 @@ test('profile is never model-writable: profile keys in state_delta strip as bad_
   assert.equal(state.theme_fit_level, 'theme_inquiry', 'whitelisted field still applies');
 });
 
-test('mock light touch: 年段 is addressed in the intent question, absent otherwise', () => {
+test('mock light touch: 年段 personalizes the blueprint (title + reply), defaults otherwise', () => {
   const withBand = mockTurn(createInitialState('prof1'), [], '我想带孩子做醒狮', { profile: { ageBand: '大班' } });
-  assert.ok(withBand.question.text.includes('大班孩子'), withBand.question.text);
+  const bp = withBand.artifacts.find((a) => a.type === 'blueprint');
+  assert.ok(bp.title.includes('大班'), bp.title);
+  assert.ok(withBand.reply_markdown.includes('大班孩子'));
   const plain = mockTurn(createInitialState('prof2'), [], '我想带孩子做醒狮');
-  assert.ok(!plain.question.text.includes('大班'));
-  assert.ok(plain.question.text.includes('孩子'));
+  const bp2 = plain.artifacts.find((a) => a.type === 'blueprint');
+  assert.ok(!bp2.title.includes('大班'), 'no profile → default band, never the wrong one');
 });

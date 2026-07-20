@@ -120,27 +120,30 @@ test('round 2 delta applies cleanly and the flow rejoins the normal from_zero pa
 // ---------- required-gap intake: ask only what the teacher hasn't said ----------
 
 test('gap cards skip what the message already answers (亮灯), ask what it lacks', () => {
-  // PLAN_MSG says 一个月 + 月计划 → duration and format are known; class size is not.
+  // PLAN_MSG says 一个月 + 月计划 → duration and format are known; intent/class are not.
   const known = mockTurn(createInitialState('t-gap1'), [], PLAN_MSG);
   const knownIds = known.questions.map((q) => q.id);
   assert.ok(!knownIds.includes('q-bp-duration'), 'duration already given — never re-asked');
   assert.ok(!knownIds.includes('q-bp-format'), '月计划 already named — format never re-asked');
+  assert.ok(knownIds.includes('q-bp-intent'), 'intent not stated — asked (WF03b heart)');
   assert.ok(knownIds.includes('q-bp-class'), 'class size missing — asked');
-  // A bare planning request lacks duration and format → both cards appear (≤3 total).
-  const bare = mockTurn(createInitialState('t-gap2'), [], '我想做一套醒狮主题的整体方案');
-  const bareIds = bare.questions.map((q) => q.id);
-  assert.ok(bareIds.includes('q-bp-duration'));
-  assert.ok(bareIds.includes('q-bp-format'));
-  assert.ok(bare.questions.length <= 3, 'planning density guardrail holds');
+  // A message that carries its intent skips the intent card and frees a slot.
+  const withIntent = mockTurn(createInitialState('t-gap2'), [], '我想做醒狮，孩子们其实见过，园里想做本土文化课程');
+  const wiIds = withIntent.questions.map((q) => q.id);
+  assert.ok(!wiIds.includes('q-bp-intent'), 'stated intent is never re-asked');
+  assert.ok(wiIds.includes('q-bp-duration'), 'freed slot goes to the next gap');
+  assert.ok(withIntent.questions.length <= 3, 'planning density guardrail holds');
 });
 
 // ---------- both directions: no pollution of existing journeys ----------
 
-test('non-planning from_zero entry stays on the intent-question path (no blueprint)', () => {
+test('蓝图共创 is the from_zero DEFAULT — a bare theme entry gets blueprint v0.1, no magic words', () => {
   const state = createInitialState('t-plain');
   const turn = mockTurn(state, [], '我想带中班孩子做醒狮');
-  assert.ok(!(turn.artifacts || []).some((a) => a.type === 'blueprint'), 'no blueprint without a plan request');
-  assert.ok(turn.questions.length >= 1, 'intent cards unchanged');
+  const bp = (turn.artifacts || []).find((a) => a.type === 'blueprint');
+  assert.ok(bp, 'blueprint delivered on the very first theme message (ADR-0003 amendment 2)');
+  assert.equal(bp.data.version, 'v0.1');
+  assert.ok(turn.questions.some((q) => q.id === 'q-bp-intent'), 'required intent gap asked alongside');
 });
 
 test('material/story/optimize entries are untouched by the planning trigger', () => {

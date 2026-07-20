@@ -234,8 +234,9 @@ html, body {
   border-radius: 12px;
   border-top-left-radius: 4px; /* speech-tail corner, mirrors the teacher side */
   padding: 16px 20px;
-  max-width: 78%;
-  width: fit-content;
+  /* UNIFORM width (Herman 2026-07-20 round 2): every agent bubble is the same
+     78% column — fit-content made ragged widths that read as mess, not chat. */
+  width: 78%;
   margin-right: auto;
 }
 
@@ -287,10 +288,9 @@ html, body {
   padding: calc(var(--sp) * 3); /* §5 card internal padding 24px */
 }
 
-@media (min-width: 880px) {
-  /* artifact cards may extend to 800px (§5) */
-  .artifacts { margin-inline: calc((var(--col) - var(--col-wide)) / 2); }
-}
+/* Herman 2026-07-20: ONE width for every chat item — artifact cards, question
+   cards and the closure loop all share the exact column; only speech bubbles
+   are narrower (78%). The old 800px artifact expansion made ragged edges. */
 
 .artifact-head {
   display: flex;
@@ -447,8 +447,12 @@ html, body {
   max-width: 100%;
   scroll-snap-align: start;
   scroll-snap-stop: always;
-  background: var(--cream);
+  /* FORM surface category (§4, 2026-07-20): persimmon rule on card paper —
+     "this is for YOU to fill" — clearly distinct from the agent's green-rule
+     wash and the cream instrument cards in BOTH themes. */
+  background: var(--surface);
   border: 1px solid var(--border-warm);
+  border-left: 3px solid var(--persimmon);
   border-radius: 10px;
   box-shadow: var(--shadow-card);
   padding: calc(var(--sp) * 2);
@@ -1612,3 +1616,14 @@ body.rail-pinned .composer { left: 260px; }
 /* the hidden attribute must always win over the panel's display:flex */
 .bp-panel[hidden] { display: none !important; }
 .bp-fab[hidden] { display: none !important; }
+/* rationale detail + ✓确认 (living panel only) */
+.bp-rationale { margin: 4px 0 8px calc(2.2em + 8px); padding: 8px 10px; background: var(--paper); border-left: 2px solid var(--border-warm); border-radius: 6px; font-size: 12.5px; }
+.bp-rationale-row { display: flex; gap: 8px; line-height: 1.6; }
+.bp-rationale-label { flex: none; color: var(--ink-faded); font-size: 11px; padding-top: 2px; min-width: 4em; }
+.bp-pop .bp-rationale { margin: 8px 0 0; }
+.bp-confirm-btn {
+  appearance: none; border: 1px solid var(--status-truth); background: transparent;
+  color: var(--status-truth); font-size: 11px; border-radius: 999px; padding: 1px 8px;
+  cursor: pointer; margin-left: 4px; font-family: inherit;
+}
+.bp-confirm-btn:hover { background: var(--status-truth); color: var(--on-accent); }

@@ -49,6 +49,9 @@ export function parseTurn(raw) {
     state_delta: obj.state_delta && typeof obj.state_delta === 'object' ? obj.state_delta : {},
     evidence_refs: Array.isArray(obj.evidence_refs) ? obj.evidence_refs : [],
     round_complete: Boolean(obj.round_complete),
+    // Node-granularity blueprint edits (optional; engine applies with the
+    // same born-confirmed guard as artifact absorption).
+    blueprint_delta: Array.isArray(obj.blueprint_delta) ? obj.blueprint_delta : [],
     // Dev-facing workflow trace — passed through unvalidated (developer mode UI).
     wf_trace: obj.wf_trace && typeof obj.wf_trace === 'object' ? obj.wf_trace : null,
   };

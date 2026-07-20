@@ -159,6 +159,24 @@ export function createJsonStore(opts = {}) {
       });
     },
 
+    /** Teacher ✓确认 of one blueprint node — engine applies, version rides
+     * state_version so replay/audit sees the confirmation as a revision. */
+    async confirmBlueprintNode(userId, courseId, nodeId, engineConfirm) {
+      return withLock(async () => {
+        const c = await readCourse(courseId);
+        if (!c || c.user_id !== userId) throw err(404, '课程不存在');
+        const r = engineConfirm(c.course_state, nodeId);
+        if (!r.confirmed) throw err(400, '节点不存在或已是已确认');
+        c.course_state = r.state;
+        c.state_version += 1;
+        c.snapshots = c.snapshots || [];
+        c.snapshots.push({ state_version: c.state_version, state_delta: { blueprint_confirm: nodeId }, is_checkpoint: false, created_at: nowISO() });
+        c.updated_at = nowISO();
+        await writeCourse(c);
+        return c.course_state.course_plan_blueprint;
+      });
+    },
+
     /** True when auto-titling should run: still on the default name, not human-locked. */
     async isUntitled(courseId) {
       return withLock(async () => {

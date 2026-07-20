@@ -246,7 +246,8 @@
             "properties": {
               "v": { "type": "integer" },
               "module_id": { "type": "string" },
-              "op": { "type": "string", "enum": ["set", "update", "remove"] }
+              "op": { "type": "string", "enum": ["set", "update", "remove", "confirm"] },
+              "node_id": { "type": "string", "description": "Set for node-level ops (confirm, node delta); absent on module-level absorption." }
             }
           }
         }

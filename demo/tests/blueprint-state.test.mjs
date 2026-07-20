@@ -150,3 +150,40 @@ test('safeTemplate: planning variant when a blueprint exists, field-fact variant
   assert.match(t.reply_markdown, /蓝图保持原样/);
   assert.ok(!/现场信息/.test(t.reply_markdown), 'planning fallback never demands field facts');
 });
+
+// ---------- deferred items made real: ✓确认 channel + node-granularity delta ----------
+
+test('confirmBlueprintNode: the UI channel escalates, versions, and logs; no-ops honestly', async () => {
+  const { confirmBlueprintNode } = await import('../src/engine.mjs');
+  const s0 = createInitialState('t-confirm');
+  const withBp = absorbBlueprint(s0, bpTurn([{ id: 'm', title: 'M', status: 'ai_suggestion', children: [{ id: 'm.k', title: 'K', status: 'hypothesis' }] }])).state;
+  const r = confirmBlueprintNode(withBp, 'm.k');
+  assert.equal(r.confirmed, true);
+  assert.equal(r.state.course_plan_blueprint.modules[0].children[0].status, 'confirmed');
+  assert.equal(r.state.course_plan_blueprint.version, 2, 'confirmation is a revision');
+  const log = r.state.course_plan_blueprint.revision_log.at(-1);
+  assert.deepEqual({ op: log.op, node_id: log.node_id }, { op: 'confirm', node_id: 'm.k' });
+  assert.equal(confirmBlueprintNode(r.state, 'm.k').confirmed, false, 'already confirmed → no-op');
+  assert.equal(confirmBlueprintNode(r.state, 'ghost').confirmed, false, 'unknown id → no-op');
+  assert.equal(withBp.course_plan_blueprint.modules[0].children[0].status, 'hypothesis', 'pure');
+});
+
+test('applyBlueprintDelta: node-level update/set/remove with the born-confirmed guard', async () => {
+  const { applyBlueprintDelta } = await import('../src/engine.mjs');
+  const s0 = createInitialState('t-delta');
+  const base = absorbBlueprint(s0, bpTurn([{ id: 'm', title: 'M', status: 'ai_suggestion', children: [{ id: 'm.a', title: 'A', status: 'ai_suggestion' }] }])).state;
+  const r = applyBlueprintDelta(base, [
+    { op: 'update', id: 'm.a', node: { title: 'A改', status: 'hypothesis' } },
+    { op: 'set', id: 'm.b', parent_id: 'm', node: { title: 'B', status: 'confirmed' } }, // born confirmed → downgraded
+    { op: 'remove', id: 'ghost' },                                                       // unknown → strip
+  ], { teacherTurn: true });
+  const m = r.state.course_plan_blueprint.modules[0];
+  assert.equal(m.children.find((c) => c.id === 'm.a').title, 'A改');
+  assert.equal(m.children.find((c) => c.id === 'm.b').status, 'ai_suggestion', 'delta cannot birth a confirmation either');
+  assert.equal(r.violations.filter((v) => v.kind === 'blueprint_scope').length, 1, 'unknown id stripped + logged');
+  assert.equal(r.state.course_plan_blueprint.version, 2, 'one bump per applied batch');
+  const rm = applyBlueprintDelta(r.state, [{ op: 'remove', id: 'm.b' }]);
+  assert.ok(!rm.state.course_plan_blueprint.modules[0].children.some((c) => c.id === 'm.b'));
+  const modGuard = applyBlueprintDelta(rm.state, [{ op: 'remove', id: 'm' }]);
+  assert.ok(modGuard.violations.some((v) => v.detail.includes('模块不可整体删除')));
+});

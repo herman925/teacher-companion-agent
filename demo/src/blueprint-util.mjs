@@ -31,13 +31,26 @@ export function normalizeBlueprint(data) {
     let id = typeof n.id === 'string' && n.id.trim() ? n.id.trim() : path;
     while (seen.has(id)) id = `${id}-dup`;
     seen.add(id);
-    return {
+    const out = {
       id,
       title: String(n.title ?? '').trim(),
       body: String(n.body ?? '').trim(),
       status: KNOWN_STATUS.has(n.status) ? n.status : 'ai_suggestion',
       children: (Array.isArray(n.children) ? n.children : []).map((c, i) => normNode(c, `${id}.${i + 1}`)),
     };
+    // Provenance detail (DESIGN.md §5b): why this node exists. Carried through
+    // so the detail view can show 依据/假设/教学依据 — never invented here.
+    if (n.rationale && typeof n.rationale === 'object') {
+      out.rationale = {
+        ...(Array.isArray(n.rationale.heard) ? { heard: n.rationale.heard.filter((h) => h && h.quote).map((h) => ({ quote: String(h.quote), ...(h.msg_id ? { msg_id: String(h.msg_id) } : {}) })) } : {}),
+        ...(n.rationale.assumed ? { assumed: String(n.rationale.assumed) } : {}),
+        ...(n.rationale.pedagogy ? { pedagogy: String(n.rationale.pedagogy) } : {}),
+        ...(n.rationale.profile_basis ? { profile_basis: String(n.rationale.profile_basis) } : {}),
+      };
+      if (!Object.keys(out.rationale).length) delete out.rationale;
+    }
+    if (Array.isArray(n.evidence_refs) && n.evidence_refs.length) out.evidence_refs = n.evidence_refs.map(String);
+    return out;
   };
   return { version, modules: modules.map((m, i) => normNode(m, `m${i + 1}`)) };
 }

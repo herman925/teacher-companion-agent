@@ -13,6 +13,7 @@ import {
   renderBlueprintList, renderBlueprintMapView,
 } from './render.js';
 import { normalizeBlueprint, numberBlueprint } from '../blueprint-util.mjs';
+import { confirmBlueprintNode } from '../engine.mjs';
 import { messageIn, cardIn, cardsIn, chipsIn, closureIn, fadeIn } from './motion.js';
 import { runLocalMockTurn } from './local-turn.mjs';
 import { buildSystemPrompt, stageModuleName, profileSectionText, STYLE_DIRECTIVES } from '../prompt-builder.mjs';
@@ -1410,7 +1411,28 @@ function refreshBlueprintPanel() {
   if (key === bpRenderKey) return; // same plan, same view → keep the teacher's fold/scroll state
   bpRenderKey = key;
   const body = $('#bp-panel-body');
-  body.replaceChildren(bpTab === 'map' ? renderBlueprintMapView(numbered) : renderBlueprintList(numbered));
+  const opts = { onConfirm: confirmNode, posKey: courseState?.course_id };
+  body.replaceChildren(bpTab === 'map' ? renderBlueprintMapView(numbered, opts) : renderBlueprintList(numbered, opts));
+}
+
+/** Teacher ✓确认: the engine escalates locally (single source of truth), the
+ * server mirrors it for persistent courses so history/exports agree. */
+async function confirmNode(nodeId) {
+  const r = confirmBlueprintNode(courseState, nodeId);
+  if (!r.confirmed) return;
+  courseState = r.state;
+  save(LS.state, courseState);
+  bpRenderKey = ''; // force the panel to re-render the new version
+  refreshBlueprintPanel();
+  logEvent('workflow', 'blueprint_confirm', { node_id: nodeId, version: courseState.course_plan_blueprint?.version });
+  if (persistenceActive() && activeCourseId) {
+    try {
+      await fetch(apiUrl(`/api/courses/${activeCourseId}/blueprint/confirm`), {
+        method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ node_id: nodeId }),
+      });
+    } catch { /* offline: local state already holds the confirmation */ }
+  }
 }
 
 function wireBlueprintPanel() {

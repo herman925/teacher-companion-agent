@@ -187,6 +187,107 @@ export function applyDelta(state, delta, ctx = {}) {
   return { state: next, violations, applied };
 }
 
+/**
+ * Teacher confirmation of one blueprint node — the CLEAN escalation channel
+ * (✓确认 click in the workspace panel). UI/engine event, never model output:
+ * this is the only way a node becomes confirmed outside a teacher-reply turn.
+ * Pure; bumps the version and logs a 'confirm' revision. No-op on unknown ids
+ * and on already-confirmed nodes.
+ */
+export function confirmBlueprintNode(state, nodeId) {
+  const bp = state?.course_plan_blueprint;
+  if (!bp) return { state, confirmed: false };
+  const next = structuredClone(state);
+  const nbp = next.course_plan_blueprint;
+  let hit = null;
+  let rootId = null;
+  const walk = (n, root) => {
+    if (hit) return;
+    if (n.id === nodeId) { hit = n; rootId = root; return; }
+    for (const c of n.children || []) walk(c, root);
+  };
+  for (const m of nbp.modules || []) walk(m, m.id);
+  if (!hit || hit.status === 'confirmed') return { state, confirmed: false };
+  hit.status = 'confirmed';
+  nbp.version = (nbp.version || 0) + 1;
+  nbp.revision_log = nbp.revision_log || [];
+  nbp.revision_log.push({ v: nbp.version, module_id: rootId, op: 'confirm', node_id: nodeId });
+  return { state: next, confirmed: true };
+}
+
+/**
+ * Node-granularity blueprint delta (ADR-0003 Phase 3): small edits without
+ * re-emitting whole modules. Ops: update (replace an existing node's fields,
+ * children preserved unless provided), remove (delete a non-module node),
+ * set (insert under parent_id, or as a new module without one). The same
+ * born-confirmed rule as absorbBlueprint applies. Pure.
+ * @param {Object} state
+ * @param {Array<{op:'set'|'update'|'remove', id:string, parent_id?:string, node?:Object}>} delta
+ */
+export function applyBlueprintDelta(state, delta, ctx = {}) {
+  const ops = Array.isArray(delta) ? delta.filter((d) => d && d.id && d.op) : [];
+  if (!ops.length) return { state, violations: [] };
+  const next = structuredClone(state);
+  const bp = next.course_plan_blueprint || (next.course_plan_blueprint = { version: 0, modules: [], revision_log: [] });
+  const violations = [];
+  const preConfirmed = new Set();
+  const preIds = new Set();
+  const walkPre = (n) => { preIds.add(n.id); if (n.status === 'confirmed') preConfirmed.add(n.id); for (const c of n.children || []) walkPre(c); };
+  for (const m of bp.modules) walkPre(m);
+  const guard = (n) => {
+    if (n.status === 'confirmed' && !preConfirmed.has(n.id) && !(ctx.teacherTurn && preIds.has(n.id))) n.status = 'ai_suggestion';
+    for (const c of n.children || []) guard(c);
+    return n;
+  };
+  const findWithParent = (id) => {
+    let found = null;
+    const walk = (n, parent, root) => {
+      if (found) return;
+      if (n.id === id) { found = { node: n, parent, root }; return; }
+      for (const c of n.children || []) walk(c, n, root);
+    };
+    for (const m of bp.modules) walk(m, null, m);
+    return found;
+  };
+  const version = (bp.version || 0) + 1;
+  let applied = 0;
+  for (const op of ops) {
+    if (op.op === 'remove') {
+      const hit = findWithParent(op.id);
+      if (!hit) { violations.push({ kind: 'blueprint_scope', detail: `remove：未知节点 ${op.id}`, action: 'strip' }); continue; }
+      if (!hit.parent) { violations.push({ kind: 'blueprint_scope', detail: `remove：${op.id} 是模块，模块不可整体删除`, action: 'strip' }); continue; }
+      hit.parent.children = hit.parent.children.filter((c) => c.id !== op.id);
+      bp.revision_log.push({ v: version, module_id: hit.root.id, op: 'remove', node_id: op.id });
+      applied += 1;
+    } else if (op.op === 'update') {
+      const hit = findWithParent(op.id);
+      if (!hit || !op.node) { violations.push({ kind: 'blueprint_scope', detail: `update：未知节点或缺 node（${op.id}）`, action: 'strip' }); continue; }
+      const incoming = guard(structuredClone({ ...hit.node, ...op.node, id: op.id }));
+      Object.assign(hit.node, incoming);
+      bp.revision_log.push({ v: version, module_id: hit.root.id, op: 'update', node_id: op.id });
+      applied += 1;
+    } else if (op.op === 'set') {
+      if (!op.node) { violations.push({ kind: 'blueprint_scope', detail: `set：缺 node（${op.id}）`, action: 'strip' }); continue; }
+      const fresh = guard(structuredClone({ children: [], status: 'ai_suggestion', title: '', ...op.node, id: op.id }));
+      if (op.parent_id) {
+        const parent = findWithParent(op.parent_id);
+        if (!parent) { violations.push({ kind: 'blueprint_scope', detail: `set：未知父节点 ${op.parent_id}`, action: 'strip' }); continue; }
+        parent.node.children = parent.node.children || [];
+        parent.node.children.push(fresh);
+        bp.revision_log.push({ v: version, module_id: parent.root.id, op: 'set', node_id: op.id });
+      } else {
+        bp.modules.push(fresh);
+        bp.revision_log.push({ v: version, module_id: op.id, op: 'set' });
+      }
+      applied += 1;
+    } else {
+      violations.push({ kind: 'blueprint_scope', detail: `未知操作 ${op.op}`, action: 'strip' });
+    }
+  }
+  if (applied) bp.version = version;
+  return { state: next, violations };
+}
+
 /** Evidence ids present in state (for the harness fabrication check). */
 export function evidenceIds(state) {
   return new Set((state.children_evidence || []).map((e) => e.id));

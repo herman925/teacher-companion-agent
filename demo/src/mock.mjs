@@ -57,14 +57,11 @@ function turnEntry(message, opts = {}) {
     case 'mid_course': return turnMidCourseEntry();
     case 'material_support': return turnMaterialEntry(message);
     default:
-      if (isPlanningRequest(message)) return turnBlueprintRound1(message, opts);
-      return turnIntentQuestion(message, opts);
+      // 蓝图共创 IS the default from_zero journey (ADR-0003 amendment 2 +
+      // Herman 2026-07-20: teachers should never need magic words to get the
+      // blueprint) — every fresh theme entry opens with a full-skeleton v0.1.
+      return turnBlueprintRound1(message, opts);
   }
-}
-
-/** Planning-lens trigger: teacher explicitly asks for a plan/整体方案 (ADR-0003). */
-function isPlanningRequest(message) {
-  return /月计划|周计划|整体计划|做.{0,4}计划|一套方案|整体方案|预设方案|蓝图/.test(message);
 }
 
 function detectResource(message) {
@@ -171,48 +168,6 @@ function fromZeroFlow(state, history, message) {
   return turnHorizon('from_zero', state, history, message);
 }
 
-function turnIntentQuestion(message, opts = {}) {
-  const resource = detectResource(message);
-  // 教师档案 light touch: address the actual 年段 when the teacher shared one.
-  const kid = opts.profile && String(opts.profile.ageBand || '').trim() ? String(opts.profile.ageBand).trim() + '孩子' : '孩子';
-  const intentCard = {
-    id: 'q-intent',
-    text: `为什么想带${kid}做${resource}？`,
-    why: '先听懂你的资源意图，切口卡才不会泛泛而谈',
-    examples: [
-      `园附近每年都有${resource}活动，孩子们其实见过，但只是看热闹`,
-      '园里想做本土文化课程，我自己也想试试项目式的做法',
-      '我还说不清楚，你根据这个资源先给我几个可能的方向',
-    ],
-  };
-  const feelingCard = {
-    id: 'q-feeling',
-    text: `你希望${kid}接触${resource}之后，多感受到一点什么？`,
-    why: '初步目标决定入口往哪个方向开，说不清也没关系',
-    examples: [
-      '一群人一起使劲、一起配合的那种劲儿',
-      '对家乡的东西多一点亲近感',
-      '先不定目标，看孩子自己被什么抓住',
-    ],
-  };
-  return {
-    reply_markdown:
-      `听起来你已经带着「${resource}」的初步想法来了——这个资源本身就有很强的现场感，我们不急着写方案，先把它变成孩子能真实进入的入口。\n\n下面两件事想先听你说说，答完这一轮就能出切口卡。`,
-    question: intentCard,
-    questions: [intentCard, feelingCard],
-    artifacts: [],
-    closure_loop: null,
-    state_delta: { teacher_mode: 'from_zero', theme_resource: { name: resource }, completed_nodes: ['WF01', 'WF02'] },
-    evidence_refs: [],
-    round_complete: false,
-    wf_trace: trace('from_zero', 0, [
-      { id: 'WF01', name: '入口识别', apply: '首条消息按关键词判定为从零陪跑模式' },
-      { id: 'WF02', name: '信息补全', apply: '动态识别式提问：两张问题卡一次问清资源意图，教师打包作答' },
-      { id: 'WF03b', name: '资源意图确认与课程可能性启发', apply: '先听资源意图，下一轮才出切口卡' },
-    ], ['状态机优先', '教师资源意图优先'], '本轮写入 teacher_mode 与 theme_resource；stage 保持0'),
-  };
-}
-
 // ---------------------------------------------- 预设蓝图 planning fast path
 
 const BLUEPRINT_MARKER = /阶段一预设蓝图/;
@@ -235,7 +190,14 @@ function turnBlueprintRound1(message, opts = {}) {
     data: {
       version: 'v0.1',
       modules: [
-        bpNode('theme_judgment', '主题判断', `「${resource}」贴近本地生活、有真实场域和人物，适合先做一轮主题探究；若后续孩子的问题持续冒出来、装不下了，再考虑往项目化分支发展，不急着现在定。`),
+        {
+          ...bpNode('theme_judgment', '主题判断', `「${resource}」贴近本地生活、有真实场域和人物，适合先做一轮主题探究；若后续孩子的问题持续冒出来、装不下了，再考虑往项目化分支发展，不急着现在定。`),
+          rationale: {
+            heard: [{ quote: message.slice(0, 40) }],
+            assumed: `你没有说明想走多深，先按最常见的主题探究定位`,
+            pedagogy: '主题探究是大多数幼儿园的真实起点；项目化只在儿童问题装不下预设时才有必要（枫版定位）',
+          },
+        },
         bpNode('five_steps', '五步总览（2–3 周）', '预先计划 → 建立共同经验 → 发掘已有知识 → 发展想探究的问题 → 布置探索环境。五步不严格分先后，都属于阶段一。为什么先盘已知：幼儿园教育基于经验——孩子早就知道的，不必重教，要在已知之上拔高。', 'ai_suggestion', [
           bpNode('five_steps.evidence', '每步留下什么', '网络图与方向确认；活动照片与儿童原话；「我们已经知道的」记录（清单／网络图／KWL 都行）；问题墙照片；环创与材料清单。'),
         ]),
@@ -243,7 +205,14 @@ function turnBlueprintRound1(message, opts = {}) {
           bpNode('network_map.origin', `${resource}的来源与故事`, '它从哪里来、和本地的关系。', 'ai_suggestion'),
           bpNode('network_map.scene', '真实场景', `去看一次真实的${resource}活动／场地。`, 'ai_suggestion'),
           bpNode('network_map.making', '制作与材料', '它是怎么做出来的、用了什么材料。', 'ai_suggestion'),
-          bpNode('network_map.child_questions', '幼儿可能提出的问题', `孩子可能会问：它为什么长这样、谁在做${resource}、我们能不能自己试一试。`, 'hypothesis'),
+          {
+            ...bpNode('network_map.child_questions', '幼儿可能提出的问题', `孩子可能会问：它为什么长这样、谁在做${resource}、我们能不能自己试一试。`, 'hypothesis'),
+            rationale: {
+              assumed: `按${band}孩子的一般兴趣预判的问题方向`,
+              pedagogy: '为什么类与身份模仿类问题在这个年龄段最常见（问题池六分类）',
+              profile_basis: `教师档案：${band}`,
+            },
+          },
         ]),
         bpNode('depth_network', '资源深度网络（防浅表化）', '四层都转成孩子可感知、可操作的小任务，不做符号展示。', 'ai_suggestion', [
           bpNode('depth_network.wuxiang', '物象层', '看、听、摸、比较：外形、声音、动作。', 'ai_suggestion'),
@@ -264,7 +233,15 @@ function turnBlueprintRound1(message, opts = {}) {
   const durationKnown = /([一两三四1-9])\s*个?\s*(月|周|星期)/.test(message);
   const formatKnown = /月计划|周计划|日计划/.test(message);
   const classKnown = Boolean(opts.profile && String(opts.profile.classSize || '').trim()) || /\d+\s*个?\s*(孩子|人|幼儿)/.test(message);
+  // 资源意图 (WF03b heart): auto-extracted when the teacher already told us WHY.
+  const intentKnown = /因为|想让|希望|见过|看热闹|试试|园里想|正好/.test(message);
   const gapCards = [
+    !intentKnown && {
+      id: 'q-bp-intent',
+      text: `用大白话说说，为什么想带孩子做${resource}`,
+      why: '你的资源意图决定网络图往哪边偏——说不清也没关系',
+      examples: [`园附近每年都有${resource}活动，孩子们其实见过，但只是看热闹`, '园里想做本土文化课程，我自己也想试试', '说不清楚，你先按这个资源给我几个方向'],
+    },
     {
       id: 'q-bp-resources',
       text: `园里或周边有哪些能用上的${resource}资源`,
@@ -325,7 +302,10 @@ function turnBlueprintRound2(state, history, message) {
     data: {
       version: 'v0.2',
       modules: [
-        bpNode('network_map', '主题预设网络图', '按你的确认保留原方向；你补充的资源已并入关系层。', 'confirmed'),
+        {
+          ...bpNode('network_map', '主题预设网络图', '按你的确认保留原方向；你补充的资源已并入关系层。', 'confirmed'),
+          rationale: { heard: [{ quote: message.slice(0, 40) }] },
+        },
         bpNode('week_plan', '2–3 周计划', '', 'ai_suggestion', [
           bpNode('week_plan.w1', '第 1 周：建立共同经验', `集体：一起看一场${resource}（视频或现场）；环创：教室里开${resource}体验角。`, 'ai_suggestion'),
           bpNode('week_plan.w2', '第 2 周：发掘已知与问题墙', '集体讨论「我们已经知道的」；问题墙上墙，游戏中随手记孩子的问题。', 'ai_suggestion'),
@@ -361,6 +341,7 @@ function turnBlueprintRound2(state, history, message) {
       i_will: '对照蓝图说明哪些预设成立、哪些要调整，更新到 v0.3 并给下一轮建议',
     },
     state_delta: {
+      stage: 1, // proposal — this same delta supplies the gate's prerequisites
       theme_fit_level: 'theme_inquiry',
       completed_nodes: ['WF02b', 'WF03b', 'WF04', 'WF04b'],
       resource_entry_card: {

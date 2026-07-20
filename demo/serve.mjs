@@ -20,7 +20,7 @@ import { PROVIDERS, callWithFailover, listModels } from './src/adapter.mjs';
 import { mockTurn } from './src/mock.mjs';
 import { WF_NODES } from './src/wf-nodes.mjs';
 import { parseTurn, validateTurn, violationFeedback, safeTemplate } from './src/harness.mjs';
-import { applyDelta, absorbBlueprint, createInitialState, STAGE_NAMES } from './src/engine.mjs';
+import { applyDelta, absorbBlueprint, applyBlueprintDelta, confirmBlueprintNode, createInitialState, STAGE_NAMES } from './src/engine.mjs';
 import { buildSystemPrompt, stageModuleName, profileSectionText } from './src/prompt-builder.mjs';
 import { store } from './src/store.mjs';
 import { deriveCourseTitle, TITLE_MAX } from './src/store/json-store.mjs';
@@ -215,6 +215,9 @@ async function runTurn(req, emit) {
   // Blueprint artifacts merge into the living mother plan (module-granularity
   // delta; engine owns versioning + escalation rules — ADR-0003 Phase 3).
   applied.state = absorbBlueprint(applied.state, turn, { teacherTurn: true }).state;
+  const bpd = applyBlueprintDelta(applied.state, turn.blueprint_delta, { teacherTurn: true });
+  applied.state = bpd.state;
+  allViolations.push(...bpd.violations.map((v) => ({ ...v, attempt: 'apply' })));
 
   // Dev-mode wf_trace: if the model didn't emit its own trace, synthesize one
   // from the nodes it declared this turn (state_delta.completed_nodes). Makes the
@@ -462,6 +465,18 @@ const server = http.createServer(async (req, res) => {
         try {
           const course = await store.renameCourse(uid, courseId, q.title);
           return json(200, { ok: true, course });
+        } catch (e) {
+          return json(e.status ?? 500, { ok: false, message: e.message });
+        }
+      }
+      // POST /api/courses/:id/blueprint/confirm — teacher ✓确认 (engine escalation channel)
+      if (seg.length === 3 && seg[1] === 'blueprint' && seg[2] === 'confirm' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const q = body ? JSON.parse(body) : {};
+        try {
+          const blueprint = await store.confirmBlueprintNode(uid, courseId, String(q.node_id || ''), confirmBlueprintNode);
+          return json(200, { ok: true, blueprint });
         } catch (e) {
           return json(e.status ?? 500, { ok: false, message: e.message });
         }

@@ -310,11 +310,50 @@ export function renderBlueprintCard(artifact) {
   return card;
 }
 
+/** Find a node by id in a numbered tree (popover needs rationale, layout drops it). */
+function findInTree(nodes, id) {
+  for (const n of nodes || []) {
+    if (n.id === id) return n;
+    const hit = findInTree(n.children, id);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Provenance detail block (DESIGN.md §5b): 依据 → 假设 → 教学依据 → 档案. */
+function renderRationale(rationale) {
+  const box = el('div', 'bp-rationale');
+  const row = (label, text) => {
+    const r = el('div', 'bp-rationale-row');
+    r.append(el('span', 'bp-rationale-label', label));
+    const v = el('span');
+    v.innerHTML = sanitizeInline(text);
+    r.append(v);
+    box.append(r);
+  };
+  for (const h of rationale.heard ?? []) row('依据', `「${h.quote}」`);
+  if (rationale.assumed) row('假设', rationale.assumed);
+  if (rationale.pedagogy) row('教学依据', rationale.pedagogy);
+  if (rationale.profile_basis) row('来自档案', rationale.profile_basis);
+  return box;
+}
+
+/** ✓确认 affordance — the teacher's clean escalation channel. Only rendered
+ * when a callback is supplied (the living panel), never on chat snapshots. */
+function confirmButton(node, onConfirm) {
+  const btn = el('button', 'bp-confirm-btn', '✓确认');
+  btn.type = 'button';
+  btn.title = '确认这一项（升级为「已确认」）';
+  btn.addEventListener('click', (ev) => { ev.stopPropagation(); ev.preventDefault(); onConfirm(node.id); });
+  return btn;
+}
+
 /** Collapsible numbered outline over a numbered blueprint tree — shared by
- * the chat card (snapshot) and the workspace panel (living document). */
-export function renderBlueprintList(numbered) {
+ * the chat card (snapshot) and the workspace panel (living document).
+ * opts.onConfirm(nodeId): render ✓确认 on unconfirmed nodes (panel only). */
+export function renderBlueprintList(numbered, opts = {}) {
   const listView = el('div', 'bp-list-view');
-  for (const mod of numbered || []) listView.append(renderBlueprintNode(mod, true));
+  for (const mod of numbered || []) listView.append(renderBlueprintNode(mod, true, opts));
   return listView;
 }
 
@@ -322,6 +361,9 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /** Live outside-click handlers for map popovers (purged on each new render). */
 const MAP_OUTSIDE_HANDLERS = new Set();
+/** Node positions per posKey — lets a REBUILT map (new version, tab switch)
+ * FLIP from where nodes last stood instead of replaying the grow-in. */
+const MAP_POS_CACHE = new Map();
 
 /**
  * 导图 view: deterministic SVG tidy tree over the SAME numbered tree the list
@@ -330,7 +372,7 @@ const MAP_OUTSIDE_HANDLERS = new Set();
  * state lives here (UI state), never in the data. First render grows in with
  * a stagger (feedback register); re-layouts after a fold are instant.
  */
-export function renderBlueprintMapView(numbered) {
+export function renderBlueprintMapView(numbered, opts = {}) {
   const wrap = el('div', 'bp-map');
   const scroller = el('div', 'bp-map-scroll');
   wrap.append(scroller);
@@ -352,6 +394,9 @@ export function renderBlueprintMapView(numbered) {
     const body = el('div', 'bp-pop-body');
     body.innerHTML = n.body ? sanitizeMarkdown(n.body) : '<em>（这个节点还没有展开说明）</em>';
     pop.append(body);
+    const source = findInTree(numbered, n.id);
+    if (source?.rationale) pop.append(renderRationale(source.rationale));
+    if (opts.onConfirm && n.status !== 'confirmed') pop.append(confirmButton(n, opts.onConfirm));
     const gBox = g.getBoundingClientRect();
     const wBox = wrap.getBoundingClientRect();
     pop.hidden = false;
@@ -371,8 +416,9 @@ export function renderBlueprintMapView(numbered) {
   wrap.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closePop(); });
   scroller.addEventListener('scroll', closePop, { passive: true }); // a scrolled map closes the (position-snapshotted) popover
   const collapsed = new Set();
-  let first = true;
-  let prevPos = new Map(); // id → {x,y} of the previous layout, for the FLIP reflow tween
+  const cached = opts.posKey ? MAP_POS_CACHE.get(opts.posKey) : null;
+  let first = !cached; // a rebuilt map glides (FLIP) from cached positions instead of re-growing
+  let prevPos = cached || new Map(); // id → {x,y} of the previous layout, for the FLIP reflow tween
   const draw = () => {
     const { nodes, edges, width, height } = layoutBlueprintMap(numbered, collapsed);
     const svg = document.createElementNS(SVG_NS, 'svg');
@@ -485,6 +531,7 @@ export function renderBlueprintMapView(numbered) {
       }
     });
     prevPos = new Map(nodes.map((n) => [n.id, { x: n.x, y: n.y }]));
+    if (opts.posKey) MAP_POS_CACHE.set(opts.posKey, prevPos);
     scroller.replaceChildren(svg);
     first = false;
   };
@@ -493,7 +540,7 @@ export function renderBlueprintMapView(numbered) {
 }
 
 /** One blueprint node → <details> (has children) or leaf row. */
-function renderBlueprintNode(node, isModule) {
+function renderBlueprintNode(node, isModule, opts = {}) {
   const chip = el('span', `bp-chip bp-${node.status}`, BLUEPRINT_STATUS[node.status]);
   if (!node.children.length) {
     const row = el('div', 'bp-leaf');
@@ -502,12 +549,14 @@ function renderBlueprintNode(node, isModule) {
     const title = el('span', 'bp-node-title');
     title.innerHTML = sanitizeInline(node.title);
     line.append(title, chip);
+    if (opts.onConfirm && node.status !== 'confirmed') line.append(confirmButton(node, opts.onConfirm));
     row.append(line);
     if (node.body) {
       const body = el('div', 'bp-body');
       body.innerHTML = sanitizeMarkdown(node.body);
       row.append(body);
     }
+    if (node.rationale) row.append(renderRationale(node.rationale));
     return row;
   }
   const details = document.createElement('details');
@@ -522,13 +571,15 @@ function renderBlueprintNode(node, isModule) {
   title.innerHTML = sanitizeInline(node.title);
   summary.append(title, chip);
   if (pending > 0) summary.append(el('span', 'bp-rollup', `${pending} 项待确认`));
+  if (opts.onConfirm && node.status !== 'confirmed') summary.append(confirmButton(node, opts.onConfirm));
   details.append(summary);
   if (node.body) {
     const body = el('div', 'bp-body');
     body.innerHTML = sanitizeMarkdown(node.body);
     details.append(body);
   }
-  for (const child of node.children) details.append(renderBlueprintNode(child, false));
+  if (node.rationale) details.append(renderRationale(node.rationale));
+  for (const child of node.children) details.append(renderBlueprintNode(child, false, opts));
   return details;
 }
 
