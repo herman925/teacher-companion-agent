@@ -72,6 +72,22 @@ test('user lifecycle: create → login → change password → disable kills acc
   await store.updateUser(user.id, { status: 'active' });
 });
 
+test('reset password: newest temp logs in (even pasted with whitespace), older temps are dead', async () => {
+  const { user, temp_password: first } = await store.createUser({ username: 'teacher_r' });
+  const second = await store.resetPassword(user.id);
+  assert.notEqual(first, second);
+  assert.equal(await store.verifyLogin('teacher_r', first), null, 'previous temp dies on reset');
+  assert.equal((await store.verifyLogin('teacher_r', ` ${second}\n`)).id, user.id, 'chat-app paste whitespace tolerated');
+  assert.equal(await store.verifyLogin('teacher_r', `${second}x`), null, 'wrong password still rejected');
+  const fresh = await store.getUser(user.id);
+  assert.ok(fresh.must_change_password, 'reset re-arms the forced change');
+
+  // change stores the trimmed form: both padded and exact entries verify after
+  await store.changePassword(user.id, second, '  chosen-pw-9  ');
+  assert.ok(await store.verifyLogin('teacher_r', 'chosen-pw-9'));
+  assert.ok(await store.verifyLogin('teacher_r', ' chosen-pw-9 '));
+});
+
 test('sessions: bearer token resolves; sid list never leaks tokens; revoke works', async () => {
   const { user, temp_password } = await store.createUser({ username: 'teacher_b' });
   await store.verifyLogin('teacher_b', temp_password);

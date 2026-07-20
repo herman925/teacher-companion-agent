@@ -282,12 +282,15 @@ export function createJsonStore(opts = {}) {
       return withLock(async () => (await readUsers()).map(sanitizeUser));
     },
 
-    /** Password login. @returns sanitized user or null (wrong creds / disabled). */
+    /** Password login. @returns sanitized user or null (wrong creds / disabled).
+     * Passwords are compared trimmed: temp passwords pasted out of chat apps
+     * arrive with stray edge whitespace, and no stored password ever has any
+     * (changePassword trims too). */
     async verifyLogin(username, password) {
       return withLock(async () => {
         const users = await readUsers();
         const u = users.find((x) => x.username === String(username ?? '').trim().toLowerCase());
-        if (!u || u.status !== 'active' || !verifyPassword(password, u.password)) return null;
+        if (!u || u.status !== 'active' || !verifyPassword(String(password ?? '').trim(), u.password)) return null;
         u.last_login_at = nowISO();
         await writeAtomic(usersFile, users);
         return sanitizeUser(u);
@@ -300,9 +303,10 @@ export function createJsonStore(opts = {}) {
         const users = await readUsers();
         const u = users.find((x) => x.id === userId);
         if (!u) throw err(404, '用户不存在');
-        if (!verifyPassword(oldPassword, u.password)) throw err(403, '旧密码不对');
-        if (String(newPassword ?? '').length < 8) throw err(400, '新密码至少 8 位');
-        u.password = hashPassword(newPassword);
+        if (!verifyPassword(String(oldPassword ?? '').trim(), u.password)) throw err(403, '旧密码不对');
+        const next = String(newPassword ?? '').trim();
+        if (next.length < 8) throw err(400, '新密码至少 8 位');
+        u.password = hashPassword(next);
         u.must_change_password = false;
         await writeAtomic(usersFile, users);
         return true;
