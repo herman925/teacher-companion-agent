@@ -46,7 +46,6 @@ export function normalizeBlueprint(data) {
         ...(n.rationale.assumed ? { assumed: String(n.rationale.assumed) } : {}),
         ...(n.rationale.pedagogy ? { pedagogy: String(n.rationale.pedagogy) } : {}),
         ...(n.rationale.profile_basis ? { profile_basis: String(n.rationale.profile_basis) } : {}),
-        ...(n.rationale.adjust ? { adjust: String(n.rationale.adjust) } : {}),
       };
       if (!Object.keys(out.rationale).length) delete out.rationale;
     }

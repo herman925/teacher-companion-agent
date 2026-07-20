@@ -24,7 +24,6 @@ export function createInitialState(courseId) {
     schema_version: SCHEMA_VERSION,
     stage: 0,
     completed_nodes: [],
-    engine_lit_nodes: [], // deterministic lights (blueprint absorption) — never model-writable
     awaiting_feedback: false,
     pending_confirmations: [],
     teacher_mode: 'from_zero',
@@ -54,10 +53,10 @@ export function stageGateError(state, toStage) {
       if (!state.theme_fit_level) return '进入阶段1需要先完成主题适配性筛查（WF02b）';
       return null;
     case 2:
-      // stage1-workflow-v1.0: evidence stays mandatory (non-negotiable 1), but
-      // a driving question is NO LONGER a stage-1 exit requirement — it gets
-      // derived at the stage-2 boundary from the question pool, not forced.
       if (!(state.children_evidence || []).length) return '没有儿童证据（原话/作品/照片/观察）不能进入目标轴心——先补一轮真实体验';
+      if (!state.driving_question || !((state.driving_question.candidates || []).length || state.driving_question.text)) {
+        return '进入阶段2需要先有核心驱动问题候选（WF08）';
+      }
       return null;
     case 3:
       if (!state.goals_assessment_axis || !state.goals_assessment_axis.core_understanding) {
@@ -368,24 +367,5 @@ export function absorbBlueprint(state, turn, ctx = {}) {
     modules,
     revision_log: revisionLog,
   };
-  // Preset-artifact workflow nodes light DETERMINISTICALLY from what the
-  // blueprint now contains (stage1-workflow-v1.0; ADR-0004) — the 工作流地图
-  // must not depend on the model remembering to claim them. Only agent-side
-  // preset work lights here; nodes that assert real child activity (WF05–07b,
-  // WF09) stay model-claimed against 回传 evidence. engine_lit_nodes is not a
-  // writable delta field — the model cannot fake these.
-  const litFrom = (m) => {
-    const key = `${m.id} ${m.title ?? ''}`;
-    if (/depth|深度/.test(key)) return 'WF04b';
-    if (/network|网络/.test(key)) return 'WF04';
-    if (/plan|周计划|月计划|environment|环境|材料/.test(key)) return 'WF08';
-    return null;
-  };
-  const lit = new Set(next.engine_lit_nodes || []);
-  lit.add('WF04a'); // a blueprint version landed — the 一次性输出 demonstrably happened
-  for (const m of modules) { const n = litFrom(m); if (n) lit.add(n); }
-  next.engine_lit_nodes = [...lit];
-  const done = new Set(next.completed_nodes || []);
-  next.completed_nodes = [...(next.completed_nodes || []), ...[...lit].filter((n) => !done.has(n))];
   return { state: next, changed };
 }

@@ -54,10 +54,9 @@ Decision summary (details below): **MiniMax-M3 default · GLM-5.2 fallback-1 and
 1. One OpenAI-compatible client; per-provider config = `{baseURL, model, key, jsonStrategy, quirks}`.
 2. `jsonStrategy`: `"json_schema"` (GLM) · `"tool_call"` (MiniMax) · `"json_object_prompt"` (Kimi, Qwen).
 3. Quirk handlers: strip interleaved thinking (MiniMax); catch `content_filter` (all, esp. Kimi); no `max_tokens` with Qwen structured output.
-4. Vendor calls stream (`stream: true`, 2026-07-20): the adapter accumulates chunks back into the non-streaming completion shape, so parse/validate is unchanged, while live progress flows out through an `onDelta` callback — `first` (TTFT), `thinking` (GLM-family `reasoning_content` chunks AND MiniMax `<think>…</think>` content, both handled generically), `content` (char count; tool-call argument chunks count here, raw JSON args are never teacher-facing). Usage = whatever the final chunk carries (`stream_options.include_usage` is NOT sent — not universally accepted); a null usage is tolerated. Side-channel plain calls (title agent) and any call without `onDelta` stay non-streaming.
-5. Timeout 600s per call (raised from 180s 2026-07-20: healthy glm-5.2 coding-plan turns run 80–115s and real turns exceeded 180s under load). Every proxy in front must read longer than the adapter — the public nginx reads at 660s — so the abort is always ours and reports through the stream.
-6. Failover chain on 5xx/timeout/`content_filter`-hard-fail: MiniMax → GLM → Kimi. Qwen behind `enableQwen` flag.
-7. Validation lives server-side (harness L3), independent of provider promises — even GLM's constrained decoding doesn't validate *semantic* rules (closure loop, stage gates, evidence refs).
+4. SSE pass-through with `stream_options.include_usage` where supported; usage logged per turn.
+5. Failover chain on 5xx/timeout/`content_filter`-hard-fail: MiniMax → GLM → Kimi. Qwen behind `enableQwen` flag.
+6. Validation lives server-side (harness L3), independent of provider promises — even GLM's constrained decoding doesn't validate *semantic* rules (closure loop, stage gates, evidence refs).
 
 ## 5. Source URLs
 

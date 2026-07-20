@@ -254,28 +254,3 @@ test('direction pick AFTER round 2 escalates the map and keeps every branch', ()
   assert.equal(net.status, 'confirmed', 'the pick escalates through the artifact channel');
   assert.equal(net.children.length, 4, 'branches preserved through the childless confirming update');
 });
-
-// ---------- engine-lit workflow nodes (ADR-0004) ----------
-
-test('absorb lights preset-artifact nodes deterministically; model cannot fake engine_lit_nodes', () => {
-  const s0 = createInitialState('t-lit');
-  const r = absorbBlueprint(s0, bpTurn([
-    { id: 'theme_judgment', title: '主题判断', status: 'ai_suggestion' },
-    { id: 'network_map', title: '主题预设网络图', status: 'ai_suggestion' },
-    { id: 'depth_network', title: '资源深度网络', status: 'ai_suggestion' },
-    { id: 'plan_weeks', title: '2–3周计划', status: 'hypothesis' },
-  ]));
-  for (const n of ['WF04a', 'WF04', 'WF04b', 'WF08']) {
-    assert.ok(r.state.engine_lit_nodes.includes(n), `${n} engine-lit`);
-    assert.ok(r.state.completed_nodes.includes(n), `${n} in completed_nodes`);
-  }
-  // silent direction: a blueprint WITHOUT those modules lights only WF04a
-  const r2 = absorbBlueprint(createInitialState('t-lit2'), bpTurn([
-    { id: 'theme_judgment', title: '主题判断', status: 'ai_suggestion' },
-  ]));
-  assert.deepEqual(r2.state.engine_lit_nodes, ['WF04a'], 'no network/depth/plan module → only the blueprint-delivery node');
-  // the model cannot write engine_lit_nodes through a delta
-  const { state: after, violations } = applyDelta(r2.state, { engine_lit_nodes: ['WF08'] });
-  assert.deepEqual(after.engine_lit_nodes, ['WF04a'], 'delta write rejected');
-  assert.ok(violations.some((v) => v.kind === 'bad_delta'), 'flagged as bad_delta');
-});

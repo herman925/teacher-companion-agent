@@ -1232,8 +1232,6 @@ body.rail-pinned .composer { left: 260px; }
 
 .wf-map-node { color: #6E7681; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wf-map-node.done { color: var(--slate-text); }
-.wf-map-node.engine { color: #7EE787; } /* engine-verified light — distinct from model-claimed */
-.wf-map-legend { color: #6E7681; font-size: 11px; margin-top: 8px; }
 
 /* debug drawer: dev-mode prompt visibility (提示词（本轮）) */
 .prompt-meta { margin-bottom: 4px; }
@@ -1726,34 +1724,3 @@ body.rail-pinned .composer { left: 260px; }
   background: var(--paper); color: var(--ink-faded); font-size: 13px; cursor: not-allowed;
 }
 .login-gate[hidden] { display: none; }
-
-/* ---- live turn progress (回合进度显示, 用户中心 · 通用) ---- */
-.status-meta { margin-left: 10px; color: var(--ink-faded); font-size: 12px; font-variant-numeric: tabular-nums; }
-.turn-meta-badge {
-  align-self: flex-start; color: var(--ink-faded); font-size: 12px;
-  margin: -2px 0 6px; padding-left: 4px;
-}
-.thinking-panel {
-  align-self: stretch; margin: 2px 0 6px;
-  background: var(--cream); border: 1px solid var(--border-warm); border-radius: 10px;
-  padding: 8px 12px; font-size: 13px;
-}
-.thinking-panel summary { cursor: pointer; color: var(--ink-faded); list-style: none; }
-.thinking-panel summary::before { content: "▸ "; }
-.thinking-panel[open] summary::before { content: "▾ "; }
-.thinking-panel:not(.done) summary::after { content: "（思考中…）"; }
-.thinking-body {
-  margin-top: 6px; white-space: pre-wrap; word-break: break-word;
-  color: var(--ink-faded); line-height: 1.8; max-height: 40vh; overflow-y: auto;
-}
-.teacher-msg { position: relative; }
-.msg-retry {
-  position: absolute; left: -34px; top: 50%; transform: translateY(-50%);
-  min-height: 28px; width: 28px; padding: 0; border-radius: 50%;
-  border: 1px solid var(--border-warm); background: var(--surface); color: var(--ink-faded);
-  font-size: 14px; line-height: 1; cursor: pointer; opacity: 0; transition: opacity 0.15s;
-}
-.teacher-msg:hover .msg-retry, .msg-retry:focus-visible { opacity: 1; }
-.msg-retry:hover { color: var(--green); border-color: var(--green); }
-.settings-check { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 6px 0; cursor: pointer; }
-.settings-check input { accent-color: var(--green); }

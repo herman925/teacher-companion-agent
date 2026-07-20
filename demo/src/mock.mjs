@@ -586,7 +586,7 @@ function turnEntryCard() {
       { id: 'WF03b', name: '资源意图确认与课程可能性启发', apply: '教师意图落成切口卡的三个儿童入口' },
       { id: 'WF02b', name: '主题探究适配性筛查', apply: '判定主题探究型，项目化留待儿童反应验证' },
       { id: 'WF04b', name: '资源深度网络图', apply: '切口卡展开为物象/体验/关系/意义四层，意义层仅教师后台' },
-      { id: 'WF05', name: '建立共同经验（真实体验活动）', apply: '第一轮体验计划：看一次真实训练' },
+      { id: 'WF05', name: '高频情境浸润', apply: '第一轮体验计划：看一次真实训练' },
       { id: 'WF05b', name: '真实人物与生活场景访谈任务', apply: '生成舞狮师傅访谈卡（孩子问＋老师问）' },
     ], ['教师资源意图优先', '阶段判断优先', '输出闭环固定'], '写入 resource_entry_card、theme_fit_level 与深度网络；stage 提议 0→1（引擎按门槛放行）'),
   };
@@ -666,10 +666,10 @@ function turnIngestFeedback() {
     evidence_refs: ['ev-words-1', 'ev-words-2', 'ev-words-3', 'ev-behavior-1', 'ev-dwell-1'],
     round_complete: true,
     wf_trace: trace('from_zero', 1, [
-      { id: 'WF06', name: '发掘幼儿已有相关知识', apply: '现场反馈（原话/行为/停留点）入证据账本' },
+      { id: 'WF06', name: '显性化表征已有经验', apply: '现场反馈（原话/行为/停留点）入证据账本' },
       { id: 'WF07', name: '儿童问题池整理', apply: '三个真问题入池，成人化问题剔除' },
       { id: 'WF07b', name: '儿童问题背后的文化可能性提示', apply: '每个问题附后台文化线索（只给教师看）' },
-      { id: 'WF08b', name: '核心驱动问题推导（阶段2边界）', apply: '从真实问题推出两个候选，教师与孩子选' },
+      { id: 'WF08', name: '核心驱动问题推导', apply: '从真实问题推出两个候选，教师与孩子选' },
     ], ['证据优先', '儿童真实反应驱动调整', '文化可能性后台提示'], '写入 children_evidence、child_question_pool 与 driving_question 候选'),
   };
 }
@@ -837,7 +837,7 @@ function turnOptimizeBackfill() {
     wf_trace: trace('optimize_existing', 0, [
       { id: 'WF02b', name: '主题探究适配性筛查', apply: '回填判定：主题探究型，收口方向待证据' },
       { id: 'WF03b', name: '资源意图确认与课程可能性启发', apply: '已有主题回填成切口卡，不推倒重来' },
-      { id: 'WF04', name: '主题预设网络图（教师备课用）', apply: '现成的主题网络作为预备资产接入档案' },
+      { id: 'WF04', name: '预备资产网络', apply: '现成的主题网络作为预备资产接入档案' },
     ], ['状态机优先', '证据优先', '教师资源意图优先'], '回填 resource_entry_card 与 theme_fit_level；stage 提议 0→1（回填后门槛满足）'),
   };
 }
@@ -899,10 +899,10 @@ function turnOptimizeEvidence() {
     evidence_refs: ['ev-lz-1', 'ev-lz-2', 'ev-lz-3'],
     round_complete: true,
     wf_trace: trace('optimize_existing', 1, [
-      { id: 'WF06', name: '发掘幼儿已有相关知识', apply: '两周活动里的儿童原话入证据账本' },
+      { id: 'WF06', name: '显性化表征已有经验', apply: '两周活动里的儿童原话入证据账本' },
       { id: 'WF07', name: '儿童问题池整理', apply: '原话整理入池，「兴趣散」被证据修正' },
       { id: 'WF07b', name: '儿童问题背后的文化可能性提示', apply: '每个问题附后台文化线索（不讲给孩子）' },
-      { id: 'WF08b', name: '核心驱动问题推导（阶段2边界）', apply: '从真实问题收紧出两个候选' },
+      { id: 'WF08', name: '核心驱动问题推导', apply: '从真实问题收紧出两个候选' },
     ], ['证据优先', '儿童真实反应驱动调整', '文化可能性后台提示'], '写入 children_evidence 与 driving_question 候选；stage 提议 1→2（证据与候选同轮入账）'),
   };
 }
@@ -1298,7 +1298,7 @@ function turnEntryChoice(state, choice) {
     round_complete: false,
     wf_trace: trace('from_zero', state.stage ?? 1, [
       { id: 'WF03b', name: '资源意图确认与课程可能性启发', apply: `教师选定儿童入口：${adapt.chosen}` },
-      { id: 'WF09', name: '阶段一回传与动态调整', apply: '按所选入口调整观察重点与访谈优先级' },
+      { id: 'WF09', name: '战术性环境支持', apply: '按所选入口调整观察重点与访谈优先级' },
     ], ['教师资源意图优先'], `写入 resource_entry_card.chosen_entry=${adapt.chosen}；其余照旧等待现场回传`),
   };
 }
@@ -1349,7 +1349,7 @@ function turnAwaitNudge(history) {
     evidence_refs: [],
     round_complete: false,
     wf_trace: trace('from_zero', 1, [
-      { id: 'WF05', name: '建立共同经验（真实体验活动）', apply: v === 0 ? '状态机进度汇报＋两个就地支持选项' : '换一种问法接住教师，不重复上一轮' },
+      { id: 'WF05', name: '高频情境浸润', apply: v === 0 ? '状态机进度汇报＋两个就地支持选项' : '换一种问法接住教师，不重复上一轮' },
     ], ['状态机优先', '输出闭环固定'], '本轮无状态写入（等待现场回传，就地支持）'),
   };
 }
@@ -1376,7 +1376,7 @@ function turnOptimizeWait(history) {
     evidence_refs: [],
     round_complete: false,
     wf_trace: trace('optimize_existing', 1, [
-      { id: 'WF06', name: '发掘幼儿已有相关知识', apply: '等待儿童原话回收，不虚构证据' },
+      { id: 'WF06', name: '显性化表征已有经验', apply: '等待儿童原话回收，不虚构证据' },
     ], ['证据优先', '状态机优先'], '本轮无状态写入（等待儿童原话回传，就地支持）'),
   };
 }
@@ -1539,7 +1539,7 @@ function turnPickDrivingQuestion(state, message) {
     evidence_refs: eye ? ['ev-dwell-1', 'ev-words-1'] : ['ev-behavior-1'],
     round_complete: true,
     wf_trace: trace('from_zero', 1, [
-      { id: 'WF08b', name: '核心驱动问题推导（阶段2边界）', apply: `教师选定：${chosen.slice(0, 18)}…（任一候选都接住）` },
+      { id: 'WF08', name: '核心驱动问题推导', apply: `教师选定：${chosen.slice(0, 18)}…（任一候选都接住）` },
       { id: 'WF10', name: '核心概念性理解目标', apply: '目标轴心先立核心理解（轻量版），四维随后展开' },
       { id: 'WF17', name: '大问题拆解', apply: '核心驱动问题拆成本轮子问题' },
       { id: 'WF18', name: '收集儿童解决方案', apply: '任务卡：先收孩子的想法，不筛不评' },

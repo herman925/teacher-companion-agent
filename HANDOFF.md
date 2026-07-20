@@ -2,6 +2,17 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-20 (ops + UX marathon) — auth hardening, streaming progress, stage1-v1.0 map re-align — ALL DEPLOYED
+
+Everything below is committed (`253477e…25ca7eb`), pushed to server (both instances), origin and fork, and verified live. Full detail in the commit messages.
+
+- **Password-reset "invalid" solved twice**: (a) every reset click rotates the hash — only the newest temp works (admin console now arms/disables buttons, warns, and its 复制 button works on plain-HTTP origins); (b) passwords compare trimmed (`verifyLogin`/`changePassword`) — chat-app paste whitespace was failing logins. Failed logins now logged (username only) so reports are diagnosable via journalctl.
+- **Access model shipped**: public channel = full-screen branded login gate, no guest mode (register → contact admin; 微信/短信 placeholders per PRD); public admin page = full-screen password gate (sessionStorage hash, one entry per tab); dev/tunnel instances skip both automatically (no `ADMIN_TOKEN`, localhost-only). Admin delete-user = whole-account erasure (user + sessions + courses; audit kept).
+- **Timeout ladder**: adapter 600s < public nginx 660s (was 180s/180s — real glm-5.2 turns at 80–115s blew past under load; see [docs/OPERATIONS.md](docs/OPERATIONS.md)).
+- **Streaming turn progress** (feng's "is it broken?"): adapter streams universally (`onDelta`; result byte-identical to buffered — [docs/MODEL-APIS.md](docs/MODEL-APIS.md) §4), server forwards `thinking/progress/ttft/phase` SSE (doubles as heartbeat), UI shows 已等待 timer (default on) + optional 生成统计/思考过程 (用户中心 · 通用, localStorage), ↻ re-send affordance on teacher messages. No cost increase — streaming bills identically.
+- **Workflow map re-aligned to [source-docs/stage1-workflow-v1.0.zh-CN.md](source-docs/stage1-workflow-v1.0.zh-CN.md)**: stage-1 catalog re-bound (ids stable), 核心驱动问题 out of stage 1 (gate keeps evidence requirement only), preset-artifact nodes engine-lit from blueprint absorption (⚙ vs ✓ in the map — [docs/adr/0004-engine-lit-workflow-nodes.md](docs/adr/0004-engine-lit-workflow-nodes.md)), rationale re-framed teacher-first (你说过/我据此猜/为什么这样安排/不合适怎么调 + new `adjust` field), 网络图 must generate theme-element-first.
+- **Open**: 锋's blessing on the re-bound stage-1 node list; live-model spot check of rationale/element-first adherence; root-folder PNGs + source-docs PDF untracked pending Herman's call; repo-in-Google-Drive keeps reverting files mid-session (twice caused staged-content damage — memory note `gdrive-sync-clobbers-index`) — strongly consider moving it out.
+
 ## 2026-07-20 (evening) — Real-model blueprint-default prompt fix; chat chip; per-node 批注; title-agent
 
 - **Root cause of Herman's "no question cards on the real model"**: the 2026-07-20 blueprint-default decision had landed in mock.mjs ONLY — `stage0.zh.md` still gated the blueprint behind explicit plan words and ordered WF03b 「一轮只问一问」. The model was obeying a stale prompt. Fixed: stage0 WF03b now defaults from_zero theme entries into the blueprint path (三问 folded into ≤3 gap question cards in one `questions[]` batch); blueprint section retitled 「from_zero 默认路径」.

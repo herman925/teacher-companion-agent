@@ -40,7 +40,6 @@ const LS = {
   bpTab: 'cst.bpTab',         // blueprint panel view: 'list' | 'map'
   bpHidden: 'cst.bpHidden',   // teacher chose to collapse the panel
   bpComments: 'cst.bpComments', // unsent per-node 批注, keyed by course
-  turnMeta: 'cst.turnMeta',   // live turn-progress display toggles {timer, stats, thinking}
 };
 
 function load(key, fallback) {
@@ -305,73 +304,6 @@ function setStatus(text) {
   }
 }
 
-// Live turn-progress display (this browser only): the waiting timer is on by
-// default; stats (TTFT/字数/全程) and the streamed thinking panel are opt-in
-// (用户中心 · 通用). feng feedback 2026-07-20: long silent turns read as broken.
-let turnMeta = load(LS.turnMeta, {});
-const turnMetaOn = (k) => ({ timer: true, stats: false, thinking: false, ...turnMeta })[k];
-
-/** Wire one in-flight turn's live progress: ticking timer beside the status
- * line, optional TTFT/char readouts, optional ChatGPT-style 思考过程 panel
- * streaming whatever reasoning the model exposes. Returns handlers for the
- * SSE events; end() tears everything down and leaves the 耗时 badge. */
-function beginTurnMeta() {
-  const t0 = Date.now();
-  let ttftMs = null;
-  let chars = 0;
-  const meta = el('span', 'status-meta');
-  statusLine.append(meta);
-  const fmt = (ms) => {
-    const s = Math.max(1, Math.round(ms / 1000));
-    return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
-  };
-  const renderMeta = () => {
-    const bits = [];
-    if (turnMetaOn('timer')) bits.push(`已等待 ${fmt(Date.now() - t0)}`);
-    if (turnMetaOn('stats') && ttftMs != null) bits.push(`首字 ${(ttftMs / 1000).toFixed(1)} 秒`);
-    if (turnMetaOn('stats') && chars > 0) bits.push(`已生成 ${chars} 字`);
-    meta.textContent = bits.length ? bits.join(' · ') : '';
-  };
-  const tick = setInterval(renderMeta, 1000);
-  renderMeta();
-
-  let panel = null;
-  let body = null;
-  const ensurePanel = () => {
-    if (!turnMetaOn('thinking')) return false;
-    if (!panel) {
-      panel = el('details', 'thinking-panel');
-      panel.open = true;
-      panel.append(el('summary', '', '思考过程'));
-      body = el('div', 'thinking-body');
-      panel.append(body);
-      messagesEl.append(panel);
-      scrollToEnd();
-    }
-    return true;
-  };
-  return {
-    ttft(ms) { ttftMs = ms; renderMeta(); },
-    progress(d) { chars = d.chars ?? 0; renderMeta(); },
-    thinking(text) { if (ensurePanel()) body.append(text); },
-    phase() { if (body) body.replaceChildren(); }, // L4 retry / failover: fresh pass, fresh panel
-    end(gotTurn) {
-      clearInterval(tick);
-      meta.remove();
-      if (panel) {
-        if (body.textContent.trim()) { panel.open = false; panel.classList.add('done'); }
-        else panel.remove();
-      }
-      if (gotTurn && turnMetaOn('stats')) {
-        const bits = [];
-        if (ttftMs != null) bits.push(`首字 ${(ttftMs / 1000).toFixed(1)} 秒`);
-        bits.push(`全程 ${fmt(Date.now() - t0)}`);
-        messagesEl.append(el('div', 'turn-meta-badge', bits.join(' · ')));
-      }
-    },
-  };
-}
-
 function refreshDebug() {
   renderDebug(debugBody, { lastEvent, state: courseState });
 }
@@ -397,14 +329,6 @@ function scrollToEnd() {
 function autogrow() {
   inputEl.style.height = 'auto';
   inputEl.style.height = `${Math.min(inputEl.scrollHeight, 160)}px`;
-}
-
-/** ↻ on a teacher message: refill the composer with that text so the teacher
- * can tweak and resend without retyping. Never auto-sends. */
-function fillComposer(text) {
-  inputEl.value = text;
-  autogrow();
-  inputEl.focus();
 }
 
 function openDrawer(drawer) {
@@ -545,7 +469,7 @@ function replayTranscript() {
   }
   for (const entry of transcript) {
     if (entry.role === 'user') {
-      messagesEl.append(renderTeacherMessage(entry.content, { onRetry: fillComposer }));
+      messagesEl.append(renderTeacherMessage(entry.content));
     } else if (entry.ev) {
       clearAwaitingNotes();
       renderTurnGroup(entry.ev, { animate: false });
@@ -656,7 +580,7 @@ async function send(message, opts = {}) {
 
   if (!opts.isRetry) {
     clearAwaitingNotes();
-    const bubble = renderTeacherMessage(text, { onRetry: fillComposer });
+    const bubble = renderTeacherMessage(text);
     messagesEl.append(bubble);
     messageIn(bubble, 0, { from: 'right' }); // teacher slides in from their side
     scrollToEnd();
@@ -664,14 +588,9 @@ async function send(message, opts = {}) {
 
   setStatus('正在联系陪跑智能体…');
   let gotTurn = false;
-  const liveMeta = beginTurnMeta();
 
   const dispatch = (name, data) => {
     if (name === 'status') setStatus(data.text ?? '…');
-    else if (name === 'ttft') liveMeta.ttft(data.ms);
-    else if (name === 'progress') liveMeta.progress(data);
-    else if (name === 'thinking') liveMeta.thinking(data.text ?? '');
-    else if (name === 'phase') liveMeta.phase();
     else if (name === 'turn') { gotTurn = true; handleTurn(text, data); }
     else if (name === 'course') {
       // server auto-titled the course (theme extracted) — update the rail row
@@ -759,7 +678,6 @@ async function send(message, opts = {}) {
     busy = false;
     sendBtn.disabled = false;
     setStatus(null);
-    liveMeta.end(gotTurn);
     updateSkipLink();
   }
 }
@@ -1338,31 +1256,6 @@ function buildGeneralPane() {
   });
 
   pane.append(themeField());
-
-  // 回合进度显示: what the teacher sees while a reply is generating. Persisted
-  // per browser (localStorage), applies from the next turn.
-  const metaField = el('div', 'settings-field');
-  metaField.append(el('label', 'settings-label', '回合进度显示'));
-  const metaDefs = [
-    ['timer', '等待计时器（生成中显示已等待时间）'],
-    ['stats', '生成统计（首字耗时、字数、全程用时）'],
-    ['thinking', '显示模型思考过程（模型支持时流式展开）'],
-  ];
-  for (const [key, text] of metaDefs) {
-    const row = el('label', 'settings-check');
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = turnMetaOn(key);
-    cb.addEventListener('change', () => {
-      turnMeta = { ...turnMeta, [key]: cb.checked };
-      save(LS.turnMeta, turnMeta);
-      logEvent('session', 'turn_meta_toggle', { key, on: cb.checked });
-    });
-    row.append(cb, ` ${text}`);
-    metaField.append(row);
-  }
-  pane.append(metaField);
-
   pane.append(devModeField());
   pane.append(el('p', 'settings-note', '「演示模式」不联网、不填密钥即可体验完整流程。密钥与接口配置在「模型服务」页。规划中：将来这里只保留「官方服务」（平台代管）与「自备密钥」两种方式。'));
 }
