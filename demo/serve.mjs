@@ -369,7 +369,13 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === '/api/auth/login' && req.method === 'POST') {
         const q = await readBody();
         const user = await store.verifyLogin(q.username, q.password);
-        if (!user) return json(401, { ok: false, message: '用户名或密码不对，或账号已停用' });
+        if (!user) {
+          // Failed attempts were invisible in the journal, which made "temp
+          // password doesn't work" reports undiagnosable. Username only — never
+          // the password.
+          console.warn(`[auth] login failed for ${JSON.stringify(String(q.username ?? '').slice(0, 32))}`);
+          return json(401, { ok: false, message: '用户名或密码不对，或账号已停用' });
+        }
         const { token } = await store.createSession(user.id, req.headers['user-agent']);
         return json(200, { ok: true, user }, { 'set-cookie': sessionCookie(token) });
       }
