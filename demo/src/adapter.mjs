@@ -284,7 +284,11 @@ function nodeHopWorthy(e) {
  * returned as `base_url_used` so the debug drawer / session log can show it.
  * @returns {Promise<{payload: string|Object, usage: Object|null, base_url_used: string}>}
  */
-export async function callProvider(p, apiKey, messages, { timeoutMs = 180000 } = {}) {
+// 10 min: glm-5.2 coding-plan turns run 80–115s healthy and blew past the old
+// 180s under load (2026-07-20 feng session). Keep BELOW every proxy in front —
+// the public nginx reads at 660s — so the adapter aborts first and the teacher
+// gets a real error instead of a dead stream.
+export async function callProvider(p, apiKey, messages, { timeoutMs = 600000 } = {}) {
   const body = buildRequest(p, messages);
   const bases = [p.baseURL, ...(Array.isArray(p.altBaseURLs) ? p.altBaseURLs : [])];
   let lastErr = null;
