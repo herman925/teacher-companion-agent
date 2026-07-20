@@ -161,6 +161,25 @@
     /* The data table needs ~800px of its own; stack the detail card below it well
        before the two panes start fighting for width. */
     @media (max-width: 1280px) { .wrap { flex-direction: column; } }
+
+    /* password gate (public instance): opaque overlay, console invisible behind it */
+    #admin-gate {
+      position: fixed; inset: 0; z-index: 50; background: var(--paper);
+      display: flex; align-items: center; justify-content: center; padding: calc(var(--sp) * 3);
+    }
+    #admin-gate[hidden] { display: none; }
+    .admin-gate-card {
+      width: min(340px, 100%); text-align: center;
+      background: var(--surface); border: 1px solid var(--border-warm);
+      border-radius: 14px; box-shadow: var(--shadow-card);
+      padding: calc(var(--sp) * 4);
+    }
+    .admin-gate-title { font-family: var(--font-serif); font-weight: 700; font-size: 22px; }
+    .admin-gate-sub { color: var(--ink-faded); font-size: 13px; margin: 4px 0 calc(var(--sp) * 3); }
+    .admin-gate-card input { width: 100%; min-width: 0; }
+    .admin-gate-card button { width: 100%; margin-top: 10px; }
+    .admin-gate-msg { min-height: 1.4em; color: var(--brick); font-size: 13px; margin: 8px 0 0; }
+    .admin-gate-hint { color: var(--ink-faded); font-size: 12px; line-height: 1.7; margin: 10px 0 0; }
   </style>
 </head>
 <body>
@@ -173,7 +192,7 @@
     <summary>使用指南（给队友）</summary>
     <ol>
       <li><b>连接服务器：</b>双击仓库里的 <code>tools\dev-access-wizard.bat</code>。第一次使用会把你的「公钥」放进剪贴板——发给 Herman，等他回复「added」后再运行一次。成功后浏览器会自动打开平台，本页地址是 <code>http://localhost:3001/admin</code>。</li>
-      <li><b>密码：</b>通过向导（隧道）进来的<b>不需要密码</b>——你的电脑已经被授权。只有在未授权设备（手机、临时电脑）上访问公网版才需要向 Herman 要密码，填入左上角后点「连接」。密码不会明文发送（页面只发送它的散列值）。</li>
+      <li><b>密码：</b>通过向导（隧道）进来的<b>不需要密码</b>——你的电脑已经被授权，本页直接打开。访问公网版时会先出现密码门：向 Herman 要管理台密码，输入一次即可（本标签页内记住）。密码不会明文发送（页面只发送它的散列值）。</li>
       <li><b>看数据：</b>点课程名 → 右侧显示完整记录：<code>course_state</code>（课程状态）、<code>messages</code>（逐条对话）、<code>snapshots</code>（每一步的状态快照）。</li>
       <li><b>导出：</b>「下载」存单个课程，「导出全部」把所有数据存成一个 <code>demo-data.json</code>。</li>
       <li><b>删除：</b>所有删除都要点两次确认（按钮会先变成「确定？」）。<span class="guide-warn">删除不可恢复。</span>勾选多行后用「删除所选」，或「全部删除」清空。</li>
@@ -182,9 +201,22 @@
     </ol>
   </details>
 
+  <!-- Password gate (public instance only): the console body stays behind this
+       opaque overlay until the admin password checks out. Tunnel/dev instances
+       have no ADMIN_TOKEN, the first data call succeeds, and the gate never
+       shows. The accepted hash lives in sessionStorage, so one entry per tab. -->
+  <div id="admin-gate" hidden>
+    <div class="admin-gate-card">
+      <div class="admin-gate-title">数据管理台</div>
+      <p class="admin-gate-sub">小小探索家 · 课程与账号数据（测试环境）</p>
+      <input type="password" id="gate-token" placeholder="管理台密码" autocomplete="off">
+      <button type="button" id="gate-enter" class="primary">进入</button>
+      <p class="admin-gate-msg" id="gate-token-msg" role="status"></p>
+      <p class="admin-gate-hint">密码由 Herman 提供，只发送散列值。通过向导（SSH 隧道）访问时不需要密码，会直接进入。</p>
+    </div>
+  </div>
+
   <div class="bar">
-    <input type="password" id="token" placeholder="密码（隧道内免密，可留空）" autocomplete="off">
-    <button id="connect" class="primary">连接</button>
     <button id="refresh">刷新</button>
     <span class="spacer"></span>
     <button id="tab-data" class="tab on">数据</button>
@@ -487,7 +519,7 @@
     async function loadData() {
       try {
         const res = await af('/api/admin/data');
-        if (res.status === 401) { banner('需要密码：填入左上角后点「连接」。（通过隧道访问 localhost 时无需密码。）'); return; }
+        if (res.status === 401) { showAdminGate(); return; }
         dataRows = (await res.json()).courses;
       } catch (e) { banner('连不上后端：' + e.message); return; }
       banner('', false);
@@ -610,18 +642,36 @@
       });
     }
 
-    $('#connect').addEventListener('click', async () => {
-      const pw = $('#token').value.trim();
-      const hash = pw ? await sha256Hex(pw) : '';
-      if (pw && !hash) { banner('这个环境不支持中文密码的本地散列——请改用纯英文数字密码。'); return; }
-      sessionStorage.setItem('admin.tokenHash', hash);
-      loadData();
-    });
+    // Password gate: raised by any 401; entering once per tab is enough (the
+    // accepted hash sticks in sessionStorage and af() sends it from then on).
+    function showAdminGate() {
+      const g = $('#admin-gate');
+      g.hidden = false;
+      if (!g.dataset.wired) {
+        g.dataset.wired = '1';
+        const go = async () => {
+          const pw = $('#gate-token').value.trim();
+          if (!pw) { $('#gate-token-msg').textContent = '请输入密码'; return; }
+          $('#gate-token-msg').textContent = '验证中…';
+          const hash = await sha256Hex(pw);
+          if (!hash) { $('#gate-token-msg').textContent = '这个环境不支持中文密码的本地散列——请改用纯英文数字密码。'; return; }
+          sessionStorage.setItem('admin.tokenHash', hash);
+          const res = await af('/api/admin/data');
+          if (res.status === 401) { $('#gate-token-msg').textContent = '密码不对，请重试。'; return; }
+          $('#gate-token-msg').textContent = '';
+          g.hidden = true;
+          loadData();
+        };
+        $('#gate-enter').addEventListener('click', go);
+        $('#gate-token').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      }
+      $('#gate-token').focus();
+    }
+
     $('#refresh').addEventListener('click', () => { $('#view-users').hidden ? loadData() : loadUsers(); });
     $('#export').addEventListener('click', exportData);
     armBulk($('#del-selected'), () => Array.from(selected));
     armBulk($('#del-all'), () => visibleRows().map((c) => c.id));
-    $('#token').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#connect').click(); });
     $('#data-search').addEventListener('input', renderData);
     $('#user-search').addEventListener('input', renderUsers);
     for (const id of ['f-from', 'f-to', 'f-province', 'f-role', 'f-teach', 'f-bands']) {
@@ -686,7 +736,7 @@
     async function loadUsers() {
       try {
         const res = await af('/api/admin/users');
-        if (res.status === 401) { banner('需要密码：填入左上角后点「连接」。'); return; }
+        if (res.status === 401) { showAdminGate(); return; }
         userRows = (await res.json()).users;
       } catch (e) { banner('连不上后端：' + e.message); return; }
       banner('', false);
