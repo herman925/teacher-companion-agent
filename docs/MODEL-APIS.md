@@ -58,6 +58,7 @@ Decision summary (details below): **MiniMax-M3 default · GLM-5.2 fallback-1 and
 5. Timeout 600s per call (raised from 180s 2026-07-20: healthy glm-5.2 coding-plan turns run 80–115s and real turns exceeded 180s under load). Every proxy in front must read longer than the adapter — the public nginx reads at 660s — so the abort is always ours and reports through the stream.
 6. Failover chain on 5xx/timeout/`content_filter`-hard-fail: MiniMax → GLM → Kimi. Qwen behind `enableQwen` flag.
 7. Validation lives server-side (harness L3), independent of provider promises — even GLM's constrained decoding doesn't validate *semantic* rules (closure loop, stage gates, evidence refs).
+8. Output-length discipline: the turn contract stays JSON (constrained decoding + the whole L2/L3 stack depend on it; evaluated and rejected TOON 2026-07-20 — its savings target flat uniform arrays, our contract is a nested non-uniform tree, and no vendor constrains non-JSON output). Bloat is fought with deltas instead: `blueprint_delta` for small edits, history carries only `reply_markdown` for past agent turns, and harness rule 3c warns when a resent blueprint is ≥60% byte-identical to state. **Revisit later**: if usage stats show flat tabular fields (周计划 rows, 材料清单) dominating output tokens, consider a compact encoding for those `data` fields only — measure first via the debug drawer's per-turn usage numbers.
 
 ## 5. Source URLs
 

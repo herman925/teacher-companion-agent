@@ -85,6 +85,16 @@ const QUESTIONS_WARN_ABOVE = 5;
  * @param {{ stylePref?: string }} opts teacher profile bits that tune warn-level checks
  * @returns {import('./types.mjs').Violation[]}
  */
+/** Canonical shape for blueprint-module comparison (rule 3c): id/title/body/
+ * status/children only — a rationale touch-up alone does not count as change. */
+function moduleShape(node) {
+  return {
+    id: node?.id ?? '', title: node?.title ?? '', body: node?.body ?? '', status: node?.status ?? '',
+    children: (Array.isArray(node?.children) ? node.children : []).map(moduleShape),
+  };
+}
+const shapeOf = (node) => JSON.stringify(moduleShape(node));
+
 export function validateTurn(turn, state, opts = {}) {
   const violations = [];
   const questions = Array.isArray(turn.questions)
@@ -185,6 +195,28 @@ export function validateTurn(turn, state, opts = {}) {
         detail: `蓝图轮提出 ${questions.length} 张问题卡（>3）——先交付后提问的密度约定；仅记录`,
         action: 'warn',
       });
+    }
+    // 3c. Delta discipline (token economics, 2026-07-20): resending the full
+    // blueprint when most modules are byte-identical to state is the main
+    // output-length bloat — small edits belong in blueprint_delta. Warn (not
+    // block: a legit v0.2 refinement often keeps a couple of modules intact).
+    const existing = new Map((state?.course_plan_blueprint?.modules ?? []).map((m) => [m.id, shapeOf(m)]));
+    if (existing.size >= 2) {
+      let unchanged = 0;
+      let total = 0;
+      for (const bp of blueprints) {
+        for (const m of (bp.data?.modules ?? [])) {
+          total += 1;
+          if (existing.get(m.id) === shapeOf(m)) unchanged += 1;
+        }
+      }
+      if (total >= 2 && unchanged / total >= 0.6) {
+        violations.push({
+          kind: 'blueprint_resend',
+          detail: `重发的蓝图里 ${unchanged}/${total} 个模块与当前状态完全一致——小修改请用 blueprint_delta 按 id 定位，不要重发整图`,
+          action: 'warn',
+        });
+      }
     }
   }
 

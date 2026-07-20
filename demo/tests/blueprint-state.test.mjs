@@ -279,3 +279,37 @@ test('absorb lights preset-artifact nodes deterministically; model cannot fake e
   assert.deepEqual(after.engine_lit_nodes, ['WF04a'], 'delta write rejected');
   assert.ok(violations.some((v) => v.kind === 'bad_delta'), 'flagged as bad_delta');
 });
+
+// ---------- delta discipline: blueprint_resend warn (rule 3c) ----------
+
+test('blueprint_resend: fires on a mostly-identical full resend, silent on first delivery and real refinement', () => {
+  const mods = [
+    { id: 'theme_judgment', title: '主题判断', body: '适合主题探究', status: 'ai_suggestion' },
+    { id: 'network_map', title: '网络图', body: '方向A/B', status: 'ai_suggestion' },
+    { id: 'week_plan', title: '周计划', body: '第1周…', status: 'hypothesis' },
+  ];
+  const s0 = createInitialState('t-resend');
+  const withBp = absorbBlueprint(s0, bpTurn(mods)).state;
+
+  const asTurn = (artifacts) => parseTurn(JSON.stringify({
+    reply_markdown: '这一版蓝图见右侧面板。', artifacts, state_delta: {}, round_complete: false,
+  })).turn;
+
+  // fires: identical resend (rationale-only touch does not count as change)
+  const resend = structuredClone(mods);
+  resend[0].rationale = { assumed: '补个说明' };
+  const v1 = validateTurn(asTurn(bpTurn(resend).artifacts), withBp);
+  assert.ok(v1.some((v) => v.kind === 'blueprint_resend' && v.action === 'warn'), 'mostly-identical resend warns');
+
+  // silent: first delivery (no blueprint in state yet)
+  const v2 = validateTurn(asTurn(bpTurn(mods).artifacts), s0);
+  assert.ok(!v2.some((v) => v.kind === 'blueprint_resend'), 'first delivery never warns');
+
+  // silent: genuine v0.2 refinement (most modules changed)
+  const refined = structuredClone(mods);
+  refined[1].body = '教师点选后收窄为方向A，展开三层子结构';
+  refined[2].body = '按三周排定：第1周共同经验……';
+  refined[2].status = 'ai_suggestion';
+  const v3 = validateTurn(asTurn(bpTurn(refined, 'v0.2').artifacts), withBp);
+  assert.ok(!v3.some((v) => v.kind === 'blueprint_resend'), 'refinement with most modules changed stays silent');
+});
