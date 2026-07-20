@@ -548,8 +548,11 @@ function renderBlueprintNode(node, isModule, opts = {}) {
     line.append(el('span', 'bp-number', node.number));
     const title = el('span', 'bp-node-title');
     title.innerHTML = sanitizeInline(node.title);
-    line.append(title, chip);
-    if (opts.onConfirm && node.status !== 'confirmed') line.append(confirmButton(node, opts.onConfirm));
+    const gutter = el('span', 'bp-gutter');
+    gutter.append(chip);
+    if (opts.onConfirm && node.status !== 'confirmed') gutter.append(confirmButton(node, opts.onConfirm));
+    line.append(title, gutter);
+    row.dataset.status = node.status;
     row.append(line);
     if (node.body) {
       const body = el('div', 'bp-body');
@@ -569,9 +572,12 @@ function renderBlueprintNode(node, isModule, opts = {}) {
   summary.append(el('span', 'bp-number', node.number));
   const title = el('span', 'bp-node-title');
   title.innerHTML = sanitizeInline(node.title);
-  summary.append(title, chip);
-  if (pending > 0) summary.append(el('span', 'bp-rollup', `${pending} 项待确认`));
-  if (opts.onConfirm && node.status !== 'confirmed') summary.append(confirmButton(node, opts.onConfirm));
+  const gutter = el('span', 'bp-gutter');
+  gutter.append(chip);
+  if (pending > 0) gutter.append(el('span', 'bp-rollup', `${pending} 项待确认`));
+  if (opts.onConfirm && node.status !== 'confirmed') gutter.append(confirmButton(node, opts.onConfirm));
+  summary.append(title, gutter);
+  details.dataset.status = node.status;
   details.append(summary);
   if (node.body) {
     const body = el('div', 'bp-body');

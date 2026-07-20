@@ -1627,3 +1627,17 @@ body.rail-pinned .composer { left: 260px; }
   cursor: pointer; margin-left: 4px; font-family: inherit;
 }
 .bp-confirm-btn:hover { background: var(--status-truth); color: var(--on-accent); }
+/* aligned status gutter (MS-Word-comments ergonomics) + filter pills */
+.bp-gutter { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.bp-leaf-line, .bp-module > summary, .bp-branch > summary { width: 100%; }
+.bp-filtered-out { display: none !important; }
+.bp-filter-row { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; align-items: center; }
+.bp-filter-pill {
+  appearance: none; font-size: 11px; border-radius: 999px; padding: 2px 10px;
+  cursor: pointer; font-family: inherit; background: transparent; border: 1.5px solid var(--border-warm); color: var(--ink-faded);
+}
+.bp-filter-pill.bp-confirmed.active { background: var(--status-truth); color: var(--on-accent); border-color: var(--status-truth); }
+.bp-filter-pill.bp-teacher_preset.active { background: var(--status-teacher-wash); color: var(--status-teacher); border-color: var(--status-teacher); }
+.bp-filter-pill.bp-ai_suggestion.active { background: var(--persimmon-wash); color: var(--status-ai); border-color: var(--status-ai); }
+.bp-filter-pill.bp-hypothesis.active { background: var(--status-guess-wash); color: var(--status-guess); border-color: var(--status-guess); }
+.bp-bulk { font-size: 11px; min-height: 26px; padding: 2px 10px; color: var(--status-truth); border-color: var(--status-truth); margin-left: auto; }

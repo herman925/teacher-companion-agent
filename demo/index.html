@@ -193,6 +193,13 @@
         <button type="button" class="bp-view-btn" id="bp-tab-map">导图</button>
       </div>
       <span class="bp-version" id="bp-panel-version"></span>
+      <div class="bp-filter-row" aria-label="按状态筛选">
+        <button type="button" class="bp-filter-pill bp-confirmed" data-filter="confirmed">已确认</button>
+        <button type="button" class="bp-filter-pill bp-teacher_preset" data-filter="teacher_preset">老师预设</button>
+        <button type="button" class="bp-filter-pill bp-ai_suggestion" data-filter="ai_suggestion">AI建议</button>
+        <button type="button" class="bp-filter-pill bp-hypothesis" data-filter="hypothesis">待验证</button>
+        <button type="button" class="text-btn bp-bulk" id="bp-bulk-confirm" hidden>✓确认可见</button>
+      </div>
       <button type="button" class="icon-btn bp-panel-close" id="bp-panel-close" aria-label="收起蓝图面板">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
           <path d="M6 6l12 12M18 6L6 18"></path>

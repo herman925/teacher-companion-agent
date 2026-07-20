@@ -155,6 +155,13 @@ function fromZeroFlow(state, history, message) {
   if (!state.resource_entry_card && priorTurnsMatching(history, BLUEPRINT_MARKER) >= 1) {
     return turnBlueprintRound2(state, history, message);
   }
+  // The pivotal direction pick can arrive AFTER round 2 (it was asked there):
+  // escalate the map through the normal artifact channel — the engine's merge
+  // keeps the branches and the teacher-reply rule makes confirmed legal.
+  const mapModule = state.course_plan_blueprint?.modules?.find((m) => m.id === 'network_map');
+  if (mapModule && mapModule.status !== 'confirmed' && /方向|来源|故事|场景|制作|材料|问题/.test(message)) {
+    return turnDirectionPickAck(state, message);
+  }
   if (!state.resource_entry_card) return turnEntryCard();
   if (!(state.children_evidence || []).length) return turnAwaitOrIngest(state, history, message);
   if (!(state.driving_question || {}).text) return turnPickDrivingQuestion(state, message);
@@ -294,8 +301,32 @@ function turnBlueprintRound1(message, opts = {}) {
  * network modules escalate to teacher_preset/confirmed only because the
  * teacher's reply confirmed them（教师确认，不是模型自封）.
  */
+/** Per-resource concrete materials — a shopping list a 保育员 can act on
+ * (pedagogy-panel finding: generic lists are not 可直接取用). */
+const RESOURCE_MATERIALS = {
+  醒狮: '红布与彩带、纸箱狮头半成品×4、小鼓或锣 1 面、绒球、狮身彩绘用大笔与颜料',
+  龙舟: '大纸箱船身×2、纸板船桨、若干小鼓、彩绳、防水布（旱地划船用）',
+  趁墟: '摊位小桌布×4、玩具秤与篮子、自制纸币卡、当地特产实物或图片、叫卖牌',
+  祠堂: '祠堂照片放大图、可拼搭的积木梁柱、灯笼半成品、族谱式大画纸、瓦当拓印材料',
+};
+
 function turnBlueprintRound2(state, history, message) {
   const resource = (state.theme_resource || {}).name || '醒狮';
+  const materials = RESOURCE_MATERIALS[resource] || RESOURCE_MATERIALS['醒狮'];
+  // Metabolize what the teacher actually said (panel finding: quoted-but-ignored):
+  const month = /一个月|1\s*个月|四周|4\s*周/.test(message);
+  const sizeMatch = message.match(/(\d+)\s*个?\s*(孩子|人|幼儿)/);
+  const classSize = sizeMatch ? Number(sizeMatch[1]) : null;
+  const groupNote = classSize ? `班里 ${classSize} 个孩子：体验角每次 6–8 人轮流，小组活动分 ${Math.ceil(classSize / 8)} 组进行。` : '体验角每次 6–8 人轮流。';
+  // The pivotal REAL choice (panel finding: intake answers ≠ direction confirmation):
+  // the map only escalates when the teacher actually picks directions.
+  const pickedDirections = /方向|来源|故事|场景|制作|材料|问题/.test(message);
+  const weekKids = [
+    bpNode('week_plan.w1', '第 1 周：建立共同经验', `集体：一起看一场${resource}（视频或现场，完整教案见活动方案包）；环创：教室里开${resource}体验角。${groupNote}`, 'ai_suggestion'),
+    bpNode('week_plan.w2', '第 2 周：发掘已知（多通道）与问题墙', '「我们已经知道的」不止靠说：集体讨论记录清单＋自选表征——画出来、搭出来、演出来（画纸/积木/角色区三个通道同时开放）。问题墙上墙，游戏中随手记孩子的问题。', 'ai_suggestion'),
+    bpNode('week_plan.w3', '第 3 周：聚焦与调整', '按问题墙的密集处调整活动重心，为下一阶段筛有潜力的问题。', 'ai_suggestion'),
+  ];
+  if (month) weekKids.push(bpNode('week_plan.w4', '第 4 周：小结与回望', '和孩子一起回看问题墙的 KWHL：我们知道了什么、还想知道什么——为下个阶段留好接口。', 'ai_suggestion'));
   const blueprint = {
     type: 'blueprint',
     title: `阶段一完整预设包（${resource}）`,
@@ -303,36 +334,41 @@ function turnBlueprintRound2(state, history, message) {
       version: 'v0.2',
       modules: [
         {
-          ...bpNode('network_map', '主题预设网络图', '按你的确认保留原方向；你补充的资源已并入关系层。', 'confirmed'),
+          ...bpNode('network_map', '主题预设网络图', pickedDirections
+            ? '按你点选的方向收拢；你补充的资源已并入关系层。'
+            : '方向还没定——下面问题卡里选 2–3 个最贴近你们班的，网络图就按它收拢。', pickedDirections ? 'confirmed' : 'teacher_preset'),
           rationale: { heard: [{ quote: message.slice(0, 40) }] },
         },
-        bpNode('week_plan', '2–3 周计划', '', 'ai_suggestion', [
-          bpNode('week_plan.w1', '第 1 周：建立共同经验', `集体：一起看一场${resource}（视频或现场）；环创：教室里开${resource}体验角。`, 'ai_suggestion'),
-          bpNode('week_plan.w2', '第 2 周：发掘已知与问题墙', '集体讨论「我们已经知道的」；问题墙上墙，游戏中随手记孩子的问题。', 'ai_suggestion'),
-          bpNode('week_plan.w3', '第 3 周：聚焦与调整', '按问题墙的密集处调整活动重心，为下一阶段筛有潜力的问题。', 'ai_suggestion'),
-        ]),
-        bpNode('activity_pack', '活动方案包（五类组织形式）', '幼儿园的活动组织形式就这五类。每类给一个方向和一个「换个玩法」——预设是给你选择的起点，不是唯一答案；确认后可展开成完整教案。', 'ai_suggestion', [
-          bpNode('activity_pack.jiti', '集体教学', `观看精彩的${resource}片段，讨论看到了什么、想到了什么。目的：建立共同经验。观察点：谁在反复提问。换个玩法：共读一本相关绘本，让孩子指认见过的部分。`, 'ai_suggestion'),
-          bpNode('activity_pack.xiaozu', '小组教学', '两人三足式协作小游戏，感受齐心协力。目的：体验配合与节奏。观察点：合作卡点与商量方式。换个玩法：小组合作搬运大物件，路线由孩子自己商量。', 'ai_suggestion'),
-          bpNode('activity_pack.gebie', '个别指导', '对特别着迷或还在观望的孩子做一对一跟随记录。目的：看见个体差异——最活跃的和还在观望的都是信息。', 'ai_suggestion'),
-          bpNode('activity_pack.youxi', '自主游戏·环创', `${resource}体验角持续开放，投放低结构材料。目的：让兴趣自己长出来。观察点：停留时长与自发语言。换个玩法：把材料换成半成品，看孩子怎么补全。`, 'ai_suggestion'),
-          bpNode('activity_pack.qinzi', '亲子活动', `请家长带孩子看一次真实${resource}，或采访见过的长辈。目的：把经验连到家庭与社区。换个玩法：亲子手工任务，做一个小${resource}带回班里。`, 'ai_suggestion'),
+        bpNode('week_plan', month ? '4 周计划' : '2–3 周计划', '', 'ai_suggestion', weekKids),
+        bpNode('activity_pack', '活动方案包（五类组织形式）', '幼儿园的活动组织形式就这五类。第 1 周的两个已展开成完整教案；其余先给方向和「换个玩法」——预设是给你选择的起点，不是唯一答案。', 'ai_suggestion', [
+          bpNode('activity_pack.jiti', `集体教学 · 看一场${resource}（完整教案）`, `目的：建立共同经验。\n流程（约 20 分钟）：① 3 分钟入场，提一个悬念问题「等下看的时候，找一样你最想摸一摸的东西」② 8 分钟观看片段 ③ 7 分钟围坐讨论：你看到了什么／哪里最想试试／有什么想不明白 ④ 2 分钟收束：把想不明白的记到问题墙。\n材料：${resource}影像片段（现场更好）、问题墙便签。\n安全：观看区坐垫定位，避免起身拥挤。\n观察点：谁在反复提问、谁盯着某个细节不放。\n活动后表征：回教室画「我印象最深的一样东西」。\n换个玩法：共读一本相关绘本，让孩子指认见过的部分。`, 'ai_suggestion'),
+          bpNode('activity_pack.xiaozu', `小组教学 · ${resource === '醒狮' ? '狮头狮尾配合走' : '齐心协力小任务'}`, `目的：体验主题里的配合与节奏（主题内的合作，不做泛化游戏）。\n流程（每组约 10 分钟）：两人一前一后披一块布，前面的带路后面的跟，走过 3 个小障碍；走完换位。\n材料：大块软布×每组 1、地面障碍垫。\n安全：软布只到腰高、不遮脸；地面清空；教师全程在侧。\n观察点：合作卡点与商量方式——谁提出了办法。\n换个玩法：不给障碍路线，由小组自己商量摆。`, 'ai_suggestion'),
+          bpNode('activity_pack.gebie', '个别指导', '对特别着迷或还在观望的孩子做一对一跟随记录。目的：看见个体差异——最活跃的和还在观望的都是信息。观察点：观望的孩子在看什么。', 'ai_suggestion'),
+          bpNode('activity_pack.youxi', '自主游戏·环创', `${resource}体验角持续开放（${groupNote}）。目的：让兴趣自己长出来。观察点：停留时长与自发语言。换个玩法：把材料换成半成品，看孩子怎么补全。`, 'ai_suggestion'),
+          bpNode('activity_pack.qinzi', '亲子活动', `请家长带孩子看一次真实${resource}，或采访见过的长辈（附访谈三问：您第一次见是什么时候／最难忘哪一次／能教孩子一个小动作吗）。目的：把经验连到家庭与社区。换个玩法：亲子手工任务，做一个小${resource}带回班里。`, 'ai_suggestion'),
         ]),
         bpNode('environment', '环境与材料', '', 'ai_suggestion', [
-          bpNode('environment.list', '材料清单', '相关照片视频、旧道具、可拆装的低结构材料、记录用便签与画纸。', 'ai_suggestion'),
-          bpNode('environment.letter', '给家长的一封信（草稿）', `说明班里正在做${resource}主题，请家长帮忙收集材料、分享经历。`, 'ai_suggestion'),
-          bpNode('environment.wall', '问题墙（KWHL）', '孩子的问题要进环境、贴上墙，不只留在教师记录里。可按 KWHL 排：知道什么、想知道什么、如何去知道、学会了什么——最后一栏留到复盘再填。', 'ai_suggestion'),
+          bpNode('environment.list', `材料清单（${resource} 专用，可直接交给保育员）`, `${materials}；另备：记录便签、画纸、粗头笔。`, 'ai_suggestion'),
+          bpNode('environment.letter', '给家长的一封信（全文，可直接打印）', `亲爱的家长：\n近期班里开始「${resource}」主题探究。想请您帮两件小事：① 如果家里有和${resource}有关的物件、照片或小视频，请让孩子带来和大家分享（我们会好好保管）；② 周末如果路过相关的场景，停下来看两分钟，听听孩子说什么，把最有意思的一句话记在联系本上。不需要提前教知识——孩子自己的发现最珍贵。谢谢！\n——${resource}主题项目组`, 'ai_suggestion'),
+          bpNode('environment.wall', '问题墙 + 主题墙（KWHL）', '孩子的问题要进环境、贴上墙。主题墙按 KWHL 分四栏：知道什么、想知道什么、如何去知道、学会了什么——最后一栏留到复盘再填。旁边留一格「材料工坊」放半成品，随时可取。', 'ai_suggestion'),
         ]),
         bpNode('feedback_card', '轻量回传（3 分钟）', '回来告诉我：儿童原话一两句、作品或问题墙照片、你最困惑的一点。回传是为了优化计划，不是为了解锁下一步。', 'ai_suggestion'),
         bpNode('signal_note', '项目化信号提醒', '若同一问题反复出现、孩子开始说「我们可以做／试」、你的预设装不下他们的问题——这是可以往项目式探究发展的信号，到时我会提醒你，也可以不切换。', 'hypothesis'),
       ],
     },
   };
+  const directionCard = pickedDirections ? null : {
+    id: 'q-bp-directions',
+    text: '网络图的方向里，先聚焦哪 2–3 个',
+    why: '这是你的教育价值筛选——选了，网络图才算你的',
+    examples: ['来源与故事＋真实场景', '制作与材料——孩子最爱动手', '先看孩子的问题再定'],
+  };
   return {
-    reply_markdown:
-      `收到。对照上一版：网络图方向按你的确认保留，你补充的信息我并进了计划。下面是完整预设包 v0.2——周计划、五类活动方案、环境与材料、回传要求都在卡片里，直接点开各部分删改就行。\n\n先按第 1 周做起来，不用等一切都齐。`,
-    question: null,
-    questions: [],
+    reply_markdown: pickedDirections
+      ? `收到。对照上一版：网络图按你点选的方向收拢，你补充的信息我并进了计划${month ? '（按一个月排成 4 周）' : ''}。第 1 周的两个活动展开成了完整教案，家长信全文和${resource}专用材料清单可以直接取用。\n\n先按第 1 周做起来，不用等一切都齐。`
+      : `收到，你补充的信息我并进了计划${month ? '（按一个月排成 4 周）' : ''}。第 1 周的两个活动展开成了完整教案，家长信全文和${resource}专用材料清单可以直接取用。\n\n还差一个只有你能做的判断：网络图先聚焦哪几个方向——下面的卡片选一下，选了它才算你的计划。`,
+    question: directionCard,
+    questions: directionCard ? [directionCard] : [],
     artifacts: [blueprint],
     closure_loop: {
       do_now: '按第 1 周安排开展 1–2 个建立共同经验的活动',
@@ -362,6 +398,37 @@ function turnBlueprintRound2(state, history, message) {
       { id: 'WF04', name: '主题网络', apply: '网络图经教师确认，状态升级 confirmed' },
       { id: 'WF04b', name: '资源深度网络', apply: '四层并入预设包，意义层保持待验证' },
     ], ['先给完整方案再一起改', '回传为了优化不为解锁'], '完整预设包 v0.2；awaiting_feedback 置 true'),
+  };
+}
+
+/** Teacher picked network-map directions after round 2 — the one judgment
+ * only she can make. A childless update: the engine merge keeps the branches. */
+function turnDirectionPickAck(state, message) {
+  const resource = (state.theme_resource || {}).name || '醒狮';
+  return {
+    reply_markdown:
+      `好，网络图按你点的方向收拢——这个筛选只有你能做，现在这份计划才算你的。方向外的分支我留着不删：孩子的问题冒出来时随时可以捡回来。\n\n接下来就按第 1 周开始，回传卡见。`,
+    question: null,
+    questions: [],
+    artifacts: [{
+      type: 'blueprint',
+      title: `主题预设网络图（已按你的方向确认）`,
+      data: {
+        version: 'v0.2',
+        modules: [{
+          id: 'network_map', title: '主题预设网络图', status: 'confirmed',
+          body: '按你点选的方向收拢；未选分支保留备用，不删。',
+          rationale: { heard: [{ quote: message.slice(0, 40) }] },
+        }],
+      },
+    }],
+    closure_loop: null,
+    state_delta: { completed_nodes: ['WF04'] },
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: trace('from_zero', state.stage ?? 1, [
+      { id: 'WF04', name: '主题网络', apply: '教师点选方向——网络图升级 confirmed，分支保留' },
+    ], ['方向筛选是教师唯一不可代劳的判断'], `网络图 confirmed；${resource} 蓝图版本随之递增`),
   };
 }
 

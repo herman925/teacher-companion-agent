@@ -1413,6 +1413,62 @@ function refreshBlueprintPanel() {
   const body = $('#bp-panel-body');
   const opts = { onConfirm: confirmNode, posKey: courseState?.course_id };
   body.replaceChildren(bpTab === 'map' ? renderBlueprintMapView(numbered, opts) : renderBlueprintList(numbered, opts));
+  applyBpFilter();
+}
+
+// -- status filter + bulk confirm (Herman: MS-Word-comments ergonomics) --
+let bpFilter = null; // null = all, else a status key
+function applyBpFilter() {
+  const body = $('#bp-panel-body');
+  if (!body) return;
+  for (const rowEl of body.querySelectorAll('[data-status]')) {
+    const show = !bpFilter || rowEl.dataset.status === bpFilter
+      || Boolean(rowEl.querySelector(`[data-status="${bpFilter}"]`)); // keep branches containing matches
+    rowEl.classList.toggle('bp-filtered-out', !show);
+    if (bpFilter && rowEl.tagName === 'DETAILS' && show) rowEl.open = true; // reveal matches
+  }
+  for (const pill of document.querySelectorAll('.bp-filter-pill')) {
+    pill.classList.toggle('active', pill.dataset.filter === String(bpFilter));
+  }
+  const bulk = $('#bp-bulk-confirm');
+  if (bulk) {
+    const visible = [...(body?.querySelectorAll('[data-status]:not(.bp-filtered-out)') ?? [])]
+      .filter((e) => e.dataset.status !== 'confirmed').length;
+    bulk.hidden = visible === 0;
+    bulk.textContent = `✓确认可见 ${visible} 项`;
+  }
+}
+async function bulkConfirmVisible() {
+  const body = $('#bp-panel-body');
+  const ids = [...(body?.querySelectorAll('.bp-list-view [data-status]:not(.bp-filtered-out)') ?? [])]
+    .filter((e) => e.dataset.status !== 'confirmed')
+    .map((e) => e.querySelector('.bp-confirm-btn'))
+    .filter(Boolean);
+  // Walk via the engine event per node — same custody as single clicks.
+  const nodeIds = [...(body?.querySelectorAll('.bp-list-view [data-status]:not(.bp-filtered-out)') ?? [])]
+    .filter((e) => e.dataset.status !== 'confirmed' && e.querySelector(':scope > .bp-leaf-line .bp-confirm-btn, :scope > summary .bp-confirm-btn'));
+  void ids;
+  for (const el2 of nodeIds) {
+    const id = findNodeIdForRow(el2);
+    if (id) await confirmNode(id);
+  }
+}
+// Rows don't carry ids in the DOM yet — derive from the rendered number prefix.
+function findNodeIdForRow(rowEl) {
+  const num = rowEl.querySelector(':scope > .bp-leaf-line .bp-number, :scope > summary .bp-number')?.textContent;
+  if (!num) return null;
+  const bp = courseState?.course_plan_blueprint;
+  if (!bp) return null;
+  const numbered = numberBlueprint(normalizeBlueprint({ modules: bp.modules }).modules);
+  const walk = (nodes) => {
+    for (const n of nodes) {
+      if (n.number === num) return n.id;
+      const hit = walk(n.children);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return walk(numbered);
 }
 
 /** Teacher ✓确认: the engine escalates locally (single source of truth), the
@@ -1441,7 +1497,14 @@ function wireBlueprintPanel() {
   // Panel sits under the sticky header — measure once (font/theme safe enough).
   const header = document.querySelector('.app-header');
   if (header) document.documentElement.style.setProperty('--header-h', `${header.offsetHeight}px`);
-  const setTab = (tab) => { bpTab = tab; save(LS.bpTab, tab); refreshBlueprintPanel(); };
+  const setTab = (tab) => { bpTab = tab; save(LS.bpTab, tab); bpRenderKey = ''; refreshBlueprintPanel(); };
+  for (const pill of document.querySelectorAll('.bp-filter-pill')) {
+    pill.addEventListener('click', () => {
+      bpFilter = bpFilter === pill.dataset.filter ? null : pill.dataset.filter;
+      applyBpFilter();
+    });
+  }
+  $('#bp-bulk-confirm')?.addEventListener('click', bulkConfirmVisible);
   $('#bp-tab-list').addEventListener('click', () => setTab('list'));
   $('#bp-tab-map').addEventListener('click', () => setTab('map'));
   $('#bp-panel-close').addEventListener('click', () => {

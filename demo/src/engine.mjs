@@ -345,7 +345,18 @@ export function absorbBlueprint(state, turn, ctx = {}) {
       const sanitized = sanitizeTree(mod);
       const idx = modules.findIndex((m) => m.id === sanitized.id);
       const op = idx >= 0 ? 'update' : 'set';
-      if (idx >= 0) modules[idx] = sanitized; else modules.push(sanitized);
+      if (idx >= 0) {
+        // An update that carries NO children keeps the existing subtree — a
+        // status/body touch-up must never wipe the teacher's map branches
+        // (pedagogy-panel finding: round-2 confirmations shipped children:[]
+        // and emptied the living 网络图).
+        if (!sanitized.children.length && modules[idx].children?.length) {
+          sanitized.children = modules[idx].children;
+        }
+        modules[idx] = sanitized;
+      } else {
+        modules.push(sanitized);
+      }
       changed.push(sanitized.id);
       revisionLog.push({ v: version, module_id: sanitized.id, op });
     }

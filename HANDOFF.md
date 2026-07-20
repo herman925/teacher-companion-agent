@@ -2,6 +2,13 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-20 (final) — Pedagogy judge panel findings fixed; gutter/filter/bulk; PUBLIC release
+
+- **Expert-lens pedagogy panel** (3 judges over the ACTUAL generated blueprint, scores 6/6/6.5) found real defects — all fixed and pinned with tests: ① **engine merge bug**: a childless module update wiped the living 网络图's branches (`children:[]` overwrote) — absorb now preserves the existing subtree on childless updates; ② **round 2 overclaimed**: now delivers what it says — week-1 activities as FULL 教案 (目的/流程含时长与提问/材料/安全/观察点/活动后表征), resource-specific 材料清单 (per-resource map: 醒狮/龙舟/趁墟/祠堂), printable 家长信全文, theme-native 小组 activity (狮头狮尾配合走 + safety) replacing generic 两人三足, 发掘已知 multi-channel (画/搭/演), 主题墙+材料工坊; ③ **teacher inputs metabolized**: 一个月 → 4-week plan, 班额 → grouping math (30 → 4 组); ④ **the pivotal REAL choice**: intake answers no longer rubber-stamp the map — network_map stays `teacher_preset` + a direction-pick card until the teacher actually picks (keywords), incl. a post-r2 `turnDirectionPickAck` path (childless confirming update, branches kept, pick quoted as 依据). stage0 prompt carries the 说到做到 rules for real models.
+- **Panel ergonomics (Herman: MS-Word comments)**: status chips + ✓确认 now live in an ALIGNED right gutter on every row; panel head gains 4 status filter pills (click = filter, branches containing matches stay & auto-open) + a 「✓确认可见 n 项」bulk-confirm button driving the same engine event per node.
+- Tests 206 → **211**; full flow browser-verified 3 rounds live (r1 skeleton → r2 metabolized package + direction ask → pick → 已确认 with 4 branches kept, filter narrows, bulk appears).
+- **PUBLIC release authorized by Herman this session**: dev→main merged and pushed to origin + server (public instance auto-deploys).
+
 ## 2026-07-20 (latest) — Herman's round-3 fixes + ALL deferred items built
 
 - **蓝图共创 is now the from_zero DEFAULT** (no magic words): any bare theme entry (「我想带中班孩子做醒狮」) opens with blueprint v0.1 + the required gap cards — intent card (q-bp-intent, WF03b heart, auto-skipped when the message states why) joined the pool; `turnIntentQuestion` retired. Panel appears immediately after round 1. r2 proposes stage 1 (delta-aware gate).

@@ -187,3 +187,70 @@ test('applyBlueprintDelta: node-level update/set/remove with the born-confirmed 
   const modGuard = applyBlueprintDelta(rm.state, [{ op: 'remove', id: 'm' }]);
   assert.ok(modGuard.violations.some((v) => v.detail.includes('模块不可整体删除')));
 });
+
+// ---------- pedagogy-panel findings, fixed and pinned ----------
+
+test('merge preserves children when an update carries none (panel finding: map wipe)', () => {
+  const s0 = createInitialState('t-keepkids');
+  const withKids = absorbBlueprint(s0, bpTurn([{ id: 'net', title: 'N', status: 'ai_suggestion', children: [{ id: 'net.a', title: 'A', status: 'ai_suggestion' }, { id: 'net.b', title: 'B', status: 'hypothesis' }] }])).state;
+  const touched = absorbBlueprint(withKids, bpTurn([{ id: 'net', title: 'N', status: 'confirmed', body: '按你点选的方向收拢' }], 'v0.2'), { teacherTurn: true }).state;
+  const net = touched.course_plan_blueprint.modules[0];
+  assert.equal(net.status, 'confirmed');
+  assert.equal(net.children.length, 2, 'a childless update never wipes the subtree');
+  assert.equal(net.children[1].status, 'hypothesis', 'child statuses intact');
+});
+
+test('round 2 metabolizes teacher inputs: 一个月 → 4 weeks, class size → grouping note', () => {
+  const s0 = createInitialState('t-metab');
+  const r1 = mockTurn(s0, [], '我想带中班孩子做醒狮');
+  const s1 = applyDelta(s0, parseTurn(r1).turn.state_delta).state;
+  const r2 = mockTurn(s1, [{ role: 'assistant', content: r1.reply_markdown }], '孩子们见过，园里想做本土文化，做一个月，30个孩子，先聚焦来源与故事');
+  const bp = r2.artifacts.find((a) => a.type === 'blueprint');
+  const weeks = bp.data.modules.find((m) => m.id === 'week_plan');
+  assert.equal(weeks.children.length, 4, '一个月 becomes a 4-week plan');
+  assert.ok(JSON.stringify(bp.data).includes('30 个孩子'), 'class size shapes grouping');
+  assert.ok(JSON.stringify(bp.data).includes('4 组'), 'grouping math from class size');
+});
+
+test('the direction pick is a REAL choice: no pick → teacher_preset + direction card; pick → confirmed', () => {
+  const s0 = createInitialState('t-pick');
+  const r1 = mockTurn(s0, [], '我想带中班孩子做醒狮');
+  const s1 = applyDelta(s0, parseTurn(r1).turn.state_delta).state;
+  const noPick = mockTurn(s1, [{ role: 'assistant', content: r1.reply_markdown }], '好的，30个孩子，做三周');
+  const bpNo = noPick.artifacts.find((a) => a.type === 'blueprint');
+  assert.equal(bpNo.data.modules.find((m) => m.id === 'network_map').status, 'teacher_preset', 'intake answers are NOT direction confirmation');
+  assert.ok(noPick.questions.some((q) => q.id === 'q-bp-directions'), 'the pivotal choice is asked, not rubber-stamped');
+  const pick = mockTurn(s1, [{ role: 'assistant', content: r1.reply_markdown }], '先聚焦来源与故事和制作材料');
+  const bpYes = pick.artifacts.find((a) => a.type === 'blueprint');
+  assert.equal(bpYes.data.modules.find((m) => m.id === 'network_map').status, 'confirmed');
+  assert.ok(!pick.questions.some((q) => q.id === 'q-bp-directions'));
+});
+
+test('round 2 delivers what it claims: full 教案 fields, printable letter, resource-specific materials', () => {
+  const s0 = createInitialState('t-deliver');
+  const r1 = mockTurn(s0, [], '我想带大班孩子做龙舟');
+  const s1 = applyDelta(s0, parseTurn(r1).turn.state_delta).state;
+  const r2 = mockTurn(s1, [{ role: 'assistant', content: r1.reply_markdown }], '先聚焦真实场景方向');
+  const text = JSON.stringify(r2.artifacts.find((a) => a.type === 'blueprint').data);
+  for (const field of ['流程', '材料', '安全', '观察点', '活动后表征']) assert.ok(text.includes(field), `WF-05 field ${field} present`);
+  assert.ok(text.includes('亲爱的家长'), '家长信 is a printable letter, not a description of one');
+  assert.ok(text.includes('船桨'), 'materials are resource-specific (龙舟)');
+});
+
+test('direction pick AFTER round 2 escalates the map and keeps every branch', () => {
+  const s0 = createInitialState('t-latepick');
+  const r1 = mockTurn(s0, [], '我想带中班孩子做醒狮');
+  let s1 = applyDelta(s0, parseTurn(r1).turn.state_delta).state;
+  s1 = absorbBlueprint(s1, parseTurn(r1).turn, { teacherTurn: true }).state;
+  const hist = [{ role: 'assistant', content: r1.reply_markdown }];
+  const r2 = mockTurn(s1, hist, '孩子们见过，园里想做本土文化，做一个月，30个孩子');
+  let s2 = applyDelta(s1, parseTurn(r2).turn.state_delta).state;
+  s2 = absorbBlueprint(s2, parseTurn(r2).turn, { teacherTurn: true }).state;
+  assert.equal(s2.course_plan_blueprint.modules.find((m) => m.id === 'network_map').status, 'teacher_preset');
+  const r3 = mockTurn(s2, hist, '先聚焦来源与故事、制作与材料两个方向');
+  let s3 = applyDelta(s2, parseTurn(r3).turn.state_delta).state;
+  s3 = absorbBlueprint(s3, parseTurn(r3).turn, { teacherTurn: true }).state;
+  const net = s3.course_plan_blueprint.modules.find((m) => m.id === 'network_map');
+  assert.equal(net.status, 'confirmed', 'the pick escalates through the artifact channel');
+  assert.equal(net.children.length, 4, 'branches preserved through the childless confirming update');
+});
