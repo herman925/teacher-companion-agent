@@ -88,6 +88,27 @@ test('reset password: newest temp logs in (even pasted with whitespace), older t
   assert.ok(await store.verifyLogin('teacher_r', ' chosen-pw-9 '));
 });
 
+test('delete user: erases account, sessions, and courses; other users untouched', async () => {
+  const { user: doomed, temp_password } = await store.createUser({ username: 'doomed_t' });
+  const { user: keeper } = await store.createUser({ username: 'keeper_t' });
+  await store.verifyLogin('doomed_t', temp_password);
+  const { token } = await store.createSession(doomed.id, 'doomed-device');
+  const cDoomed = await store.createCourse(doomed.id, '要删的课');
+  const cKept = await store.createCourse(keeper.id, '留下的课');
+
+  const gone = await store.deleteUser(doomed.id);
+  assert.equal(gone.username, 'doomed_t');
+  assert.equal(gone.courses_deleted, 1);
+
+  assert.equal(await store.getUser(doomed.id), null, 'user row gone');
+  assert.equal(await store.verifyLogin('doomed_t', temp_password), null, 'login gone');
+  assert.equal(await store.getSessionUser(token), null, 'live session gone');
+  assert.equal(await store.adminGetCourse(cDoomed.id), null, 'course file gone');
+  assert.ok(await store.adminGetCourse(cKept.id), 'other user\'s course untouched');
+  assert.ok(await store.getUser(keeper.id), 'other user untouched');
+  await assert.rejects(store.deleteUser(doomed.id), /用户不存在/, 'second delete 404s');
+});
+
 test('sessions: bearer token resolves; sid list never leaks tokens; revoke works', async () => {
   const { user, temp_password } = await store.createUser({ username: 'teacher_b' });
   await store.verifyLogin('teacher_b', temp_password);

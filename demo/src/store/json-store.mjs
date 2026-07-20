@@ -371,6 +371,23 @@ export function createJsonStore(opts = {}) {
       });
     },
 
+    /** Whole-account erasure: user row, all sessions, and every course the
+     * user owns — child data must not outlive the account (non-negotiable 4).
+     * The audit trail stays: it records admin actions, not user content, and
+     * the delete itself must remain visible in it. */
+    async deleteUser(userId) {
+      return withLock(async () => {
+        const users = await readUsers();
+        const u = users.find((x) => x.id === userId);
+        if (!u) throw err(404, '用户不存在');
+        const courses = (await allCourses()).filter((c) => c.user_id === userId);
+        for (const c of courses) await unlink(coursePath(c.id)).catch(() => {});
+        await writeAtomic(sessionsFile, (await readSessions()).filter((s) => s.user_id !== userId));
+        await writeAtomic(usersFile, users.filter((x) => x.id !== userId));
+        return { username: u.username, courses_deleted: courses.length };
+      });
+    },
+
     // ================= sessions (SECURITY.md §2) =================
 
     async createSession(userId, userAgent) {

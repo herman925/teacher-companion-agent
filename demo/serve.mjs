@@ -655,6 +655,13 @@ const server = http.createServer(async (req, res) => {
           return json(400, { ok: false, message: '未知操作' });
         } catch (e) { return json(e.status ?? 500, { ok: false, message: e.message }); }
       }
+      if (seg[0] === 'users' && seg.length === 2 && req.method === 'DELETE') {
+        try {
+          const gone = await store.deleteUser(seg[1]);
+          await store.audit('console', 'delete_user', seg[1], gone);
+          return json(200, { ok: true, ...gone });
+        } catch (e) { return json(e.status ?? 500, { ok: false, message: e.message }); }
+      }
       if (seg[0] === 'audit' && req.method === 'GET') {
         return json(200, { ok: true, audit: await store.listAudit({ limit: 200 }) });
       }

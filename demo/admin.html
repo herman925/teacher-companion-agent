@@ -247,7 +247,7 @@
           <thead id="user-head"></thead>
           <tbody id="user-rows"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
         </table>
-        <p class="detail-hint" style="margin-top:8px">创建账号会生成一次性初始密码（只显示一次）；用户首次登录后必须改密码。停用会立刻踢下线并退出其所有设备。所有操作都会写入审计记录。</p>
+        <p class="detail-hint" style="margin-top:8px">创建账号会生成一次性初始密码（只显示一次）；用户首次登录后必须改密码。停用会立刻踢下线并退出其所有设备。删除会永久移除账号、其全部课程数据与登录记录（需点两次确认，不可恢复）。所有操作都会写入审计记录。</p>
       </div>
     </div>
   </div>
@@ -732,6 +732,19 @@
           const r = await userAction(u.id, { action: 'set_role', role: u.role === 'admin' ? 'teacher' : 'admin' });
           if (r.ok) loadUsers(); else banner(r.message || '操作失败');
         }));
+        const del = mkbtn('删除', async () => {
+          if (del.dataset.armed !== '1') {
+            del.dataset.armed = '1'; del.classList.add('confirming'); del.textContent = '连课程一起永久删除？';
+            setTimeout(() => { if (del.isConnected) { del.dataset.armed = ''; del.classList.remove('confirming'); del.textContent = '删除'; } }, 4000);
+            return;
+          }
+          const res = await af('/api/admin/users/' + u.id, { method: 'DELETE' });
+          const r = await res.json();
+          if (r.ok) { await loadUsers(); banner(`已删除账号 ${r.username}（含 ${r.courses_deleted} 个课程与全部登录记录）`); }
+          else banner(r.message || '删除失败');
+        });
+        del.classList.add('danger');
+        wrap.append(del);
         act.append(wrap);
         for (const col of visCols) {
           const cell = document.createElement('td');
