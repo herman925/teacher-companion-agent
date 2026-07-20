@@ -70,6 +70,8 @@ ssh ubuntu@43.136.113.129 "sudo nginx -t && sudo systemctl reload nginx"        
 
 Model API keys: edit `/home/app/platform/.env` (or `platform-dev/.env`), then `sudo systemctl restart platform` (or `platform-dev`). Keys may also be supplied per-request from the UI settings drawer instead.
 
+**Timeout ladder (keep the order, 2026-07-20).** The adapter aborts a vendor call at 600s; the public nginx (`/etc/nginx/sites-available/platform`) has `proxy_read_timeout 660s` — deliberately LONGER, so the abort is always the adapter's and the teacher gets a real error through the SSE stream instead of a proxy-severed dead connection. If either number changes, keep nginx above the adapter. (Both were 180s once; real glm-5.2 turns run 80–115s and blew past it under load.) With streaming turns (adapter `onDelta` heartbeat) the stream is never idle for long anyway.
+
 ## Inspecting demo data
 
 The demo persistence tier stores chat history as JSON files on each instance's disk (`<checkout>/demo/.data/courses/<id>.json`), one file per course, owned by the `app` service user — not in PostgreSQL yet ([DATABASE.md](DATABASE.md) §4). Two ways to look:

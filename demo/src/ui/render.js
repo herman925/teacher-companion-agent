@@ -113,9 +113,22 @@ export function el(tag, cls, text) {
 /**
  * Right-aligned teacher message (plain text, never HTML).
  * @param {string} text
+ * @param {{onRetry?: (text: string) => void}} [opts] onRetry adds the ↻ affordance:
+ *   it refills the composer with this text (edit-then-resend, never auto-send) —
+ *   deliberately NOT a history-rewriting regenerate (the message log is append-only
+ *   and every turn has applied state_delta; replacing turns needs an ADR).
  */
-export function renderTeacherMessage(text) {
-  return el('div', 'teacher-msg', text);
+export function renderTeacherMessage(text, opts = {}) {
+  const wrap = el('div', 'teacher-msg', text);
+  if (opts.onRetry) {
+    const btn = el('button', 'msg-retry', '↻');
+    btn.type = 'button';
+    btn.title = '放回输入框，改一改再发';
+    btn.setAttribute('aria-label', '把这条消息放回输入框重新发送');
+    btn.addEventListener('click', () => opts.onRetry(text));
+    wrap.append(btn);
+  }
+  return wrap;
 }
 
 /**
@@ -320,21 +333,24 @@ function findInTree(nodes, id) {
   return null;
 }
 
-/** Provenance detail block (DESIGN.md §5b): 依据 → 假设 → 教学依据 → 档案. */
+/** Provenance detail block (DESIGN.md §5b). Team feedback 2026-07-20: terse
+ * labels (依据/假设) read as jargon — the frame is now the teacher's own
+ * questions, and each row renders as a full sentence, not a fragment. */
 function renderRationale(rationale) {
   const box = el('div', 'bp-rationale');
   const row = (label, text) => {
     const r = el('div', 'bp-rationale-row');
     r.append(el('span', 'bp-rationale-label', label));
-    const v = el('span');
+    const v = el('span', 'bp-rationale-text');
     v.innerHTML = sanitizeInline(text);
     r.append(v);
     box.append(r);
   };
-  for (const h of rationale.heard ?? []) row('依据', `「${h.quote}」`);
-  if (rationale.assumed) row('假设', rationale.assumed);
-  if (rationale.pedagogy) row('教学依据', rationale.pedagogy);
-  if (rationale.profile_basis) row('来自档案', rationale.profile_basis);
+  for (const h of rationale.heard ?? []) row('你说过', `「${h.quote}」`);
+  if (rationale.assumed) row('我据此猜', rationale.assumed);
+  if (rationale.pedagogy) row('为什么这样安排', rationale.pedagogy);
+  if (rationale.profile_basis) row('来自你的档案', rationale.profile_basis);
+  if (rationale.adjust) row('不合适怎么调', rationale.adjust);
   return box;
 }
 
@@ -1092,17 +1108,24 @@ export function renderDebug(container, info) {
 
     const map = el('div', 'wf-map');
     const done = new Set(info.state.completed_nodes || []);
+    // Two light provenances, visually distinct: ⚙ = engine-verified (computed
+    // from blueprint absorption — cannot be faked by the model), ✓ = the model
+    // claimed it in completed_nodes. An honest map says which is which.
+    const engineLit = new Set(info.state.engine_lit_nodes || []);
     for (let stage = 0; stage <= 5; stage += 1) {
       const stageBox = el('div', 'wf-map-stage' + (info.state.stage === stage ? ' current' : ''));
       stageBox.append(el('div', 'wf-map-stage-title', STAGE_NAMES[stage]));
       for (const node of WF_NODES.filter((n) => n.stage === stage)) {
         const isDone = done.has(node.id);
+        const byEngine = engineLit.has(node.id);
         const prereqs = NODE_PREREQS[node.id] || [];
         const hint = !isDone && prereqs.length ? ` ←${prereqs.join(' ')}` : '';
-        stageBox.append(el('div', 'wf-map-node' + (isDone ? ' done' : ''), `${isDone ? '✓' : '·'} ${node.id} ${node.name}${hint}`));
+        const mark = byEngine ? '⚙' : isDone ? '✓' : '·';
+        stageBox.append(el('div', 'wf-map-node' + (isDone ? ' done' : '') + (byEngine ? ' engine' : ''), `${mark} ${node.id} ${node.name}${hint}`));
       }
       map.append(stageBox);
     }
+    map.append(el('div', 'wf-map-legend', '⚙ 引擎核验（由蓝图吸收自动点亮，模型无法伪造） · ✓ 模型自报 · ← 前置节点'));
     container.append(debugSection('工作流地图', map, { span: true }));
   }
 

@@ -176,12 +176,13 @@ test('stage gate: allows 0→1 once entry card + fit level exist', () => {
   assert.equal(stageGateError(s, 1), null);
 });
 
-test('stage gate: blocks 1→2 without evidence; allows with evidence + candidates', () => {
+test('stage gate 1→2: evidence is mandatory, a driving question is not (stage1-v1.0)', () => {
+  const bare = createInitialState('c1');
+  bare.stage = 1;
+  assert.ok(stageGateError(bare, 2), 'no children evidence → still blocked');
   const s = stateWithEvidence();
   s.stage = 1;
-  assert.ok(stageGateError(s, 2)); // no driving question yet
-  s.driving_question = { candidates: ['我们怎样让参观的人认识我们的龙舟？'] };
-  assert.equal(stageGateError(s, 2), null);
+  assert.equal(stageGateError(s, 2), null, 'evidence alone opens stage 2 — 核心驱动问题 is derived there, not required here');
 });
 
 test('applyDelta: strips illegal stage jump but applies the rest, logging violation', () => {
@@ -285,19 +286,25 @@ test('validateTurn: stage advisory is delta-aware both ways', () => {
 
 // ---------- engine: node prerequisite check (partial order, both directions) ----------
 
-test('node prereq: fires when WF08 is marked without WF07 in state or delta', () => {
+test('node prereq: fires when WF07 is marked without WF06 in state or delta', () => {
   const s = createInitialState('c1');
-  const { state, violations } = applyDelta(s, { completed_nodes: ['WF08'], theme_fit_level: 'short_activity' });
-  assert.ok(!state.completed_nodes.includes('WF08'), 'WF08 stripped');
+  const { state, violations } = applyDelta(s, { completed_nodes: ['WF07'], theme_fit_level: 'short_activity' });
+  assert.ok(!state.completed_nodes.includes('WF07'), 'WF07 stripped');
   assert.equal(state.theme_fit_level, 'short_activity', 'rest of the delta still applies');
-  assert.ok(violations.some((v) => v.kind === 'node_prerequisite' && v.action === 'strip' && v.detail.includes('WF07')));
+  assert.ok(violations.some((v) => v.kind === 'node_prerequisite' && v.action === 'strip' && v.detail.includes('WF06')));
 });
 
 test('node prereq: silent when the prerequisite arrives in the SAME delta (set semantics, any array order)', () => {
   const s = createInitialState('c1');
-  s.completed_nodes = ['WF06'];
-  const { state, violations } = applyDelta(s, { completed_nodes: ['WF08', 'WF07'] });
-  assert.ok(state.completed_nodes.includes('WF07') && state.completed_nodes.includes('WF08'));
+  const { state, violations } = applyDelta(s, { completed_nodes: ['WF07', 'WF06'] });
+  assert.ok(state.completed_nodes.includes('WF06') && state.completed_nodes.includes('WF07'));
+  assert.equal(violations.filter((v) => v.kind === 'node_prerequisite').length, 0);
+});
+
+test('node prereq: WF08 环境与计划 needs no question pool anymore (stage1-v1.0 re-bind)', () => {
+  const s = createInitialState('c1');
+  const { state, violations } = applyDelta(s, { completed_nodes: ['WF08'] });
+  assert.ok(state.completed_nodes.includes('WF08'), 'environment/plan work is not gated on WF07');
   assert.equal(violations.filter((v) => v.kind === 'node_prerequisite').length, 0);
 });
 
