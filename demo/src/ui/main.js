@@ -1158,6 +1158,12 @@ function capRow(pid, kind) {
   sw.disabled = disabled;
   sw.setAttribute('aria-label', `${name}（${DRAWER_META[pid]?.name ?? pid}）`);
   if (!disabled) {
+    // Prune detached twins here too, not only on toggle — every
+    // buildModelsPane() re-render otherwise grows the registry by a few
+    // dead nodes that nothing ever drops.
+    for (let i = capSwitches.length - 1; i >= 0; i -= 1) {
+      if (!capSwitches[i].el.isConnected) capSwitches.splice(i, 1);
+    }
     capSwitches.push({ pid, kind, el: sw });
     sw.addEventListener('change', () => {
       providerCaps = { ...providerCaps, [pid]: { ...(providerCaps[pid] ?? {}), [kind]: sw.checked } };
@@ -1575,6 +1581,10 @@ function rateRow(labelText, tone, filled) {
   const row = el('div', 'mcard-rate');
   row.append(el('span', 'mcard-rl', labelText));
   const dots = el('span', `mcard-dots ${tone}`);
+  // The dots are decorative <i> marks; the value lives on the container so a
+  // screen reader hears 「智能 4 / 5」 instead of nothing.
+  dots.setAttribute('role', 'img');
+  dots.setAttribute('aria-label', `${labelText} ${filled} / 5`);
   for (let i = 0; i < 5; i += 1) {
     const d = document.createElement('i');
     if (i < filled) d.className = 'f';
@@ -3025,6 +3035,9 @@ function boot() {
   logEvent('session', 'boot', {
     provider, dev_mode: devMode, transcript_entries: transcript.length,
     course_id: courseState?.course_id ?? null, stage: courseState?.stage ?? null,
+    // Full cst.providerCaps snapshot: the debug drawer / export otherwise
+    // sees only toggle deltas and can't reconstruct pre-session state.
+    provider_caps: providerCaps,
   });
   replayTranscript(); // instant render from the localStorage cache
   wireBlueprintPanel();

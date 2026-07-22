@@ -10,6 +10,13 @@ Latest session first. Keep entries short and factual; link instead of restating.
 - **Both directions proven**: reverting the engine line fails 3 tests (runtime-harness lifecycle, blueprint round-2, material_support walkthrough); full suite 179/179 with the fix; full gate green. Browser-verified on the mock 龙舟 flow: preset-pack delivery shows no awaiting note, the post-回传 round does.
 - Deployed later same session (`server dev` + `dev:main`), plus GitHub `origin`/`fork` both pushed. Umbrella-repo "divergence" resolved as a false alarm: `origin/main` = `chao0s/main` = the flat `git subtree split` export of `Hualong Platform/` (hashes matched); stale upstream tracking dropped, nothing merged.
 
+## 2026-07-22 (evening) — audit stragglers closed: [18] caps boot snapshot, [13] rating ARIA, [16] switch-registry leak
+
+- **[18]** The `boot` session-log event now carries the full `cst.providerCaps` snapshot (`provider_caps`), so the debug drawer / 导出 JSON can reconstruct pre-session toggle state instead of seeing deltas only. Export-verified: seeded `{glm:{thinking,websearch}}` appears in the boot entry.
+- **[13]** 参考评级 dot rows carry `role="img"` + `aria-label`（「智能 4 / 5」）in both panels via the shared `rateRow`.
+- **[16]** `capSwitches` prunes detached entries on every push, not only on toggle — `buildModelsPane()` re-renders no longer accrete dead nodes.
+- `qwen` stays `enabled: false` — deliberate evaluation flag (PRD user story 24), not drift; its icon shipping unused is accepted.
+
 ## 2026-07-22 (later still) — [1] 先跳过 no longer discards staged answers; [27][28][22] doc drift trimmed
 
 - **[1]** Global 先跳过 link now routes through the composer when anything is staged: locked answers/批注 + 「先跳过」 leave as ONE packed message instead of orphaning the staged batch ([demo/src/ui/main.js](demo/src/ui/main.js)). Per-card 这题先跳过 keeps the typed draft in the shared answer state, so 恢复作答 restores it ([demo/src/ui/render.js](demo/src/ui/render.js)). Browser-verified on the mock 龙舟 flow: skip→restore keeps the draft; 先跳过 with a staged skip sends 【问题卡回复】(1 跳过, others 暂未回答) + 先跳过, tray consumed.
