@@ -17,7 +17,7 @@ Two harnesses live here — do not confuse them:
 2. **Strictness points at the model, not the teacher.** No teacher-facing form UI for state fields; intake is conversational (dynamic screening). If a design forces the teacher to perform the state machine, redesign it.
 3. **Culture stays backstage.** Cultural threads are teacher-facing hints translated into child-actionable micro-tasks. Adult slogans as child goals (传承精神、文化责任…) must never appear in child-facing output.
 4. **Child-related data is sensitive.** Teachers upload child observations/photos: mainland data residency, minimal retention, scoped access, no third-party model sees child photos without an explicit compliance decision (recorded as an ADR).
-5. **Model keys never enter the repo.** Demo keys live in localStorage; production keys live in cloud functions. Any committed secret fails review.
+5. **Model keys never enter the repo.** On backends with auth, teacher keys live in the per-account encrypted vault (write-only, [ADR-0005](docs/adr/0005-per-account-key-vault-and-rate-limits.md)); the no-backend static tier keeps localStorage; platform keys live in the server `.env` / cloud functions. Any committed secret fails review.
 
 ## Working rules
 

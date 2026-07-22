@@ -221,6 +221,7 @@
     <span class="spacer"></span>
     <button id="tab-data" class="tab on">数据</button>
     <button id="tab-users" class="tab">用户</button>
+    <button id="tab-limits" class="tab">限流</button>
   </div>
 
   <div id="banner" class="banner" hidden></div>
@@ -280,6 +281,25 @@
           <tbody id="user-rows"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
         </table>
         <p class="detail-hint" style="margin-top:8px">创建账号会生成一次性初始密码（只显示一次）；用户首次登录后必须改密码。停用会立刻踢下线并退出其所有设备。删除会永久移除账号、其全部课程数据与登录记录（需点两次确认，不可恢复）。所有操作都会写入审计记录。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 限流 tab: live rate-limit counters + manual relief (spec 2026-07-22 §6) -->
+  <div id="view-limits" hidden>
+    <div class="bar">
+      <span class="note">登录失败、改密码、对话配额与密钥保存的实时计数。解除会写入审计记录。</span>
+      <span class="spacer"></span>
+      <button id="limits-refresh">刷新</button>
+      <button id="limits-clear-all" class="danger">全部解除</button>
+    </div>
+    <div class="wrap">
+      <div class="list" style="flex:1 1 100%">
+        <table>
+          <thead><tr><th>类型</th><th>对象</th><th>次数 / 上限</th><th>状态</th><th>解锁时间</th><th></th></tr></thead>
+          <tbody id="limit-rows"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+        </table>
+        <p class="detail-hint" style="margin-top:8px">计数按服务器时钟滑动窗口统计并持久保存（重启不清零）。「解除」立刻放行对应的用户名/IP/账号；空表代表当前没有任何计数。</p>
       </div>
     </div>
   </div>
@@ -668,7 +688,11 @@
       $('#gate-token').focus();
     }
 
-    $('#refresh').addEventListener('click', () => { $('#view-users').hidden ? loadData() : loadUsers(); });
+    $('#refresh').addEventListener('click', () => {
+      if (!$('#view-users').hidden) loadUsers();
+      else if (!$('#view-limits').hidden) loadLimits();
+      else loadData();
+    });
     $('#export').addEventListener('click', exportData);
     armBulk($('#del-selected'), () => Array.from(selected));
     armBulk($('#del-all'), () => visibleRows().map((c) => c.id));
@@ -685,18 +709,82 @@
     });
     buildColMenu($('#data-colmenu'), DATA_COLS, dataPrefs, renderData);
 
-    // ---- tabs: 数据 / 用户 ----
+    // ---- tabs: 数据 / 用户 / 限流 ----
     function showView(which) {
       $('#view-data').hidden = which !== 'data';
       $('#data-actions').hidden = which !== 'data';
       $('#data-filters').hidden = which !== 'data';
       $('#view-users').hidden = which !== 'users';
+      $('#view-limits').hidden = which !== 'limits';
       $('#tab-data').classList.toggle('on', which === 'data');
       $('#tab-users').classList.toggle('on', which === 'users');
+      $('#tab-limits').classList.toggle('on', which === 'limits');
       if (which === 'users') loadUsers();
+      if (which === 'limits') loadLimits();
     }
     $('#tab-data').addEventListener('click', () => showView('data'));
     $('#tab-users').addEventListener('click', () => showView('users'));
+    $('#tab-limits').addEventListener('click', () => showView('limits'));
+
+    // ---- 限流 tab: view + relieve (audited server-side) ----
+    const LIMIT_KIND = {
+      login_user: '登录失败 · 用户名', login_ip: '登录失败 · IP', login_device: '登录失败 · 设备',
+      login_global: '登录失败 · 全站', admin_ip: '管理台口令 · IP', password_user: '改密码 · 账号',
+      turns_user: '对话 · 账号/小时', turns_user_day: '对话 · 账号/天',
+      turns_ip: '对话 · IP/小时', turns_ip_day: '对话 · IP/天', keysave_user: '密钥保存 · 账号',
+    };
+    async function loadLimits() {
+      const tbody = $('#limit-rows');
+      try {
+        const res = await af('/api/admin/rate-limits');
+        const data = await res.json();
+        if (!data.ok) { banner(data.message || '读取失败'); return; }
+        banner('', false);
+        tbody.replaceChildren();
+        if (!data.limits.length) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = '<td colspan="6" class="empty">当前没有任何计数。</td>';
+          tbody.append(tr);
+          return;
+        }
+        for (const row of data.limits) {
+          const tr = document.createElement('tr');
+          const cell = (t) => { const td = document.createElement('td'); td.textContent = t; return td; };
+          tr.append(
+            cell(LIMIT_KIND[row.kind] || row.kind),
+            cell(row.key),
+            cell(`${row.count} / ${row.limit}`),
+            cell(row.limited ? '已锁' : '计数中'),
+            cell(row.unlock_at ? fmt(row.unlock_at) : '—'),
+          );
+          if (row.limited) tr.className = 'confirming';
+          const act = document.createElement('td');
+          const btn = document.createElement('button');
+          btn.textContent = '解除';
+          btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            await af('/api/admin/rate-limits/' + encodeURIComponent(row.id), { method: 'DELETE' });
+            loadLimits();
+          });
+          act.append(btn);
+          tr.append(act);
+          tbody.append(tr);
+        }
+      } catch { banner('限流数据读取失败'); }
+    }
+    $('#limits-refresh').addEventListener('click', loadLimits);
+    $('#limits-clear-all').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      // Two-step inline confirm, same idiom as deletion elsewhere on this page.
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1'; btn.classList.add('confirming'); btn.textContent = '确定全部解除？';
+        setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ''; btn.classList.remove('confirming'); btn.textContent = '全部解除'; } }, 3000);
+        return;
+      }
+      btn.dataset.armed = ''; btn.classList.remove('confirming'); btn.textContent = '全部解除';
+      await af('/api/admin/rate-limits', { method: 'DELETE' });
+      loadLimits();
+    });
 
     // ---- 用户 tab (SECURITY.md §4): create/reset/disable/role, all audited ----
     function tempBox(username, temp) {

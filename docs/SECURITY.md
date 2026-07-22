@@ -16,7 +16,8 @@
 | App auth | Server-side sessions (opaque cookie) + scrypt passwords | this build |
 | Authorization | Roles admin/teacher/visitor; every course query scoped by `user_id` | this build |
 | Admin console | Two doors: tunnel = machine auth (no password) / public = password sent as SHA-256 | live |
-| Secrets custody | Model keys + admin password in server `.env` (chmod 600) or browser localStorage — never the repo | live |
+| Secrets custody | Platform keys + admin password in server `.env` (chmod 600); teacher BYOK keys in the per-account encrypted vault (§6) — never the repo | live |
+| Rate limiting | Persistent sliding-window gate (§8): login/admin/password fails, per-user turn quotas; admin relief in `/admin` 限流 | live |
 | Auditability | `admin_audit` (every admin action) + append-only messages/snapshots/violations | this build |
 | Content compliance | Display-name filter (starter list) + vendor-side moderation on all LLM I/O | this build / vendor |
 
@@ -65,24 +66,40 @@ User-visible names in a mainland deployment are a compliance surface, not a cosm
 - Charset and length: 2–20 chars, CJK/latin/digits/`_-·` only (blocks zero-width and homoglyph tricks).
 - Filtering: checked server-side on every write against a bundled starter wordlist (CN + EN profanity). **The starter list is not a compliance guarantee** — production must use a maintained lexicon or Tencent 内容安全 text moderation (same API family already noted in ARCHITECTURE.md §6), because the politically-sensitive vocabulary changes and should not be hand-maintained in this repo.
 
-## 6. Model API keys — custody, exactly
+## 6. Model API keys — custody, exactly (revised 2026-07-22, ADR-0005)
 
-- **Teacher-supplied keys (BYOK) are never stored server-side**, dev or public. The key lives in that browser's localStorage, travels inside each `/api/chat` request, is used for the single vendor call, and is never written to the store or the logs (the session-log redacts key-shaped values at append time). Nothing to encrypt because nothing persists. Caveats: localStorage is plaintext on the teacher's own machine (client-side encryption would be theater — the page must be able to read it), and until TLS lands the per-request transit is bare HTTP like everything else.
-- **Platform keys** (the 官方服务 path) live in the VM's `.env` files, chmod 600, readable only by the service user — permission-protected, not encrypted at rest. Encrypting them at rest on the same box that must read them adds no real barrier; the meaningful upgrades are disk encryption at the cloud layer and a secrets manager, both deferred until past the pilot.
-- Rejected alternative (recorded in DATABASE.md §2): storing teacher keys server-side "for convenience" — an encryption-at-rest liability for near-zero benefit.
+- **Teacher-supplied keys (BYOK) live in a per-account server-side vault** when the backend runs with auth + `KEYS_SECRET` (dev and public pilot). Saved once via `PUT /api/me/keys/:provider`, encrypted AES-256-GCM at rest (`.data/auth/keys.json`, ciphertext only), decrypted server-side at provider-call time. **Write-only**: no endpoint returns a key value — the client sees 已配置/未配置 flags. Admin console, exports and session logs carry flags at most (regression-tested by string-scanning every export for a seeded key).
+- **Why the reversal** (the old rule said "never stored server-side"): localStorage is browser-wide, not account-wide — on a shared machine every account saw and used the previous person's keys, and any XSS read them wholesale. Cross-account leakage on real shared devices outweighed the encryption-at-rest liability. The old caveat stands where it still applies: the **no-backend static/offline tier keeps localStorage BYOK**, with an in-UI note that keys stay in that browser.
+- **Migration**: on login with leftover localStorage keys the UI asks once — 保存到你的账号 or 仅清除 — and purges the browser copy either way. Never silently imported (that would gift user A's keys to whoever logs in next).
+- **Blast radius, honestly**: `KEYS_SECRET` sits in the same VM `.env` as everything else, so a box compromise exposes secret + ciphertext together — the same radius as env-seeded platform keys. Rotation = change `KEYS_SECRET`; rows that stop decrypting read as absent and teachers re-enter. The meaningful upgrades remain cloud-layer disk encryption and a secrets manager, deferred past the pilot.
+- **Platform keys** (the 官方服务 path) are unchanged: VM `.env`, chmod 600, permission-protected.
 
 ## 7. Data protection (recap of stricter rules that live elsewhere)
 
 - Child observations/photos are sensitive PI: mainland residency, minimal retention, COS with signed URLs, tombstoned deletion — DATABASE.md §5, ARCHITECTURE.md §6.
 - Messages/snapshots are append-only (fabrication resistance); whole-course deletion is data-subject erasure and is allowed — DATABASE.md §4.
-- Model keys: server `.env` or the teacher's own browser; never the repo, never the DB.
+- Model keys: server `.env` (platform) or the per-account encrypted vault (teacher BYOK, §6); plaintext keys never in the repo, the DB, exports, or logs.
 
-## 8. Known gaps and planned work
+## 8. Rate limiting (built 2026-07-22, ADR-0005)
+
+Persistent sliding-window counters (`demo/src/rate-gate.mjs`), server clock only, stored in `.data/auth/rate-limits.json` — restarts do not reset windows. Nothing client-supplied is trusted as a counter value.
+
+| Surface | Keying | Default |
+|---|---|---|
+| Login failures | per-username (success resets) · per-IP · anonymous device cookie | 5 · 10 · 10 / 15min |
+| Login spray (circuit breaker) | global failures/min → login answers 429 briefly | 60/min |
+| Admin-token failures | per-IP (compare is `timingSafeEqual`, was plain `===`) | 5 / 15min |
+| 改密码 old-password failures | per-user | 5 / 15min |
+| Model turns (spend protection) | per-user (per-IP when anonymous); mock exempt | 30/h + 200/day |
+| Key saves | per-user | 20/h |
+
+Defaults are env-overridable (`RATE_*`). Over-limit answers `429` + `retry-after` with one generic message — no username-exists oracle. The UI renders these inline (login gate countdown, chat error card, key-field note), never as raw error pages. Admins see and clear counters in `/admin` → 限流 (every unlock audited). Honest limits: single-process, keyed on spoofable signals below the username level; the real defenses remain scrypt cost, strong temp passwords, and the per-username counter (IP rotation does not help a targeted attack). Browsers cannot read HWID/MAC, and fingerprinting was rejected as both spoofable and a PIPL 个人信息 problem — the anonymous device cookie is the deliberate middle ground.
+
+## 9. Known gaps and planned work
 
 | Gap | Plan |
 |---|---|
 | No TLS (备案 pending) | Everything above assumes replayable transport; add HTTPS + `Secure` cookies + HSTS the day the domain is filed. Until then: test data only. |
-| No rate limiting / lockout on login | Add simple per-IP + per-account backoff before dev→main merge. |
 | CSRF | `SameSite=Lax` + JSON-only bodies mitigate; add an origin check on state-changing routes with the merge. |
 | Admin console auth = token, not role | Console gets session-based admin login when v1 auth replaces the demo tier; token door then retires. |
 | Password path itself | Planned end-state: WeChat + authorized-machine only; passwords remain for admin-provisioned accounts as long as needed. |

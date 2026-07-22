@@ -20,6 +20,17 @@ Source: a server-side export of a real pilot course (演示模式 throughout —
 - **Both directions proven**: reverting the engine line fails 3 tests (runtime-harness lifecycle, blueprint round-2, material_support walkthrough); full suite 179/179 with the fix; full gate green. Browser-verified on the mock 龙舟 flow: preset-pack delivery shows no awaiting note, the post-回传 round does.
 - Deployed later same session (`server dev` + `dev:main`), plus GitHub `origin`/`fork` both pushed. Umbrella-repo "divergence" resolved as a false alarm: `origin/main` = `chao0s/main` = the flat `git subtree split` export of `Hualong Platform/` (hashes matched); stale upstream tracking dropped, nothing merged.
 
+## 2026-07-22 (night) — SECURITY: per-account key vault + persistent rate limiting (ADR-0005)
+
+Herman-reported cross-account key leak fixed end-to-end (spec: docs/superpowers/specs/2026-07-22-key-vault-and-rate-limits-design.md).
+
+- **Vault**: BYOK keys now save write-only to a per-account AES-256-GCM vault (`KEYS_SECRET` in the VM .env; `.data/auth/keys.json` ciphertext only). `PUT /api/me/keys/:provider` / `GET /api/me/keys` (flags only — no endpoint returns a value). Turn precedence account > env > body on both turn endpoints + /api/models. Client: write-only key fields with explicit 删除 button, badges from flags, `keys` dropped from request bodies, login-time migration prompt（保存到账号 / 仅清除，两者都清浏览器）. Static/offline tier keeps localStorage with an honest note. Vault off (no KEYS_SECRET) = loud 503 on save, legacy path intact.
+- **Rate gate** (`src/rate-gate.mjs`, persisted to `.data/auth/rate-limits.json`, server clock, survives restarts): login fails per-username(5)/IP(10)/device-cookie(10)/15min + global 60/min circuit breaker; admin-token fails per-IP (compare now `timingSafeEqual`); 改密码 fails per-user; turns 30/h+200/day per-user (per-IP anonymous, mock exempt); key saves 20/h. Env-overridable (`RATE_*`). 429 + retry_after, generic message. `/admin` grows a 限流 tab (view/解除/全部解除, audited). Client renders inline: login-gate live countdown + disabled button, chat error card with minutes, key-field note.
+- **Found while building**: unauthenticated `/api/chat` could burn env keys anonymously — now per-IP quota-gated.
+- **Verified**: 200/200 demo tests (new: key-vault unit, rate-gate unit incl. simulated restart, endpoint isolation + export string-scan + lockout/unlock). Browser (two accounts, one browser): A migrates localStorage key to account (browser copy gone), sees 已配置; B sees 未配置/empty flags; 6 bad logins → inline 「尝试次数过多——14 分 57 秒后可再试」+ disabled button; admin 限流 shows all counter rows, 解除 restores login to 200 immediately.
+- Docs: ADR-0005 (custody reversal recorded honestly), SECURITY.md §6 rewritten + new §8, DATABASE.md §2, AGENTS.md non-negotiable 5, serve.mjs/main.js header comments.
+- **Deploy note: set `KEYS_SECRET` (≥16 chars, distinct per instance) in both VM .env files and restart, or the vault stays off.**
+
 ## 2026-07-22 (evening) — audit stragglers closed: [18] caps boot snapshot, [13] rating ARIA, [16] switch-registry leak
 
 - **[18]** The `boot` session-log event now carries the full `cst.providerCaps` snapshot (`provider_caps`), so the debug drawer / 导出 JSON can reconstruct pre-session toggle state instead of seeing deltas only. Export-verified: seeded `{glm:{thinking,websearch}}` appears in the boot entry.

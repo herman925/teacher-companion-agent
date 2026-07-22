@@ -120,7 +120,7 @@ Chat history is not a storage problem — photos are, which is why they live in 
 
 ### What we deliberately do NOT store
 
-- **Teachers' own model API keys.** Production model: platform-seeded keys in server env, platform pays for tokens, per-teacher spend tracked via `messages.usage`. A teacher-supplied key (dev/testing) stays in that browser's localStorage and travels per-request, exactly as today — it never lands in a table. Storing vendor keys server-side would add an encryption-at-rest liability for near-zero benefit; if a real need ever appears, that is its own ADR.
+- **Teachers' own model API keys.** Production model: platform-seeded keys in server env, platform pays for tokens, per-teacher spend tracked via `messages.usage`. A teacher-supplied key is stored in the **per-account encrypted vault** (AES-256-GCM under `KEYS_SECRET`; write-only, flags-only reads) — the "never server-side" position was reversed by [ADR-0005](adr/0005-per-account-key-vault-and-rate-limits.md) after the shared-browser cross-account leak proved worse than the encryption-at-rest liability. Only the no-backend static tier still keeps keys in localStorage.
 - **Secrets of any kind in `users.settings`** — prefs only; the API layer must reject writes containing key-shaped values (same redaction lexicon as the session-log panel).
 
 ### 2b. Blueprint persistence (Phase-3 design; ADR-0003)

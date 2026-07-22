@@ -5,9 +5,10 @@
 // harness lives — the same core modules a CloudBase function will import later.
 //
 // Usage:  node demo/serve.mjs [--port 8787]
-// Keys:   entered in the UI per session (sent per-request, held only in memory),
-//         or seeded via env — see ENV_KEYS below (MINIMAX_API_KEY, ZAI_API_KEY,
-//         GLM_API_KEY, OPENROUTER_API_KEY, FREEMODEL_API_KEY, KILO_API_KEY, …).
+// Keys:   per-account encrypted vault when KEYS_SECRET is set (ADR-0005;
+//         write-only via PUT /api/me/keys/:provider, injected at call time),
+//         env-seeded platform keys (ENV_KEYS below), or per-request body keys
+//         from the no-auth offline tier. Precedence: account > env > body.
 
 import http from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';

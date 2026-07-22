@@ -1,8 +1,10 @@
 // main.js — app logic for the 小小探索家 demo chat (JSDoc-typed ESM, no build
 // step, ADR-0001). Talks to demo/serve.mjs over the /api/chat SSE protocol.
-// State custody: course_state + transcript + provider choice + API keys live
-// in localStorage; keys ('cst.keys') never leave the machine except in the
-// /api/chat request body to the local demo server.
+// State custody: course_state + transcript + provider choice live in
+// localStorage. API keys: with a signed-in user on a vault-enabled backend
+// (health.key_vault) they are WRITE-ONLY to the per-account server vault
+// (ADR-0005) and never stored in this browser; only the no-backend
+// static/offline tier keeps keys in localStorage ('cst.keys').
 
 import { createInitialState, STAGE_NAMES } from '../engine.mjs';
 import {
@@ -71,6 +73,46 @@ let courseState = load(LS.state, null) || createInitialState(`course-${Date.now(
 let transcript = load(LS.transcript, []);
 let provider = load(LS.provider, 'mock');
 let apiKeys = load(LS.keys, {});
+
+// ---- per-account key vault (spec 2026-07-22): when the backend advertises
+// key_vault and a user is signed in, keys become WRITE-ONLY to the server —
+// saved once, stored encrypted per-account, never readable back (flags only).
+// localStorage keys are retired for this browser via the migration prompt.
+let keyVaultOn = false;   // /api/health key_vault
+let serverKeyFlags = {};  // { provider: true } — configured flags, never values
+
+const serverKeyMode = () => Boolean(keyVaultOn && backendOnline && me);
+
+async function loadServerKeyFlags() {
+  if (!serverKeyMode()) { serverKeyFlags = {}; return; }
+  try {
+    const res = await fetch(apiUrl('/api/me/keys'));
+    const data = res.ok ? await res.json() : null;
+    serverKeyFlags = data?.keys ?? {};
+  } catch { serverKeyFlags = {}; }
+}
+
+/** PUT one key to the account vault. Reports via note(); returns success. */
+async function saveServerKey(pid, value, note) {
+  try {
+    const res = await fetch(apiUrl(`/api/me/keys/${pid}`), {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key: value }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 429) {
+      note(`保存太频繁，请约 ${Math.max(1, Math.ceil((data.retry_after ?? 60) / 60))} 分钟后再试`);
+      return false;
+    }
+    if (!res.ok || !data.ok) { note(data.message || '保存失败，稍后再试'); return false; }
+    if (data.configured) serverKeyFlags = { ...serverKeyFlags, [pid]: true };
+    else { const { [pid]: gone, ...rest } = serverKeyFlags; serverKeyFlags = rest; }
+    note(data.configured ? '已保存到你的账号（密钥不会再显示）' : '已从账号删除', true);
+    logEvent('session', 'server_key_save', { provider: pid, configured: Boolean(data.configured) });
+    return true;
+  } catch { note('网络不通，稍后再试'); return false; }
+}
 /** Chosen model per provider id; absent = use the provider default. */
 let modelChoices = load(LS.models, {});
 /** OpenAI-compatible custom endpoint config. */
@@ -332,6 +374,7 @@ function providerInfo(id) {
  * both the drawer badge and which cards the 模型与服务 picker shows. */
 function isConfigured(id) {
   if (id === 'custom') return Boolean(customCfg.baseURL);
+  if (serverKeyMode()) return Boolean(serverKeyFlags[id] || providerInfo(id)?.hasEnvKey);
   return Boolean(apiKeys[id] || providerInfo(id)?.hasEnvKey);
 }
 
@@ -708,14 +751,15 @@ function chatRequestBody(text) {
     history: wireHistory(),
     message: text,
     provider,
-    keys: { ...apiKeys },
+    // Vault mode: the server injects account keys itself — nothing rides the wire.
+    keys: serverKeyMode() ? {} : { ...apiKeys },
   };
   const prof = profileForRequest();
   if (prof) body.profile = prof;
   if (devMode) body.debug = true;
   if (provider === 'custom') {
     body.custom = { baseURL: customCfg.baseURL, model: customCfg.model, label: customCfg.label || undefined };
-    if (customCfg.key) body.keys.custom = customCfg.key;
+    if (customCfg.key && !serverKeyMode()) body.keys.custom = customCfg.key;
   } else {
     const chosen = modelChoices[provider];
     if (chosen && chosen !== (providerInfo(provider)?.defaultModel ?? '')) body.model = chosen;
@@ -771,7 +815,12 @@ async function send(message, opts = {}) {
     }
     else if (name === 'error') {
       logEvent('error', 'turn_error', { message: data.message ?? '', kind: data.kind ?? '', chain: data.chain ?? [] });
-      showError(data.message || '这一轮没有走通。', data.chain);
+      let msg = data.message || '这一轮没有走通。';
+      // Quota refusal (spec 2026-07-22 §6): say when, in the same error card.
+      if (data.kind === 'rate_limited' && data.retry_after) {
+        msg += `（约 ${Math.max(1, Math.ceil(data.retry_after / 60))} 分钟后可再试）`;
+      }
+      showError(msg, data.chain);
     }
   };
   const simulate = async (label) => {
@@ -1193,10 +1242,24 @@ function providerSection(info) {
     if (now !== configured) { configured = now; buildModelsPane(); }
   };
 
-  const { field: keyField } = settingsField(
+  const vaultMode = serverKeyMode();
+  const keyNote = el('div', 'inline-error key-note');
+  keyNote.hidden = true;
+  const note = (msg, ok = false) => {
+    keyNote.textContent = msg;
+    keyNote.classList.toggle('ok-note', Boolean(ok));
+    keyNote.hidden = !msg;
+  };
+  const { field: keyField, input: keyInput } = settingsField(
     'API 密钥',
     `key-${info.id}`,
-    {
+    vaultMode ? {
+      // Write-only vault field: never pre-filled, never readable back.
+      type: 'password',
+      hint: '密钥保存在你的账号里，保存后不再显示',
+      placeholder: serverKeyFlags[info.id] ? '已保存——输入新密钥可替换' : '在这里粘贴密钥，回车保存',
+      value: '',
+    } : {
       type: 'password',
       hint: info.hasEnvKey ? '服务器已配密钥' : '',
       placeholder: info.hasEnvKey ? '可留空——使用服务器密钥' : '在这里粘贴密钥',
@@ -1211,6 +1274,29 @@ function providerSection(info) {
     },
   );
   details.append(keyField);
+  if (vaultMode) {
+    const submitKey = async (value) => {
+      const ok = await saveServerKey(info.id, value, note);
+      if (ok) {
+        keyInput.value = '';
+        keyInput.placeholder = serverKeyFlags[info.id] ? '已保存——输入新密钥可替换' : '在这里粘贴密钥，回车保存';
+        removeBtn.hidden = !serverKeyFlags[info.id];
+        paintBadge(badge, info.id);
+        refreshPicker();
+      }
+    };
+    keyInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && keyInput.value.trim()) { e.preventDefault(); submitKey(keyInput.value.trim()); }
+    });
+    keyInput.addEventListener('blur', () => { if (keyInput.value.trim()) submitKey(keyInput.value.trim()); });
+    // Deletion is EXPLICIT — a stray empty blur must never wipe a saved key.
+    const removeBtn = el('button', 'text-btn danger key-remove', '从账号删除此密钥');
+    removeBtn.type = 'button';
+    removeBtn.hidden = !serverKeyFlags[info.id];
+    removeBtn.addEventListener('click', () => submitKey(''));
+    details.append(removeBtn);
+  }
+  details.append(keyNote);
 
   const rates = ratesBlock(() => modelChoices[info.id] ?? info.defaultModel ?? '');
 
@@ -1224,7 +1310,9 @@ function providerSection(info) {
       rates.paint();
       if (isConfigured(info.id)) buildModelsPane(); // the card names the model
     },
-    modelsBody: () => ({ provider: info.id, key: apiKeys[info.id] || undefined }),
+    // Vault mode: a typed-but-unsaved key still works for the fetch; the
+    // server falls back to the account vault, then env, when absent.
+    modelsBody: () => ({ provider: info.id, key: (serverKeyMode() ? keyInput.value.trim() : apiKeys[info.id]) || undefined }),
   }));
 
   details.append(rates.node);
@@ -1266,11 +1354,42 @@ function customSection() {
     if (now !== configured) { configured = now; buildModelsPane(); }
   };
 
+  const customVault = serverKeyMode();
   const fields = [
     ['baseURL', '接口地址（baseURL）', 'text', '如 https://api.example.com/v1'],
-    ['key', 'API 密钥', 'password', '在这里粘贴密钥'],
+    // Vault mode stores the custom key per-account like every other provider.
+    ...(customVault ? [] : [['key', 'API 密钥', 'password', '在这里粘贴密钥']]),
     ['label', '名称（可选）', 'text', '显示在调试信息里'],
   ];
+  if (customVault) {
+    const keyNote = el('div', 'inline-error key-note');
+    keyNote.hidden = true;
+    const note = (msg, ok = false) => {
+      keyNote.textContent = msg;
+      keyNote.classList.toggle('ok-note', Boolean(ok));
+      keyNote.hidden = !msg;
+    };
+    const { field, input } = settingsField('API 密钥', 'custom-key', {
+      type: 'password',
+      hint: '密钥保存在你的账号里，保存后不再显示',
+      placeholder: serverKeyFlags.custom ? '已保存——输入新密钥可替换' : '在这里粘贴密钥，回车保存',
+      value: '',
+    });
+    const submitKey = async (value) => {
+      const ok = await saveServerKey('custom', value, note);
+      if (ok) {
+        input.value = '';
+        input.placeholder = serverKeyFlags.custom ? '已保存——输入新密钥可替换' : '在这里粘贴密钥，回车保存';
+        paintBadge(badge, 'custom');
+        refreshPicker();
+      }
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && input.value.trim()) { e.preventDefault(); submitKey(input.value.trim()); }
+    });
+    input.addEventListener('blur', () => { if (input.value.trim()) submitKey(input.value.trim()); });
+    details.append(field, keyNote);
+  }
   for (const [prop, labelText, type, placeholder] of fields) {
     const { field } = settingsField(labelText, `custom-${prop}`, {
       type,
@@ -1819,6 +1938,7 @@ async function initProviders() {
       persistent = Boolean(health.persistence);
       authRequired = Boolean(health.auth);
       backendChannel = health.channel === 'public' ? 'public' : 'dev';
+      keyVaultOn = Boolean(health.key_vault);
       backendOnline = true;
     }
   } catch { /* offline from the API is fine — 演示模式 still works client-side */ }
@@ -2633,15 +2753,98 @@ async function performLogin(username, password) {
     body: JSON.stringify({ username, password }),
   });
   const data = await res.json();
+  if (res.status === 429) {
+    const retryAfter = Math.max(1, Number(data.retry_after) || 60);
+    return {
+      ok: false, retryAfter,
+      message: `尝试次数过多，请约 ${Math.max(1, Math.ceil(retryAfter / 60))} 分钟后再试`,
+    };
+  }
   if (!data.ok) return { ok: false, message: data.message || '登录失败' };
   me = data.user;
   logEvent('session', 'login', { user: me.username });
   if (me.profile) { profile = { ...profile, ...me.profile }; save(LS.profile, profile); }
+  await loadServerKeyFlags();
   buildProviderSections();
   applyDevInstruments(); // an admin logging in on public gains the spanner
   await enablePersistence();
   hideLoginGate();
+  offerKeyMigration();
   return { ok: true };
+}
+
+// ---- localStorage-key migration (spec 2026-07-22: ask once, then purge).
+// Never silently import — on a shared machine that would gift the previous
+// person's keys to whoever logs in next, the exact leak this fixes.
+function offerKeyMigration() {
+  const localCount = Object.keys(apiKeys).length + (customCfg.key ? 1 : 0);
+  if (!serverKeyMode() || !localCount || document.querySelector('.key-migrate')) return;
+  const wrap = el('div', 'key-migrate');
+  const card = el('div', 'key-migrate-card');
+  card.append(el('h3', '', '此浏览器里存有模型密钥'));
+  card.append(el('p', '', `发现 ${localCount} 个保存在本浏览器的 API 密钥。为避免同一台电脑上的其他账号看到或使用它们，密钥现在只保存在你的账号里。这些旧密钥要怎么处理？`));
+  const purgeLocal = () => {
+    apiKeys = {}; saveKeys();
+    if (customCfg.key) { delete customCfg.key; saveCustom(); }
+    buildProviderSections();
+  };
+  const actions = el('div', 'key-migrate-actions');
+  const keep = el('button', 'text-btn', '保存到我的账号');
+  const drop = el('button', 'text-btn danger', '仅清除');
+  keep.type = drop.type = 'button';
+  keep.addEventListener('click', async () => {
+    keep.disabled = drop.disabled = true;
+    keep.textContent = '保存中…';
+    const entries = [...Object.entries(apiKeys), ...(customCfg.key ? [['custom', customCfg.key]] : [])];
+    for (const [pid, v] of entries) {
+      try {
+        await fetch(apiUrl(`/api/me/keys/${pid}`), {
+          method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: v }),
+        });
+      } catch { /* one failed save must not strand the rest */ }
+    }
+    await loadServerKeyFlags();
+    purgeLocal();
+    logEvent('session', 'key_migration', { action: 'saved', count: entries.length });
+    wrap.remove();
+  });
+  drop.addEventListener('click', () => {
+    purgeLocal();
+    logEvent('session', 'key_migration', { action: 'cleared', count: localCount });
+    wrap.remove();
+  });
+  actions.append(keep, drop);
+  card.append(actions);
+  card.append(el('p', 'settings-note', '两种选择都会把密钥从此浏览器移除。'));
+  wrap.append(card);
+  document.body.append(wrap);
+}
+
+// Live lockout countdown on the login gate (spec 2026-07-22 §6): inline brick
+// message, button disabled until the window opens again — no raw error pages.
+let gateCountdownTimer = null;
+function startGateCountdown(seconds) {
+  clearInterval(gateCountdownTimer);
+  const btn = $('#gate-login');
+  const msg = $('#gate-msg');
+  let left = Math.max(1, Math.round(seconds));
+  const paint = () => {
+    const m = Math.floor(left / 60);
+    const s = left % 60;
+    msg.textContent = `尝试次数过多——${m ? `${m} 分 ` : ''}${s} 秒后可再试`;
+  };
+  if (btn) btn.disabled = true;
+  paint();
+  gateCountdownTimer = setInterval(() => {
+    left -= 1;
+    if (left <= 0) {
+      clearInterval(gateCountdownTimer);
+      if (btn) btn.disabled = false;
+      msg.textContent = '可以再试了。';
+      return;
+    }
+    paint();
+  }, 1000);
 }
 
 // ---- public-channel login gate (SECURITY.md §3): the public instance has no
@@ -2655,7 +2858,11 @@ function showLoginGate() {
     $('#gate-msg').textContent = '登录中…';
     try {
       const result = await performLogin($('#gate-username').value.trim(), $('#gate-password').value);
-      if (!result.ok) { $('#gate-msg').textContent = result.message; return; }
+      if (!result.ok) {
+        if (result.retryAfter) startGateCountdown(result.retryAfter);
+        else $('#gate-msg').textContent = result.message;
+        return;
+      }
       $('#gate-msg').textContent = '';
       if (me.must_change_password) openUserModal('account', '请先修改初始密码，再开始使用。');
     } catch (e) { $('#gate-msg').textContent = e?.message ?? '连接失败'; }
@@ -3054,6 +3261,11 @@ function boot() {
       me = await fetchMe();
       if (me?.profile) { profile = { ...profile, ...me.profile }; save(LS.profile, profile); }
       logEvent('session', 'auth_state', { signed_in: Boolean(me), user: me?.username ?? null });
+      if (me) {
+        // Vault flags before the drawer rebuild — badges must reflect the account.
+        await loadServerKeyFlags();
+        buildProviderSections();
+      }
     }
     applyDevInstruments(); // spanner: dev channels always; public = admin-only
     if (backendChannel === 'public' && authRequired && !me) {
@@ -3063,6 +3275,7 @@ function boot() {
     if (!persistent) return;
     if (authRequired && !me) return;          // dev/tunnel visitor: localStorage-only 演示模式
     await enablePersistence();
+    offerKeyMigration();
     if (me?.must_change_password) openUserModal('account', '请先修改初始密码，再开始使用。');
   });
 }
