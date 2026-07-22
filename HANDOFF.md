@@ -8,7 +8,13 @@ Latest session first. Keep entries short and factual; link instead of restating.
 - **Contract prompt** ([demo/src/prompts/contract.zh.md](demo/src/prompts/contract.zh.md)): stopped instructing the model to write `awaiting_feedback` (the engine always stripped it as `bad_delta` — the field was never writable); now documented as platform-derived.
 - **Restore path** (`messagesToTranscript` in [demo/src/ui/main.js](demo/src/ui/main.js)): mirrors the evidence gate when rebuilding a stored transcript, so restored 备课 rounds don't regrow the note.
 - **Both directions proven**: reverting the engine line fails 3 tests (runtime-harness lifecycle, blueprint round-2, material_support walkthrough); full suite 179/179 with the fix; full gate green. Browser-verified on the mock 龙舟 flow: preset-pack delivery shows no awaiting note, the post-回传 round does.
-- Not deployed — commit only. Open decisions from the previous entry (GitHub mirror push, root umbrella repo divergence) still pending Herman.
+- Deployed later same session (`server dev` + `dev:main`), plus GitHub `origin`/`fork` both pushed. Umbrella-repo "divergence" resolved as a false alarm: `origin/main` = `chao0s/main` = the flat `git subtree split` export of `Hualong Platform/` (hashes matched); stale upstream tracking dropped, nothing merged.
+
+## 2026-07-22 (later still) — [1] 先跳过 no longer discards staged answers; [27][28][22] doc drift trimmed
+
+- **[1]** Global 先跳过 link now routes through the composer when anything is staged: locked answers/批注 + 「先跳过」 leave as ONE packed message instead of orphaning the staged batch ([demo/src/ui/main.js](demo/src/ui/main.js)). Per-card 这题先跳过 keeps the typed draft in the shared answer state, so 恢复作答 restores it ([demo/src/ui/render.js](demo/src/ui/render.js)). Browser-verified on the mock 龙舟 flow: skip→restore keeps the draft; 先跳过 with a staged skip sends 【问题卡回复】(1 跳过, others 暂未回答) + 先跳过, tray consumed.
+- **[27]** AGENTS.md now says the 预设/生成 rebalance is **adopted** (ADR-0003); DESIGN §4 蓝图共创 note now states blueprint-first is the default and the style's fold-away is an open follow-up, not a prophecy.
+- **[28]** DESIGN trimmed to shipped behavior: §5c "What sends" describes `packStagedMessage` (【问题卡回复】/【蓝图批注】/free text — teacher never sends `blueprint_delta`; that's the model's channel); §5c/§6 hold-to-send drops the never-built payload-label 「按住发送：…」 (tray chips state the payload) and the never-built reduced-motion numeric countdown (actual: held button darkens). Stale render.js docstring (submit bar / dead `onSubmit` param) rewritten. **[22]** the original audit journal is gone; this trim covers every §5c/§6 claim re-checked against code — if the audit's mock-walkthrough finding meant something beyond these, it was not recoverable.
 
 ## 2026-07-22 — SECURITY: static handler closed; pre-deploy audit; blocker fixes; feature work committed
 

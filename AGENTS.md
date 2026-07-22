@@ -4,7 +4,7 @@ Canonical source of truth for how humans and coding agents work in this reposito
 
 ## What this repository is
 
-The spec, governance, and demo home of **小小探索家：学前教育主题探究课程助手 (Little Explorers — Preschool Theme-Inquiry Course Assistant**; formerly the working title 教师资源发展平台, renamed 2026-07-16) — a web-based 陪跑智能体 (companion agent) that accompanies kindergarten teachers through local-culture theme-inquiry courses. The behavioral contract is the V1.3 workflow spec at [source-docs/workflow-v1.3.zh-CN.md](source-docs/workflow-v1.3.zh-CN.md); an upstream revision proposal ([source-docs/workflow-v1.3-contradictions.zh-CN.md](source-docs/workflow-v1.3-contradictions.zh-CN.md), 2026-07 讨论稿) argues for rebalancing 预设/生成 — under discussion, not yet adopted (adoption goes through an ADR). The product thesis is in [docs/PRD.md](docs/PRD.md).
+The spec, governance, and demo home of **小小探索家：学前教育主题探究课程助手 (Little Explorers — Preschool Theme-Inquiry Course Assistant**; formerly the working title 教师资源发展平台, renamed 2026-07-16) — a web-based 陪跑智能体 (companion agent) that accompanies kindergarten teachers through local-culture theme-inquiry courses. The behavioral contract is the V1.3 workflow spec at [source-docs/workflow-v1.3.zh-CN.md](source-docs/workflow-v1.3.zh-CN.md); an upstream revision proposal ([source-docs/workflow-v1.3-contradictions.zh-CN.md](source-docs/workflow-v1.3-contradictions.zh-CN.md), 2026-07 讨论稿) argued for rebalancing 预设/生成 — **adopted** as the blueprint-first planning lens in [docs/adr/0003-blueprint-first-planning-lens.md](docs/adr/0003-blueprint-first-planning-lens.md). The product thesis is in [docs/PRD.md](docs/PRD.md).
 
 Two harnesses live here — do not confuse them:
 
