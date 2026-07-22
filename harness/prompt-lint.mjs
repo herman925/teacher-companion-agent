@@ -41,7 +41,10 @@ if (!fs.existsSync(basePath)) {
   // 「一次一问」became 「问题走问题卡」 (questions[] cue cards, batch-answered —
   // DESIGN.md §4 问题卡); the anti-interrogation intent lives on in that rule.
   must('base.zh.md', base, ['先读后问', '问题走问题卡', '必附示例', '静默跳关', '待现场确认'], '动态识别契约');
-  must('base.zh.md', base, ['禁止编造儿童反馈', '禁止把文化线索变成儿童口号', '禁止所有主题都项目化', '禁止只给方案不给回传要求'], '禁止规则');
+  // 「禁止只给方案不给回传要求」became 「禁止只给方案不给闭环」 (2026-07-20 Herman:
+  // blueprint-first rebalance — closure stays mandatory, but its bring_back points at
+  // plan confirmation during 备课期; field 回传 only in 实施期). Anchor follows.
+  must('base.zh.md', base, ['禁止编造儿童反馈', '禁止把文化线索变成儿童口号', '禁止所有主题都项目化', '禁止只给方案不给闭环', '禁止在备课期催促实施'], '禁止规则');
   must('base.zh.md', base, ['本轮可以去做什么', '回来请告诉我什么'], '闭环要素');
 }
 

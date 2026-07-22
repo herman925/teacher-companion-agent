@@ -707,24 +707,41 @@ export function renderQuestionBlock(q) {
  */
 export function renderQuestionCards(questions, opts = {}) {
   const root = el('div', 'qcards');
+  if (opts.variant === 'queue') root.classList.add('as-list', 'wb-queue');
   const track = el('div', 'qcards-track');
   root.append(track);
 
-  const answers = questions.map(() => ({ value: '', skipped: false }));
+  // Answer state may be SHARED (DESIGN.md §5c): the chat carousel and the
+  // 工作台 问题卡 queue are two renderers over ONE living answer set owned by
+  // main.js. Standalone use falls back to a private array. Each entry:
+  // {value, skipped, locked} — locked = 确认-staged into the composer tray.
+  const answers = opts.answers ?? questions.map(() => ({ value: '', skipped: false, locked: false }));
+  const notify = () => opts.onChange?.();
 
   const counter = el('span', 'qcards-count');
-  const submitBtn = el('button', 'qcards-submit-btn', '一起发送');
-  submitBtn.type = 'button';
+  const hint = el('span', 'qcards-hint', '锁定的回答会从下方输入框一起发送');
+
+  const cardCtl = []; // per-card {card, input, lockBtn, skipBtn} for state→DOM sync
+  let segs = null;    // segmented progress bar (carousel variant only)
 
   const refresh = () => {
-    const answered = answers.filter((a) => a.value.trim()).length;
-    counter.textContent = `已答 ${answered} / 共 ${questions.length}`;
-    submitBtn.disabled = answered === 0 || root.classList.contains('submitted');
+    const answered = answers.filter((a) => a.value.trim() || (a.locked && a.skipped)).length;
+    const locked = answers.filter((a) => a.locked).length;
+    counter.textContent = `已答 ${answered} / 共 ${questions.length}${locked ? ` · 已锁定 ${locked}` : ''}`;
     answers.forEach((a, i) => {
-      const seg = segs.children[i];
+      const ctl = cardCtl[i];
+      if (ctl) {
+        ctl.card.classList.toggle('skipped', a.skipped);
+        ctl.card.classList.toggle('locked', Boolean(a.locked));
+        ctl.lockBtn.textContent = a.locked ? '已锁定 · 点按修改' : '确认';
+        ctl.lockBtn.disabled = !a.locked && !a.value.trim() && !a.skipped;
+        ctl.skipBtn.textContent = a.skipped ? '恢复作答' : '这题先跳过';
+      }
+      const seg = segs?.children[i];
       if (!seg) return;
-      seg.classList.toggle('done', Boolean(a.value.trim()));
+      seg.classList.toggle('done', Boolean(a.value.trim() || (a.locked && a.skipped)));
       seg.classList.toggle('skipped', a.skipped);
+      seg.classList.toggle('locked', Boolean(a.locked));
     });
   };
 
@@ -745,9 +762,9 @@ export function renderQuestionCards(questions, opts = {}) {
       chip.type = 'button';
       chip.addEventListener('click', () => {
         input.value = example;
-        answers[i] = { value: example, skipped: false };
-        card.classList.remove('skipped');
+        answers[i] = { value: example, skipped: false, locked: false };
         refresh();
+        notify();
         input.focus();
       });
       chipRow.append(chip);
@@ -757,113 +774,131 @@ export function renderQuestionCards(questions, opts = {}) {
     const input = el('textarea', 'qcard-input');
     input.rows = 2;
     input.placeholder = '写你的回答，或点上面的示例改一改';
+    input.value = answers[i]?.value ?? '';
     input.addEventListener('input', () => {
-      answers[i] = { value: input.value, skipped: false };
-      card.classList.remove('skipped');
+      // Editing a locked card unlocks it — it leaves the staged batch until
+      // confirmed again (§5c).
+      answers[i] = { value: input.value, skipped: false, locked: false };
       refresh();
+      notify();
     });
     card.append(input);
 
+    const foot = el('div', 'qcard-foot');
     const skip = el('button', 'qcard-skip', '这题先跳过');
     skip.type = 'button';
     skip.addEventListener('click', () => {
       const on = !answers[i].skipped;
-      answers[i] = { value: on ? '' : input.value, skipped: on };
+      // An explicit skip is information too — it stages as locked 跳过.
+      answers[i] = on ? { value: '', skipped: true, locked: true } : { value: input.value, skipped: false, locked: false };
       if (on) input.value = '';
-      card.classList.toggle('skipped', on);
       refresh();
+      notify();
     });
-    card.append(skip);
+    const lock = el('button', 'qcard-lock', '确认');
+    lock.type = 'button';
+    lock.title = '锁定这个回答，随下一次发送一起提交';
+    lock.addEventListener('click', () => {
+      const a = answers[i];
+      if (a.locked) answers[i] = { ...a, locked: false };
+      else if (a.value.trim() || a.skipped) answers[i] = { ...a, locked: true };
+      refresh();
+      notify();
+    });
+    foot.append(skip, lock);
+    card.append(foot);
 
+    cardCtl.push({ card, input, lockBtn: lock, skipBtn: skip });
     track.append(card);
   });
+
+  // Cross-view sync: when the OTHER renderer edits the shared answers, this
+  // one repaints from state (skipping a textarea the teacher is typing in).
+  const syncFromState = () => {
+    answers.forEach((a, i) => {
+      const ctl = cardCtl[i];
+      if (ctl && document.activeElement !== ctl.input && ctl.input.value !== (a.value ?? '')) {
+        ctl.input.value = a.value ?? '';
+      }
+    });
+    refresh();
+  };
+  opts.registerView?.(syncFromState);
 
   // nav: ‹ [segmented answer-progress bar] › + 查看全部. The segments replace
   // the old dots: one wide clickable segment per card, filled when answered,
   // hollow when pending, hatched when skipped, ringed when in view — progress
   // AND position in one strip loud enough to say "there are more cards".
-  const nav = el('div', 'qcards-nav');
-  const prev = el('button', 'qcards-arrow', '‹');
-  prev.type = 'button';
-  prev.setAttribute('aria-label', '上一张');
-  const next = el('button', 'qcards-arrow', '›');
-  next.type = 'button';
-  next.setAttribute('aria-label', '下一张');
-  const segs = el('div', 'qcards-segs');
-  segs.setAttribute('role', 'tablist');
-  questions.forEach((_, i) => {
-    const seg = el('button', 'qcards-seg');
-    seg.type = 'button';
-    seg.setAttribute('aria-label', `第 ${i + 1} 张，共 ${questions.length} 张`);
-    seg.append(el('span', 'qcards-seg-num', String(i + 1)));
-    seg.addEventListener('click', () => scrollToCard(i));
-    segs.append(seg);
-  });
-  const listToggle = el('button', 'qcards-list-toggle', '查看全部');
-  listToggle.type = 'button';
-  nav.append(prev, segs, next, listToggle);
-  root.append(nav);
+  // The 工作台 queue variant is a permanent stacked list: no carousel nav.
+  if (opts.variant !== 'queue') {
+    const nav = el('div', 'qcards-nav');
+    const prev = el('button', 'qcards-arrow', '‹');
+    prev.type = 'button';
+    prev.setAttribute('aria-label', '上一张');
+    const next = el('button', 'qcards-arrow', '›');
+    next.type = 'button';
+    next.setAttribute('aria-label', '下一张');
+    segs = el('div', 'qcards-segs');
+    segs.setAttribute('role', 'tablist');
+    questions.forEach((_, i) => {
+      const seg = el('button', 'qcards-seg');
+      seg.type = 'button';
+      seg.setAttribute('aria-label', `第 ${i + 1} 张，共 ${questions.length} 张`);
+      seg.append(el('span', 'qcards-seg-num', String(i + 1)));
+      seg.addEventListener('click', () => scrollToCard(i));
+      segs.append(seg);
+    });
+    const listToggle = el('button', 'qcards-list-toggle', '查看全部');
+    listToggle.type = 'button';
+    nav.append(prev, segs, next, listToggle);
+    root.append(nav);
 
-  const cardAt = (i) => track.children[i];
-  const cardLeft = (card) => card.offsetLeft - track.offsetLeft;
-  const scrollToCard = (i) => {
-    const card = cardAt(Math.max(0, Math.min(questions.length - 1, i)));
-    if (card) track.scrollTo({ left: cardLeft(card), behavior: 'smooth' });
-  };
-  // Nearest card by actual offset — exact regardless of gap/width rounding.
-  const focusedIndex = () => {
-    let best = 0;
-    let bestDist = Infinity;
-    for (let i = 0; i < track.children.length; i += 1) {
-      const dist = Math.abs(cardLeft(track.children[i]) - track.scrollLeft);
-      if (dist < bestDist) { best = i; bestDist = dist; }
-    }
-    return best;
-  };
-  prev.addEventListener('click', () => scrollToCard(focusedIndex() - 1));
-  next.addEventListener('click', () => scrollToCard(focusedIndex() + 1));
-  const markSeg = () => {
-    const idx = focusedIndex();
-    [...segs.children].forEach((d, i) => d.classList.toggle('on', i === idx));
-  };
-  track.addEventListener('scroll', () => requestAnimationFrame(markSeg), { passive: true });
-  markSeg();
+    const cardAt = (i) => track.children[i];
+    const cardLeft = (card) => card.offsetLeft - track.offsetLeft;
+    const scrollToCard = (i) => {
+      const card = cardAt(Math.max(0, Math.min(questions.length - 1, i)));
+      if (card) track.scrollTo({ left: cardLeft(card), behavior: 'smooth' });
+    };
+    // Nearest card by actual offset — exact regardless of gap/width rounding.
+    const focusedIndex = () => {
+      let best = 0;
+      let bestDist = Infinity;
+      for (let i = 0; i < track.children.length; i += 1) {
+        const dist = Math.abs(cardLeft(track.children[i]) - track.scrollLeft);
+        if (dist < bestDist) { best = i; bestDist = dist; }
+      }
+      return best;
+    };
+    prev.addEventListener('click', () => scrollToCard(focusedIndex() - 1));
+    next.addEventListener('click', () => scrollToCard(focusedIndex() + 1));
+    const markSeg = () => {
+      const idx = focusedIndex();
+      [...segs.children].forEach((d, i) => d.classList.toggle('on', i === idx));
+    };
+    track.addEventListener('scroll', () => requestAnimationFrame(markSeg), { passive: true });
+    markSeg();
 
-  listToggle.addEventListener('click', () => {
-    const listed = root.classList.toggle('as-list');
-    listToggle.textContent = listed ? '收起为卡片' : '查看全部';
-    nav.classList.toggle('list-mode', listed);
-  });
+    listToggle.addEventListener('click', () => {
+      const listed = root.classList.toggle('as-list');
+      listToggle.textContent = listed ? '收起为卡片' : '查看全部';
+      nav.classList.toggle('list-mode', listed);
+    });
+  }
 
-  // submit bar
+  // Status bar — the cards themselves never send (§5c: the composer is the
+  // only mouth). The counter + hint replace the old 一起发送 button.
   const bar = el('div', 'qcards-bar');
-  bar.append(counter, submitBtn);
+  bar.append(counter, hint);
   root.append(bar);
-  submitBtn.addEventListener('click', () => {
-    if (submitBtn.disabled) return;
-    const lines = questions.map((q, i) => {
-      const a = answers[i];
-      const answer = a.value.trim() ? a.value.trim() : '（跳过）';
-      return `${i + 1}. 「${q.text}」：${answer}`;
-    });
-    const answered = answers.filter((a) => a.value.trim()).length;
-    root.classList.add('submitted');
-    freezeAnswerControls(root);
-    opts.onSubmit?.(`【问题卡回复】\n${lines.join('\n')}`, {
-      total: questions.length,
-      answered,
-      skipped: questions.length - answered,
-    });
-  });
 
   refresh();
   return root;
 }
 
-/** Disable answering (chips, inputs, skip, submit) but keep review navigation
+/** Disable answering (chips, inputs, skip, lock) but keep review navigation
  * (arrows / dots / 查看全部) alive — a submitted set can still be re-read. */
 function freezeAnswerControls(rootEl) {
-  for (const control of rootEl.querySelectorAll('.qcard button, .qcard textarea, .qcards-submit-btn')) {
+  for (const control of rootEl.querySelectorAll('.qcard button, .qcard textarea')) {
     control.disabled = true;
   }
 }

@@ -12,7 +12,7 @@ import {
   renderErrorNotice, renderDebug, renderWfTrace, el,
   renderBlueprintList, renderBlueprintMapView, renderBlueprintChip,
 } from './render.js';
-import { normalizeBlueprint, numberBlueprint, countUnconfirmed, packBlueprintComments } from '../blueprint-util.mjs';
+import { normalizeBlueprint, numberBlueprint, countUnconfirmed, packStagedMessage } from '../blueprint-util.mjs';
 import { TITLE_INTERVALS, TITLE_INTERVAL_DEFAULT } from '../title-agent.mjs';
 import { confirmBlueprintNode } from '../engine.mjs';
 import { messageIn, cardIn, cardsIn, chipsIn, closureIn, fadeIn } from './motion.js';
@@ -41,6 +41,9 @@ const LS = {
   bpHidden: 'cst.bpHidden',   // teacher chose to collapse the panel
   bpComments: 'cst.bpComments', // unsent per-node 批注, keyed by course
   turnMeta: 'cst.turnMeta',   // live turn-progress display toggles {timer, stats, thinking}
+  qcards: 'cst.qcards',       // living question-card answer sets, keyed by course (§5c)
+  wbTab: 'cst.wbTab',         // 工作台 top-level tab: 'bp' | 'cards'
+  providerCaps: 'cst.providerCaps', // per-provider 深度思考/联网搜索 toggles (UI-only for now)
 };
 
 function load(key, fallback) {
@@ -229,6 +232,79 @@ function groupOf(id) {
 /** Remembered 线路 per family, {group: providerId}. */
 let channelChoice = load(LS.channels, {});
 
+/** Per-provider capability toggles (深度思考 / 联网搜索). Persisted UI state
+ * only for now — nothing consumes it yet; it will ride chat requests in a
+ * later version (the drawer says so honestly). */
+let providerCaps = load(LS.providerCaps, {});
+
+/** 接入与服务 drawer presentation: short names + brand icon + 国内/国际
+ * grouping. Display metadata only — provider truth stays in providerInfos.
+ * `icon` is a filename stem under assets/providers/ (see that folder's
+ * SOURCES.md); channels of one family share their family's icon. */
+const DRAWER_META = {
+  glm: { name: 'GLM 智谱', icon: 'glm', region: 'cn' },
+  qwen: { name: 'Qwen', icon: 'qwen', region: 'cn' },
+  minimax: { name: 'MiniMax 中国', icon: 'minimax', region: 'cn' },
+  kimi: { name: 'Kimi', icon: 'kimi', region: 'cn' },
+  zai: { name: 'Z.AI', icon: 'zai', region: 'intl' },
+  'zai-coding': { name: 'Z.AI Coding', icon: 'zai', region: 'intl' },
+  'minimax-intl': { name: 'MiniMax 国际', icon: 'minimax', region: 'intl' },
+  // FreeModel.dev is a PAID aggregator on Singapore/global nodes — the name
+  // says "free", the service is not, and it needs a key like everyone else.
+  freemodel: { name: 'FreeModel', icon: 'freemodel', region: 'intl' },
+  openrouter: { name: 'OpenRouter', icon: 'openrouter', region: 'intl' },
+  kilocode: { name: 'Kilo', icon: 'kilocode', region: 'intl' },
+  'opencode-zen': { name: 'OpenCode Zen', icon: 'opencode-zen', region: 'intl' },
+};
+
+/** Brand mark for a provider row/card. Static local SVG — no icon-API calls.
+ * Providers without an icon (自定义端点, 演示模式) keep a geometric mark. */
+function providerMark(id) {
+  const icon = DRAWER_META[id]?.icon;
+  const box = el('span', icon ? 'pmark img' : 'pmark pd');
+  box.setAttribute('aria-hidden', 'true');
+  if (icon) {
+    const img = document.createElement('img');
+    img.src = new URL(`./assets/providers/${icon}.svg`, import.meta.url).href;
+    img.alt = '';
+    img.loading = 'lazy';
+    box.append(img);
+  }
+  return box;
+}
+
+/** 深度思考 support per provider: 'enabled' (teacher-controllable), 'auto'
+ * (the service always thinks — shown on, locked), absent = unsupported. */
+const CAP_THINKING = {
+  glm: 'enabled', zai: 'enabled', 'zai-coding': 'enabled',
+  minimax: 'auto', 'minimax-intl': 'auto',
+};
+/** 联网搜索 support. */
+const CAP_WEBSEARCH = new Set(['glm', 'zai', 'zai-coding', 'kimi']);
+
+/** 参考评级·随版本更新 — dot-scale档位 shown on both the 模型与服务 cards and
+ * the 接入与服务 drawer rows (cost dots = 越多越省钱, per the pane legend). */
+const MODEL_TRAITS = {
+  'glm-5.2': { intel: 5, speed: 2, cost: 3 },
+  'MiniMax-M3': { intel: 4, speed: 3, cost: 3 },
+  'kimi-k2.6': { intel: 4, speed: 2, cost: 2 },
+  'qwen-plus': { intel: 3, speed: 4, cost: 4 },
+};
+/** Family fallback so a version bump (glm-5.2 → glm-5.3) or an aggregator id
+ * (z-ai/glm-4.7:free) keeps a 档位 instead of going blank. Unmatched ids —
+ * 'auto', an unknown OpenRouter model — get NO rating rather than a guess. */
+const FAMILY_TRAITS = [
+  [/glm/i, { intel: 5, speed: 2, cost: 3 }],
+  [/minimax/i, { intel: 4, speed: 3, cost: 3 }],
+  [/kimi|moonshot/i, { intel: 4, speed: 2, cost: 2 }],
+  [/qwen/i, { intel: 3, speed: 4, cost: 4 }],
+];
+/** 档位 for a model id, or null when we genuinely do not know. */
+function traitsFor(model) {
+  if (!model) return null;
+  return MODEL_TRAITS[model] ?? FAMILY_TRAITS.find(([re]) => re.test(model))?.[1] ?? null;
+}
+
 /** Offline fallback when /api/health is unreachable (e.g. static hosting).
  * Must mirror the enabled providers in adapter.mjs PROVIDERS, so the dropdown
  * offers the same choices with or without a backend. */
@@ -250,6 +326,13 @@ let providerInfos = FALLBACK_PROVIDERS;
 
 function providerInfo(id) {
   return providerInfos.find((p) => p.id === id) ?? null;
+}
+
+/** Has the teacher (or the server env) actually set this provider up? Drives
+ * both the drawer badge and which cards the 模型与服务 picker shows. */
+function isConfigured(id) {
+  if (id === 'custom') return Boolean(customCfg.baseURL);
+  return Boolean(apiKeys[id] || providerInfo(id)?.hasEnvKey);
 }
 
 const STARTERS = [
@@ -414,6 +497,10 @@ function openDrawer(drawer) {
 function closeDrawers() {
   settingsDrawer.classList.remove('open');
   debugDrawer.classList.remove('open');
+  // 接入与服务 drawer never outlives the modal.
+  settingsDrawer.classList.remove('dev-open');
+  const dp = document.querySelector('#dev-panel');
+  if (dp) dp.hidden = true;
 }
 
 // -------------------------------------------------------------- rendering
@@ -481,7 +568,7 @@ function renderTurnGroup(ev, opts = {}) {
   if (bpArtifacts.length || (Array.isArray(turn.blueprint_delta) && turn.blueprint_delta.length)) {
     const bp = ev.state?.course_plan_blueprint;
     const chip = renderBlueprintChip({
-      version: bp?.display_version || (bp ? `v${bp.version}` : 'v0.1'),
+      version: bp ? `v0.${bp.version}` : 'v0.1', // engine-owned numbering, same as the panel pill
       pending: bp ? countUnconfirmed(normalizeBlueprint({ modules: bp.modules }).modules) : 0,
       onOpen: openBlueprintPanel,
     });
@@ -496,12 +583,15 @@ function renderTurnGroup(ev, opts = {}) {
   if (cardQuestions.length >= 2) {
     // Freeze any earlier still-active card set: only the newest turn collects answers.
     for (const stale of messagesEl.querySelectorAll('.qcards:not(.submitted)')) freezeQuestionCards(stale);
-    questionEl = renderQuestionCards(cardQuestions, {
-      onSubmit: (packed, meta) => {
-        logEvent('user_input', 'question_cards_submit', meta);
-        send(packed);
-      },
-    });
+    // Bind to the LIVING answer set when this is the active turn (§5c): the
+    // chat carousel and the 工作台 queue then edit one shared state.
+    const set = activeCardSet();
+    const live = set && set.sig === cardSetSig(cardQuestions);
+    questionEl = renderQuestionCards(cardQuestions, live ? {
+      answers: set.answers,
+      onChange: onCardChange,
+      registerView: (fn) => cardViewSyncs.add(fn),
+    } : {});
     group.append(questionEl);
   } else if (cardQuestions.length === 1) {
     questionEl = renderQuestionBlock(cardQuestions[0]);
@@ -537,6 +627,7 @@ function renderTurnGroup(ev, opts = {}) {
 }
 
 function replayTranscript() {
+  cardViewSyncs.clear(); // stale DOM renderers must not receive sync nudges
   refreshBlueprintPanel(); // any path that re-renders the chat re-syncs the living plan
   messagesEl.replaceChildren();
   if (!transcript.length) {
@@ -808,6 +899,20 @@ function handleTurn(userText, ev) {
   save(LS.state, courseState);
   save(LS.transcript, transcript);
   pendingMessage = null;
+  // Living card set (§5c): a new agent turn with 2+ questions replaces the
+  // active set; any other turn closes it (the conversation moved on).
+  const evQuestions = Array.isArray(ev.turn?.questions) && ev.turn.questions.length
+    ? ev.turn.questions
+    : (ev.turn?.question ? [ev.turn.question] : []);
+  if (evQuestions.length >= 2) {
+    setActiveCardSet({
+      sig: cardSetSig(evQuestions),
+      questions: evQuestions,
+      answers: evQuestions.map(() => ({ value: '', skipped: false, locked: false })),
+    });
+  } else {
+    setActiveCardSet(null);
+  }
   refreshBlueprintPanel();
   // Living-plan trace: absorbed blueprint versions surface in the debug JSON
   // export (session log) alongside the workflow events they rode in on.
@@ -997,12 +1102,90 @@ function modelRow(id, cfg) {
   return wrap;
 }
 
-/** One provider's config: key + model row inside a collapsible section. */
+/** Drawer-row summary: brand mark + short name + 配置 badge. Returns the
+ * badge element so the key input can repaint it live. */
+function drawerSummary(id, fallbackLabel) {
+  const meta = DRAWER_META[id];
+  const summary = el('summary', '');
+  const badge = el('span', 'drawer-badge');
+  summary.append(providerMark(id), el('span', 'drawer-name', meta?.name ?? fallbackLabel), badge);
+  return { summary, badge };
+}
+
+/** 已配置/未配置 badge state for one provider row. Every provider needs a key
+ * — including FreeModel.dev, whose name is a brand, not a price. */
+function paintBadge(badge, id) {
+  const configured = isConfigured(id);
+  badge.className = `drawer-badge ${configured ? 'ok' : 'no'}`;
+  badge.textContent = configured ? '已配置' : '未配置';
+}
+
+/** Every rendered 深度思考/联网搜索 switch, so flipping one repaints its twin
+ * in the other panel (接入与服务 drawer ↔ 模型与服务 cards). Detached nodes are
+ * dropped lazily on the next sync. */
+const capSwitches = [];
+function syncCapSwitches(pid, kind, on) {
+  for (let i = capSwitches.length - 1; i >= 0; i -= 1) {
+    const s = capSwitches[i];
+    if (!s.el.isConnected) { capSwitches.splice(i, 1); continue; }
+    if (s.pid === pid && s.kind === kind) s.el.checked = on;
+  }
+}
+
+/** One 深度思考/联网搜索 switch row. Persists to cst.providerCaps; consumed
+ * by nothing yet (the drawer's 即将生效 note states this honestly). Rendered in
+ * BOTH panels — the drawer row and the model card — kept in sync by id. */
+function capRow(pid, kind) {
+  const row = el('div', 'cap-row');
+  const name = kind === 'thinking' ? '深度思考' : '联网搜索';
+  let desc;
+  let disabled = false;
+  let checked = Boolean(providerCaps[pid]?.[kind]);
+  if (kind === 'thinking') {
+    const mode = CAP_THINKING[pid];
+    if (mode === 'auto') { desc = '该服务由模型自动思考'; disabled = true; checked = true; }
+    else if (mode === 'enabled') { desc = '让模型多想一步，回答更稳，速度会慢一些'; }
+    else { desc = '该模型暂不支持'; disabled = true; checked = false; }
+  } else if (CAP_WEBSEARCH.has(pid)) {
+    desc = '可查证最新资料 · 仅 GLM / Z.AI / Kimi 支持';
+  } else {
+    desc = '该服务暂不支持联网搜索'; disabled = true; checked = false;
+  }
+  const sw = document.createElement('input');
+  sw.type = 'checkbox';
+  sw.className = 'cap-switch';
+  sw.checked = checked;
+  sw.disabled = disabled;
+  sw.setAttribute('aria-label', `${name}（${DRAWER_META[pid]?.name ?? pid}）`);
+  if (!disabled) {
+    capSwitches.push({ pid, kind, el: sw });
+    sw.addEventListener('change', () => {
+      providerCaps = { ...providerCaps, [pid]: { ...(providerCaps[pid] ?? {}), [kind]: sw.checked } };
+      save(LS.providerCaps, providerCaps);
+      logEvent('session', 'provider_cap_toggle', { provider: pid, cap: kind, on: sw.checked });
+      syncCapSwitches(pid, kind, sw.checked);
+    });
+  }
+  row.append(el('span', 'cap-name', name), el('span', 'cap-desc', desc), sw);
+  return row;
+}
+
+/** One provider's config: key + model row + capability toggles inside a
+ * collapsible drawer row (接入与服务). */
 function providerSection(info) {
   const details = el('details', 'provider-config');
   details.dataset.id = info.id;
-  const summary = el('summary', '', info.label);
+  const { summary, badge } = drawerSummary(info.id, info.label);
+  paintBadge(badge, info.id);
   details.append(summary);
+
+  // The picker only lists configured providers, so a key that appears or
+  // disappears has to rebuild it — but only on the flip, not per keystroke.
+  let configured = isConfigured(info.id);
+  const refreshPicker = () => {
+    const now = isConfigured(info.id);
+    if (now !== configured) { configured = now; buildModelsPane(); }
+  };
 
   const { field: keyField } = settingsField(
     'API 密钥',
@@ -1016,10 +1199,14 @@ function providerSection(info) {
         if (v) apiKeys[info.id] = v;
         else delete apiKeys[info.id];
         saveKeys();
+        paintBadge(badge, info.id);
+        refreshPicker();
       },
     },
   );
   details.append(keyField);
+
+  const rates = ratesBlock(() => modelChoices[info.id] ?? info.defaultModel ?? '');
 
   details.append(modelRow(info.id, {
     defaultModel: info.defaultModel,
@@ -1028,18 +1215,50 @@ function providerSection(info) {
       if (m && m !== info.defaultModel) modelChoices[info.id] = m;
       else delete modelChoices[info.id];
       saveModels();
+      rates.paint();
+      if (isConfigured(info.id)) buildModelsPane(); // the card names the model
     },
     modelsBody: () => ({ provider: info.id, key: apiKeys[info.id] || undefined }),
   }));
 
+  details.append(rates.node);
+  details.append(capRow(info.id, 'thinking'));
+  details.append(capRow(info.id, 'webSearch'));
+
   return details;
+}
+
+/** 参考评级 block that repaints from whatever model is currently chosen.
+ * Same dots as the model cards, so 智能/速度/成本 lives in both panels. */
+function ratesBlock(getModel) {
+  const node = el('div', 'drawer-rates');
+  const paint = () => {
+    node.replaceChildren();
+    const t = traitsFor(getModel());
+    if (!t) {
+      node.append(el('p', 'settings-note', '这个模型还没有参考评级。'));
+      return;
+    }
+    node.append(el('span', 'drawer-rates-hd', '参考评级'));
+    node.append(rateRow('智能', 'g', t.intel), rateRow('速度', 'p', t.speed), rateRow('成本', 'au', t.cost));
+  };
+  paint();
+  return { node, paint };
 }
 
 /** The 自定义端点 (OpenAI-compatible) section. */
 function customSection() {
   const details = el('details', 'provider-config');
   details.dataset.id = 'custom';
-  details.append(el('summary', '', LOCAL_LABELS.custom));
+  const { summary, badge } = drawerSummary('custom', '自定义端点');
+  paintBadge(badge, 'custom');
+  details.append(summary);
+
+  let configured = isConfigured('custom');
+  const refreshPicker = () => {
+    const now = isConfigured('custom');
+    if (now !== configured) { configured = now; buildModelsPane(); }
+  };
 
   const fields = [
     ['baseURL', '接口地址（baseURL）', 'text', '如 https://api.example.com/v1'],
@@ -1051,7 +1270,12 @@ function customSection() {
       type,
       placeholder,
       value: customCfg[prop] ?? '',
-      onInput: (v) => { customCfg[prop] = v.trim(); saveCustom(); },
+      onInput: (v) => {
+        customCfg[prop] = v.trim();
+        saveCustom();
+        paintBadge(badge, 'custom');
+        refreshPicker();
+      },
     });
     details.append(field);
   }
@@ -1059,7 +1283,11 @@ function customSection() {
   details.append(modelRow('custom', {
     defaultModel: '',
     getModel: () => customCfg.model ?? '',
-    setModel: (m) => { customCfg.model = m; saveCustom(); },
+    setModel: (m) => {
+      customCfg.model = m;
+      saveCustom();
+      if (isConfigured('custom')) buildModelsPane();
+    },
     modelsBody: () => ({
       provider: 'custom',
       key: customCfg.key || undefined,
@@ -1262,80 +1490,10 @@ function buildProfilePane(target) {
   pane.append(el('p', 'settings-note', '档案只保存在这台设备，作为只读背景提供给陪跑智能体（不会写入课程状态）。将来有账号后，这一页会搬进「用户中心」。'));
 }
 
-/** 通用 pane — the model choice leads (线路 switch for 国内/国际 families), then 开发者模式. */
-function buildGeneralPane() {
-  const pane = $('#pane-general');
+/** 界面与体验 pane — 外观, 回合进度显示, 开发者模式 (relocated from the old 通用). */
+function buildUiPane() {
+  const pane = $('#pane-ui');
   pane.replaceChildren();
-
-  const modelField = el('div', 'settings-field');
-  const label = el('label', 'settings-label', '模型');
-  const select = el('select', 'settings-select');
-  select.id = 'provider-select';
-  label.htmlFor = select.id;
-  const options = [['mock', LOCAL_LABELS.mock]];
-  const seenGroups = new Set();
-  for (const info of providerInfos) {
-    const g = groupOf(info.id);
-    if (g) {
-      if (!seenGroups.has(g)) { seenGroups.add(g); options.push([`group:${g}`, PROVIDER_GROUPS[g].label]); }
-    } else {
-      options.push([info.id, info.label]);
-    }
-  }
-  options.push(['custom', LOCAL_LABELS.custom]);
-  for (const [v, l] of options) {
-    const o = el('option', '', l);
-    o.value = v;
-    select.append(o);
-  }
-  const currentGroup = groupOf(provider);
-  const wanted = currentGroup ? `group:${currentGroup}` : provider;
-  if (options.some(([v]) => v === wanted)) select.value = wanted;
-  else { provider = 'mock'; select.value = 'mock'; }
-  modelField.append(label, select);
-  pane.append(modelField);
-
-  // 线路: shown only for families with mainland/international variants.
-  const channelField = el('div', 'settings-field');
-  const chLabel = el('label', 'settings-label', '线路');
-  const chSelect = el('select', 'settings-select');
-  chSelect.id = 'channel-select';
-  chLabel.htmlFor = chSelect.id;
-  channelField.append(chLabel, chSelect);
-  pane.append(channelField);
-  const renderChannels = () => {
-    const g = groupOf(provider);
-    channelField.hidden = !g;
-    if (!g) return;
-    chSelect.replaceChildren();
-    for (const [id, l] of PROVIDER_GROUPS[g].channels) {
-      const o = el('option', '', l);
-      o.value = id;
-      chSelect.append(o);
-    }
-    chSelect.value = provider;
-  };
-  renderChannels();
-
-  select.addEventListener('change', () => {
-    const v = select.value;
-    const next = v.startsWith('group:')
-      ? (channelChoice[v.slice(6)] ?? PROVIDER_GROUPS[v.slice(6)].channels[0][0])
-      : v;
-    logEvent('session', 'provider_change', { from: provider, to: next });
-    provider = next;
-    save(LS.provider, provider);
-    renderChannels();
-    syncOpenSection();
-  });
-  chSelect.addEventListener('change', () => {
-    const g = groupOf(provider);
-    logEvent('session', 'provider_change', { from: provider, to: chSelect.value, channel: true });
-    provider = chSelect.value;
-    if (g) { channelChoice[g] = provider; save(LS.channels, channelChoice); }
-    save(LS.provider, provider);
-    syncOpenSection();
-  });
 
   pane.append(themeField());
 
@@ -1364,7 +1522,221 @@ function buildGeneralPane() {
   pane.append(metaField);
 
   pane.append(devModeField());
-  pane.append(el('p', 'settings-note', '「演示模式」不联网、不填密钥即可体验完整流程。密钥与接口配置在「模型服务」页。规划中：将来这里只保留「官方服务」（平台代管）与「自备密钥」两种方式。'));
+}
+
+// ---- 接入与服务 developer drawer (beside the modal ≥1100px, sheet below) ----
+
+function setDevPanel(open) {
+  const panel = $('#dev-panel');
+  if (!panel) return;
+  panel.hidden = !open;
+  settingsDrawer.classList.toggle('dev-open', open);
+  const st = $('#devopen-state');
+  if (st) st.textContent = open ? '已打开 · 收起' : '打开 →';
+}
+
+/** The provider a family card stands for right now: the remembered 线路 when
+ * it is still configured, else the first channel the teacher DID configure. */
+function familyTarget(fam) {
+  const remembered = channelChoice[fam];
+  if (remembered && isConfigured(remembered)) return remembered;
+  const ids = PROVIDER_GROUPS[fam].channels.map(([id]) => id);
+  return ids.find(isConfigured) ?? ids[0];
+}
+
+/** The provider a model card stands for right now. */
+function cardTarget(card) {
+  return card.family ? familyTarget(card.family) : card.provider;
+}
+
+/** Cards the 模型与服务 picker shows: exactly what the teacher configured, not
+ * a fixed shortlist. Channels of one family collapse into a single card (the
+ * 线路 select below picks which); 演示模式 is appended separately. */
+function pickerCards() {
+  const cards = [];
+  const seenFamily = new Set();
+  for (const info of providerInfos) {
+    if (!isConfigured(info.id)) continue;
+    const fam = groupOf(info.id);
+    if (fam) {
+      if (seenFamily.has(fam)) continue;
+      seenFamily.add(fam);
+      cards.push({ family: fam });
+    } else {
+      cards.push({ provider: info.id });
+    }
+  }
+  if (isConfigured('custom')) cards.push({ provider: 'custom' });
+  return cards;
+}
+
+/** 5-dot scale row for a model card. */
+function rateRow(labelText, tone, filled) {
+  const row = el('div', 'mcard-rate');
+  row.append(el('span', 'mcard-rl', labelText));
+  const dots = el('span', `mcard-dots ${tone}`);
+  for (let i = 0; i < 5; i += 1) {
+    const d = document.createElement('i');
+    if (i < filled) d.className = 'f';
+    dots.append(d);
+  }
+  row.append(dots);
+  return row;
+}
+
+/** 模型与服务 pane — teacher-facing model cards + the 接入与服务 drawer handle.
+ * Rebuilt whole on every provider change (cheap, keeps sel state honest). */
+function buildModelsPane() {
+  const pane = $('#pane-models');
+  pane.replaceChildren();
+
+  const head = el('div', 'pane-head');
+  head.append(el('h3', 'pane-head-title', '模型与服务'));
+  head.append(el('p', 'pane-head-sub', '选一个陪你备课的模型就好，随时可换。密钥等技术设置收在下方「接入与服务」里，日常用不到。'));
+  pane.append(head);
+
+  const secHd = el('div', 'sec-hd');
+  const mark = el('span', 'sec-mark');
+  mark.setAttribute('aria-hidden', 'true');
+  secHd.append(mark, el('h4', 'sec-title', '使用哪个模型'), el('span', 'sec-hint', '参考评级'));
+  pane.append(secHd);
+
+  const grid = el('div', 'mgrid');
+  const selectCard = (target) => {
+    logEvent('session', 'provider_change', { from: provider, to: target, via: 'model-card' });
+    provider = target;
+    save(LS.provider, provider);
+    syncOpenSection();
+    buildModelsPane();
+  };
+
+  /** Shared card shell: brand mark + name + optional body, one pick button. */
+  const shell = (target, sel, markId, title, subtitle) => {
+    const box = el('div', `mcard${sel ? ' sel' : ''}`);
+    const btn = el('button', 'mcard-pick');
+    btn.type = 'button';
+    btn.setAttribute('aria-pressed', String(sel));
+    if (sel) {
+      const chk = el('span', 'mcard-chk');
+      chk.setAttribute('aria-hidden', 'true');
+      box.append(chk);
+    }
+    const row1 = el('div', 'mcard-row1');
+    row1.append(providerMark(markId), el('span', 'mcard-name', title), el('span', 'mcard-prov', subtitle));
+    btn.append(row1);
+    btn.addEventListener('click', () => selectCard(target));
+    box.append(btn);
+    grid.append(box);
+    return btn;
+  };
+
+  const cards = pickerCards();
+  for (const card of cards) {
+    // A selected family card MUST target the active provider, not the family's
+    // remembered 线路 — otherwise the card names one channel's model, writes its
+    // 深度思考/联网搜索 toggles to that channel's key, and contradicts the 线路
+    // select below, all while the request uses a different channel. cardTarget
+    // (the remembered/first-configured channel) is only for switching TO an
+    // unselected family.
+    const target = card.family && groupOf(provider) === card.family ? provider : cardTarget(card);
+    const info = providerInfo(target);
+    const model = target === 'custom'
+      ? (customCfg.model || '')
+      : (modelChoices[target] ?? info?.defaultModel ?? '');
+    const provName = target === 'custom'
+      ? (customCfg.label || '自定义端点')
+      : (DRAWER_META[target]?.name ?? info?.label ?? target);
+    const sel = card.family ? groupOf(provider) === card.family : provider === target;
+    // The model id is the headline when we know it; otherwise the service is.
+    const btn = shell(target, sel, target, model || provName, model ? provName : '未指定模型');
+    const t = traitsFor(model);
+    if (t) btn.append(rateRow('智能', 'g', t.intel), rateRow('速度', 'p', t.speed), rateRow('成本', 'au', t.cost));
+    else btn.append(el('span', 'mcard-off-note', '这个模型还没有参考评级。'));
+    // Same switches as the drawer row — either panel can flip them.
+    const caps = el('div', 'mcard-caps');
+    caps.append(capRow(target, 'thinking'), capRow(target, 'webSearch'));
+    btn.parentElement.append(caps);
+  }
+
+  // 演示模式 card — mock must stay reachable without keys or network.
+  {
+    const btn = shell('mock', provider === 'mock', 'mock', '演示模式', '无需密钥');
+    btn.parentElement.classList.add('mock');
+    btn.append(el('span', 'mcard-desc', '不联网、不填密钥，用内置脚本体验完整流程。'));
+  }
+  pane.append(grid);
+
+  if (!cards.length) {
+    pane.append(el('p', 'settings-note',
+      '还没有配置任何服务。在下方「接入与服务」里填好一个密钥，这里就会出现对应的模型卡。'));
+  }
+
+  pane.append(el('p', 'mcard-legend',
+    '这里只列出你已配置的服务。评级是粗略档位，满 5 点：智能越高越会想，速度越高回得越快，成本点越多越省钱。仅供参考，随版本更新。'));
+
+  // 当前使用: state is never hidden — the active provider can be one the
+  // teacher never configured (a leftover choice, a key that was cleared), and
+  // then no card represents it. Say so instead of showing nothing.
+  if (provider !== 'mock') {
+    const info = providerInfo(provider);
+    const effModel = provider === 'custom'
+      ? (customCfg.model || '')
+      : (modelChoices[provider] ?? info?.defaultModel ?? '');
+    const onACard = cards.some((c) => (c.family ? groupOf(provider) === c.family : provider === c.provider));
+    if (!onACard) {
+      const name = provider === 'custom'
+        ? (customCfg.label || '自定义端点')
+        : (DRAWER_META[provider]?.name ?? info?.label ?? provider);
+      pane.append(el('p', 'settings-note model-current',
+        `当前使用：${name}${effModel ? ` · ${effModel}` : ''}（在下方「接入与服务」里调整）`));
+    }
+  }
+
+  // 线路: mainland/international switch for the selected family (existing
+  // machinery — the family card follows whatever is chosen here).
+  const g = groupOf(provider);
+  if (g) {
+    const channelField = el('div', 'settings-field channel-field');
+    const chLabel = el('label', 'settings-label', '线路');
+    const chSelect = el('select', 'settings-select');
+    chSelect.id = 'channel-select';
+    chLabel.htmlFor = chSelect.id;
+    // Only 线路 the teacher configured (plus the active one, so the select
+    // never silently drops the current choice).
+    for (const [id, l] of PROVIDER_GROUPS[g].channels) {
+      if (!isConfigured(id) && id !== provider) continue;
+      const o = el('option', '', l);
+      o.value = id;
+      chSelect.append(o);
+    }
+    chSelect.value = provider;
+    chSelect.addEventListener('change', () => {
+      logEvent('session', 'provider_change', { from: provider, to: chSelect.value, channel: true });
+      provider = chSelect.value;
+      channelChoice[g] = provider;
+      save(LS.channels, channelChoice);
+      save(LS.provider, provider);
+      syncOpenSection();
+      buildModelsPane();
+    });
+    channelField.append(chLabel, chSelect);
+    pane.append(channelField);
+  }
+
+  // 接入与服务 handle: the calm doorway to the developer drawer.
+  const dev = el('button', 'devopen');
+  dev.type = 'button';
+  dev.setAttribute('aria-controls', 'dev-panel');
+  const state = el('span', 'devopen-state', $('#dev-panel')?.hidden === false ? '已打开 · 收起' : '打开 →');
+  state.id = 'devopen-state';
+  dev.append(
+    el('span', 'devopen-name', '接入与服务'),
+    el('span', 'devtag', '开发者'),
+    el('span', 'devopen-note', '配置密钥与端点，日常使用无需改动'),
+    state,
+  );
+  dev.addEventListener('click', () => setDevPanel($('#dev-panel')?.hidden !== false));
+  pane.append(dev);
 }
 
 /** 高级 corner of 模型服务 — the static-hosting-only server address. */
@@ -1390,16 +1762,30 @@ function buildProviderAdvanced() {
   host.append(details);
 }
 
-/** Rebuild all three settings panes; open the selected provider's section. */
+/** Rebuild all settings panes; open the selected provider's drawer row.
+ * (Name/signature stable — called from boot, login and initProviders.) */
 function buildProviderSections() {
   providerBox.replaceChildren();
-  for (const info of providerInfos) {
-    providerBox.append(providerSection(info));
+  // 国内/国际 grouping (接入与服务 drawer): DRAWER_META declaration order,
+  // unknown future providers fall to the end of 国际服务.
+  const order = Object.keys(DRAWER_META);
+  const byMeta = (a, b) => {
+    const ia = order.indexOf(a.id); const ib = order.indexOf(b.id);
+    return (ia === -1 ? order.length : ia) - (ib === -1 ? order.length : ib);
+  };
+  const cn = providerInfos.filter((p) => DRAWER_META[p.id]?.region === 'cn').sort(byMeta);
+  const intl = providerInfos.filter((p) => DRAWER_META[p.id]?.region !== 'cn').sort(byMeta);
+  if (cn.length) {
+    providerBox.append(el('div', 'dev-group', '国内服务'));
+    for (const info of cn) providerBox.append(providerSection(info));
   }
+  providerBox.append(el('div', 'dev-group', '国际服务'));
+  for (const info of intl) providerBox.append(providerSection(info));
   providerBox.append(customSection());
   syncOpenSection();
   buildProviderAdvanced();
-  buildGeneralPane();
+  buildUiPane();
+  buildModelsPane();
   // 用户中心 is the ONE home for everything now — the profile pane is always
   // real (signed-in it syncs to the account via saveProfile; local otherwise).
   buildProfilePane();
@@ -1546,14 +1932,94 @@ async function switchCourse(id) {
 let bpTab = load(LS.bpTab, 'list');
 let bpHidden = load(LS.bpHidden, false);
 let bpRenderKey = ''; // courseId:version:tab — unchanged key skips the re-render, keeping fold/scroll state
+let wbTab = load(LS.wbTab, 'bp'); // 工作台 top-level tab: 'bp' | 'cards'
+let wbCardsRenderKey = ''; // course:sig — unchanged key keeps the queue's DOM (focus, scroll)
 
-/** Reveal the workspace panel (chat chip / FAB click-through). Below the
- * desktop breakpoint it opens as the full-height sheet. */
-function openBlueprintPanel() {
+// -- living question-card answer set (§5c): ONE set per course (only the
+// newest agent turn collects answers), shared by the chat carousel and the
+// 工作台 queue. Survives reloads via localStorage.
+let qcardSets = load(LS.qcards, {});
+const cardViewSyncs = new Set(); // live renderers to repaint after a cross-view edit
+function cardSetSig(questions) { return (questions || []).map((q) => q.text).join(''); }
+function activeCardSet() { return qcardSets[commentCourseKey()] ?? null; }
+function setActiveCardSet(set) {
+  const key = commentCourseKey();
+  if (set) qcardSets = { ...qcardSets, [key]: set };
+  else { qcardSets = { ...qcardSets }; delete qcardSets[key]; }
+  save(LS.qcards, qcardSets);
+  wbCardsRenderKey = ''; // structure changed → queue must re-render
+  cardViewSyncs.clear();
+}
+function onCardChange() {
+  save(LS.qcards, qcardSets);
+  for (const fn of cardViewSyncs) { try { fn(); } catch { /* view left the DOM */ } }
+  refreshStageTray();
+  refreshWorkbenchBadges();
+  scheduleWorkbenchMirror();
+}
+
+/** Snapshot of the teacher's unsent 工作台 state — 批注 + living card
+ * answers. Rides the session-log export and mirrors to the server (admin
+ * exports must show work-in-progress, not only sent messages). */
+function workbenchSnapshot() {
+  const set = activeCardSet();
+  return {
+    blueprint_comments: Object.values(commentsForCourse()),
+    question_cards: set ? {
+      questions: set.questions.map((q) => ({ text: q.text, ...(q.why ? { why: q.why } : {}) })),
+      answers: set.answers.map((a) => ({ value: a.value, skipped: Boolean(a.skipped), locked: Boolean(a.locked) })),
+    } : null,
+  };
+}
+
+// Debounced server mirror (persistence tier only): scratch state, fire-and-
+// forget — offline failures are fine, localStorage stays the local truth.
+let wbMirrorTimer = null;
+function scheduleWorkbenchMirror() {
+  if (!persistenceActive() || !activeCourseId) return;
+  clearTimeout(wbMirrorTimer);
+  wbMirrorTimer = setTimeout(async () => {
+    try {
+      await fetch(apiUrl(`/api/courses/${activeCourseId}/workbench`), {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify(workbenchSnapshot()),
+      });
+    } catch { /* offline: next edit reschedules */ }
+  }, 800);
+}
+
+/** Reveal the 工作台 (chat chip / FAB click-through). Below the desktop
+ * breakpoint it opens as the full-height sheet. */
+function openBlueprintPanel(tab) {
   bpHidden = false;
   save(LS.bpHidden, false);
+  if (tab === 'bp' || tab === 'cards') { wbTab = tab; save(LS.wbTab, wbTab); }
   if (!window.matchMedia('(min-width: 1100px)').matches) document.body.classList.add('bp-sheet');
   refreshBlueprintPanel();
+}
+
+/** Pending counts for badges: cards still needing the teacher (unlocked) and
+ * blueprint nodes not yet confirmed. */
+function workbenchPending() {
+  const set = activeCardSet();
+  const cards = set ? set.answers.filter((a) => !a.locked).length : 0;
+  const bp = courseState?.course_plan_blueprint;
+  const bpPending = bp?.modules?.length
+    ? countUnconfirmed(normalizeBlueprint({ modules: bp.modules }).modules)
+    : 0;
+  return { cards, bpPending };
+}
+function refreshWorkbenchBadges() {
+  const { cards, bpPending } = workbenchPending();
+  const setBadge = (id, n) => {
+    const b = $(id);
+    if (!b) return;
+    b.hidden = n === 0;
+    b.textContent = String(n);
+  };
+  setBadge('#wb-cards-badge', cards);
+  setBadge('#wb-bp-badge', bpPending);
+  setBadge('#bp-fab-badge', cards + bpPending);
 }
 
 function refreshBlueprintPanel() {
@@ -1561,12 +2027,53 @@ function refreshBlueprintPanel() {
   const fab = $('#btn-blueprint');
   if (!panel || !fab) return;
   const bp = courseState?.course_plan_blueprint;
-  const has = Boolean(bp?.modules?.length);
+  const hasBp = Boolean(bp?.modules?.length);
+  const cardSet = activeCardSet();
+  const hasCards = Boolean(cardSet?.questions?.length);
+  const has = hasBp || hasCards;
   document.body.classList.toggle('has-bp', has && !bpHidden);
   fab.hidden = !has;
   panel.hidden = !has || bpHidden;
+  refreshWorkbenchBadges();
+  refreshStageTray();
   if (!has) return;
-  $('#bp-panel-version').textContent = bp.display_version || `v${bp.version}`;
+  // Top-level 工作台 tabs: fall back to whichever side has content.
+  if (wbTab === 'bp' && !hasBp) wbTab = 'cards';
+  if (wbTab === 'cards' && !hasCards && hasBp) wbTab = 'bp';
+  $('#wb-tab-bp')?.classList.toggle('active', wbTab === 'bp');
+  $('#wb-tab-cards')?.classList.toggle('active', wbTab === 'cards');
+  $('#bp-head-controls').hidden = wbTab !== 'bp';
+  $('#bp-panel-body').hidden = wbTab !== 'bp';
+  $('#wb-cards-body').hidden = wbTab !== 'cards';
+
+  // 问题卡 queue — same living answers as the chat carousel, stacked list.
+  if (wbTab === 'cards') {
+    const cardsBody = $('#wb-cards-body');
+    const cardsKey = `${commentCourseKey()}:${cardSet ? cardSet.sig : 'none'}`;
+    if (cardsKey !== wbCardsRenderKey) {
+      wbCardsRenderKey = cardsKey;
+      if (hasCards) {
+        cardsBody.replaceChildren(renderQuestionCards(cardSet.questions, {
+          variant: 'queue',
+          answers: cardSet.answers,
+          onChange: onCardChange,
+          registerView: (fn) => cardViewSyncs.add(fn),
+        }));
+      } else {
+        cardsBody.replaceChildren(el('div', 'wb-empty', '这一轮没有需要回答的问题卡。'));
+      }
+    }
+  }
+
+  if (!hasBp) {
+    $('#bp-panel-body').replaceChildren(el('div', 'wb-empty', '蓝图还没生成——和我聊聊你的主题，我先给你一版。'));
+    bpRenderKey = '';
+    return;
+  }
+  // 版本 pill: pure engine counter — v0.1, v0.2, v0.3… one step per revision
+  // (absorb / ✓确认 / 批注 delta). The model's version string is advisory
+  // only; display numbering is engine-owned (Herman 2026-07-21, ADR-0003).
+  $('#bp-panel-version').textContent = `v0.${bp.version}`;
   const numbered = numberBlueprint(normalizeBlueprint({ modules: bp.modules }).modules);
   const desktopMap = window.matchMedia('(min-width: 880px)').matches;
   $('#bp-tab-map').hidden = !desktopMap;
@@ -1586,12 +2093,11 @@ function refreshBlueprintPanel() {
   };
   body.replaceChildren(bpTab === 'map' ? renderBlueprintMapView(numbered, opts) : renderBlueprintList(numbered, opts));
   applyBpFilter();
-  refreshCommentBar();
 }
 
 // -- per-node 批注 (spec 2026-07-20): unsent comments live locally per course;
-// one 「一起发送」 packages them into a single teacher message the model
-// answers with blueprint_delta refinements.
+// they STAGE into the composer tray (§5c) and ride the next composer send as
+// one packaged section the model answers with blueprint_delta refinements.
 let bpComments = load(LS.bpComments, {});
 function commentCourseKey() { return activeCourseId || courseState?.course_id || 'local'; }
 function commentsForCourse() { return bpComments[commentCourseKey()] ?? {}; }
@@ -1602,7 +2108,8 @@ function setNodeComment(node, text) {
   else delete bucket[node.id];
   bpComments[key] = bucket;
   save(LS.bpComments, bpComments);
-  refreshCommentBar();
+  refreshStageTray();
+  scheduleWorkbenchMirror();
 }
 /** A node removed by a delta takes its unsent comment with it — an invisible
  * comment the bar still counts would be a lie the teacher can't act on. */
@@ -1620,25 +2127,105 @@ function pruneOrphanComments(numbered) {
   }
 }
 
-function refreshCommentBar() {
-  const bar = $('#bp-comment-bar');
-  if (!bar) return;
-  const n = Object.keys(commentsForCourse()).length;
-  bar.hidden = n === 0;
-  $('#bp-comment-count').textContent = `未发送批注 ${n} 条`;
+// ---------------------------------------- staging tray + the only mouth (§5c)
+
+/** Everything currently staged for the next composer send. */
+function stagedPayload() {
+  const set = activeCardSet();
+  const lockedCount = set ? set.answers.filter((a) => a.locked).length : 0;
+  const comments = Object.values(commentsForCourse());
+  return { set, lockedCount, comments, total: lockedCount + comments.length };
 }
-function sendBlueprintComments() {
-  const rows = Object.values(commentsForCourse());
-  const packed = packBlueprintComments(rows);
-  if (!packed || busy) return;
-  logEvent('user_input', 'blueprint_comments_submit', { count: rows.length, node_ids: rows.map((r) => r.id) });
-  bpComments = { ...bpComments, [commentCourseKey()]: {} };
-  save(LS.bpComments, bpComments);
-  bpRenderKey = ''; // re-render clears the 已批注 button states
+
+function refreshStageTray() {
+  const tray = $('#stage-tray');
+  if (!tray) return;
+  const { lockedCount, comments, total } = stagedPayload();
+  tray.hidden = total === 0;
+  sendBtn.classList.toggle('hold-send', total > 0);
+  sendBtn.title = total > 0 ? '按住 1.2 秒发送（含待发内容）' : '发送';
+  sendBtn.setAttribute('aria-label', sendBtn.title);
+  if (total === 0) { tray.replaceChildren(); return; }
+  tray.replaceChildren();
+  tray.append(el('span', 'stage-tray-label', '待发'));
+  if (lockedCount) {
+    const chip = el('button', 'stage-chip', `${lockedCount} 张答卡`);
+    chip.type = 'button';
+    chip.title = '打开工作台查看已锁定的回答';
+    chip.addEventListener('click', () => openBlueprintPanel('cards'));
+    tray.append(chip);
+  }
+  if (comments.length) {
+    const chip = el('button', 'stage-chip', `${comments.length} 条批注`);
+    chip.type = 'button';
+    chip.title = '打开工作台查看批注';
+    chip.addEventListener('click', () => openBlueprintPanel('bp'));
+    tray.append(chip);
+  }
+  tray.append(el('span', 'stage-tray-hint', '按住发送键一起发出'));
+}
+
+/** The composer send: packages staged card answers + 批注 + typed text into
+ * ONE teacher message (§5c), consumes the staged sources, and hands off to
+ * send(). Plain sends (nothing staged) pass straight through. */
+function composerSend() {
+  if (busy) return;
+  const typed = inputEl.value;
+  const { set, lockedCount, comments } = stagedPayload();
+  const packed = packStagedMessage({
+    cards: lockedCount ? set : null,
+    comments,
+    text: typed,
+  });
+  if (!packed) return;
+  inputEl.value = '';
+  autogrow();
+  if (lockedCount || comments.length) {
+    logEvent('user_input', 'staged_send', {
+      locked_cards: lockedCount,
+      comments: comments.length,
+      node_ids: comments.map((r) => r.id),
+      typed: Boolean(typed.trim()),
+    });
+  }
+  if (lockedCount) {
+    setActiveCardSet(null); // consumed — the batch now lives in the transcript
+    for (const stale of messagesEl.querySelectorAll('.qcards:not(.submitted)')) freezeQuestionCards(stale);
+  }
+  if (comments.length) {
+    bpComments = { ...bpComments, [commentCourseKey()]: {} };
+    save(LS.bpComments, bpComments);
+    bpRenderKey = ''; // re-render clears the 已批注 button states
+  }
   refreshBlueprintPanel();
   // Mobile sheet: sending hands the floor back to the chat.
   document.body.classList.remove('bp-sheet');
   send(packed);
+}
+
+// Hold-to-send (§5c): with staged items the send button becomes a launch
+// button — hold 1.2s, release early cancels. Keyboard: hold Enter (keydown
+// starts, keyup cancels). Plain sends keep the ordinary single click.
+const HOLD_MS = 1200;
+let holdTimer = null;
+let holdFired = false;
+function holdStart() {
+  if (busy || holdTimer) return;
+  holdFired = false; // a new hold always owns its own completion click
+  document.documentElement.style.setProperty('--hold-ms', `${HOLD_MS}ms`);
+  sendBtn.classList.add('holding');
+  holdTimer = setTimeout(() => {
+    holdTimer = null;
+    holdFired = true;
+    sendBtn.classList.remove('holding');
+    composerSend();
+  }, HOLD_MS);
+}
+function holdCancel() {
+  if (!holdTimer) return;
+  clearTimeout(holdTimer);
+  holdTimer = null;
+  sendBtn.classList.remove('holding');
 }
 
 // -- status filter + bulk confirm (Herman: MS-Word-comments ergonomics) --
@@ -1730,9 +2317,27 @@ function wireBlueprintPanel() {
     });
   }
   $('#bp-bulk-confirm')?.addEventListener('click', bulkConfirmVisible);
-  $('#bp-comment-send')?.addEventListener('click', sendBlueprintComments);
   $('#bp-tab-list').addEventListener('click', () => setTab('list'));
   $('#bp-tab-map').addEventListener('click', () => setTab('map'));
+  // 工作台 top-level tabs (§5b): 蓝图 | 问题卡.
+  const setWbTab = (tab) => { wbTab = tab; save(LS.wbTab, tab); refreshBlueprintPanel(); };
+  $('#wb-tab-bp')?.addEventListener('click', () => setWbTab('bp'));
+  $('#wb-tab-cards')?.addEventListener('click', () => setWbTab('cards'));
+  // 图例 + 制作 modals (small paper cards; Esc / scrim / ✕ dismiss).
+  const wireMini = (openBtnId, modalId) => {
+    const modal = $(modalId);
+    if (!modal) return;
+    $(openBtnId)?.addEventListener('click', () => { modal.hidden = false; });
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal || e.target.closest('[data-close-mini]')) modal.hidden = true;
+    });
+  };
+  wireMini('#bp-legend-btn', '#legend-modal');
+  wireMini('#btn-craft', '#craft-modal');
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    for (const m of document.querySelectorAll('.mini-modal-scrim:not([hidden])')) m.hidden = true;
+  });
   $('#bp-panel-close').addEventListener('click', () => {
     bpHidden = true;
     save(LS.bpHidden, true);
@@ -1746,16 +2351,18 @@ function wireBlueprintPanel() {
     if (!window.matchMedia('(min-width: 1100px)').matches) document.body.classList.toggle('bp-sheet');
     refreshBlueprintPanel();
   });
-  // Resizable split (desktop): drag the left edge; width persists.
+  // Resizable split (desktop): drag the left edge; width persists in
+  // localStorage (survives reloads; resets only with site data / another
+  // browser). Wider range since the panel became the 工作台 (§5b).
   const saved = Number(load(LS.bpW, 0));
-  if (saved >= 280 && saved <= 640) document.documentElement.style.setProperty('--bp-w', `${saved}px`);
+  if (saved >= 300 && saved <= 880) document.documentElement.style.setProperty('--bp-w', `${saved}px`);
   const resizer = $('#bp-resizer');
   resizer.addEventListener('pointerdown', (down) => {
     down.preventDefault();
     resizer.setPointerCapture(down.pointerId);
     const move = (ev) => {
       if (!(ev.buttons & 1)) { up(); return; } // canceled drags never keep resizing on hover
-      const w = Math.max(280, Math.min(640, window.innerWidth - ev.clientX));
+      const w = Math.max(300, Math.min(880, window.innerWidth - ev.clientX));
       document.documentElement.style.setProperty('--bp-w', `${w}px`);
     };
     const up = () => {
@@ -2050,25 +2657,30 @@ function showLoginGate() {
 function hideLoginGate() { const g = $('#login-gate'); if (g) g.hidden = true; }
 
 /** Rebuild the 用户中心 modal for the current login state and open it. */
+/** Old deep-link pane keys → the merged nav (nothing may 404). */
+const PANE_ALIAS = { general: 'ui', providers: 'models', devices: 'account' };
+
 /** Switch the 用户中心 modal to one pane (shared by nav clicks and deep links). */
 function activateUserPane(key) {
-  for (const b of document.querySelectorAll('#settings-nav button')) b.classList.toggle('on', b.dataset.pane === key);
-  for (const p of document.querySelectorAll('.modal-pane')) p.classList.toggle('on', p.dataset.pane === key);
+  const k = PANE_ALIAS[key] ?? key;
+  for (const b of document.querySelectorAll('#settings-nav button')) b.classList.toggle('on', b.dataset.pane === k);
+  for (const p of document.querySelectorAll('.modal-pane')) p.classList.toggle('on', p.dataset.pane === k);
+  // The developer drawer belongs to 模型与服务 — leaving that pane closes it.
+  if (k !== 'models') setDevPanel(false);
 }
 
-/** 用户中心 controls everything: 账号/登录 + 教师档案 + 通用 + 模型服务 + 登录设备.
- * The auth panes are rebuilt on every open (they depend on live auth state);
+/** 用户中心 controls everything: 账号与设备 + 教师档案 + 界面与体验 + 模型与服务.
+ * The auth pane is rebuilt on every open (it depends on live auth state);
  * the settings panes are static and owned by buildProviderSections(). */
 function openUserModal(startPane, notice) {
   const accountPane = $('#pane-account');
-  const devicesPane = $('#pane-devices');
   accountPane.replaceChildren();
-  devicesPane.replaceChildren();
 
   const authAvailable = backendOnline && authRequired;
-  $('#nav-account').hidden = !authAvailable;
-  $('#nav-account').textContent = me ? '账号' : '登录';
-  $('#nav-devices').hidden = !(authAvailable && me);
+  const navAccount = $('#nav-account');
+  navAccount.hidden = !authAvailable;
+  navAccount.querySelector('.nav-title').textContent = me ? '账号与设备' : '登录';
+  navAccount.querySelector('.nav-sub').textContent = me ? '昵称 · 密码 · 登录设备' : '账号由管理员创建';
 
   if (!authAvailable) {
     // offline / static hosting: no accounts — settings panes only
@@ -2094,9 +2706,8 @@ function openUserModal(startPane, notice) {
     pane.append(userField, pwField, btn, msg,
       el('p', 'settings-note', '没有账号？账号由管理员在数据管理台创建（首次登录后需要改密码）。不登录也可以用「演示模式」体验，对话只存在本机。'));
   } else {
-    // ---- signed in: 账号 / 登录设备 ----
+    // ---- signed in: 账号与设备 (account + device list, one pane) ----
     const account = accountPane;
-    const devices = devicesPane;
 
     const noticeEl = paneMsg();
     if (notice) noticeEl.textContent = notice;
@@ -2150,18 +2761,15 @@ function openUserModal(startPane, notice) {
     });
     account.append(pwBtn, pwMsg);
 
-    const logoutBtn = el('button', 'text-btn danger', '退出登录');
-    logoutBtn.type = 'button';
-    logoutBtn.addEventListener('click', async () => {
-      await fetch(apiUrl('/api/auth/logout'), { method: 'POST' }).catch(() => {});
-      window.location.reload(); // clean teardown of the persistent UI
-    });
-    account.append(el('p', 'settings-note', '「教师档案」在左边一栏——填了会跟随你的账号，换设备也在。'), logoutBtn);
-
-    // devices
-    devices.append(el('p', 'settings-note', '你的有效登录设备。退出某台设备后，那台设备需要重新登录。'));
+    // devices — same pane, its own quiet section (账号与设备 merge)
+    const devHd = el('div', 'sec-hd');
+    const devMark = el('span', 'sec-mark');
+    devMark.setAttribute('aria-hidden', 'true');
+    devHd.append(devMark, el('h4', 'sec-title', '登录设备'));
+    account.append(devHd);
+    account.append(el('p', 'settings-note', '你的有效登录设备。退出某台设备后，那台设备需要重新登录。'));
     const list = el('div', 'course-list');
-    devices.append(list);
+    account.append(list);
     fetch(apiUrl('/api/me/sessions')).then((r) => r.json()).then((data) => {
       list.replaceChildren();
       for (const s of data.sessions ?? []) {
@@ -2182,6 +2790,14 @@ function openUserModal(startPane, notice) {
       }
       if (!(data.sessions ?? []).length) list.append(el('p', 'settings-note', '没有其他设备。'));
     }).catch(() => list.append(el('p', 'settings-note', '设备列表加载失败。')));
+
+    const logoutBtn = el('button', 'text-btn danger', '退出登录');
+    logoutBtn.type = 'button';
+    logoutBtn.addEventListener('click', async () => {
+      await fetch(apiUrl('/api/auth/logout'), { method: 'POST' }).catch(() => {});
+      window.location.reload(); // clean teardown of the persistent UI
+    });
+    account.append(el('p', 'settings-note', '「教师档案」在左边一栏——填了会跟随你的账号，换设备也在。'), logoutBtn);
   }
 
   activateUserPane(startPane ?? (authAvailable ? 'account' : 'profile'));
@@ -2248,21 +2864,34 @@ function wire() {
     inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
   });
 
+  // Composer send (§5c): plain sends are a single click / Enter; with staged
+  // items the button becomes press-and-hold (pointer or held Enter) — release
+  // early cancels, the linear fill is the countdown.
+  sendBtn.addEventListener('pointerdown', () => {
+    if (stagedPayload().total > 0) holdStart();
+  });
+  for (const evName of ['pointerup', 'pointerleave', 'pointercancel']) {
+    sendBtn.addEventListener(evName, holdCancel);
+  }
   sendBtn.addEventListener('click', () => {
-    const text = inputEl.value;
-    inputEl.value = '';
-    autogrow();
-    send(text);
+    if (holdFired) { holdFired = false; return; } // the hold already sent
+    if (stagedPayload().total > 0) {
+      setStatus('有待发内容——按住发送键 1.2 秒一起发出');
+      setTimeout(() => setStatus(null), 2400);
+      return;
+    }
+    composerSend();
   });
 
   inputEl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      const text = inputEl.value;
-      inputEl.value = '';
-      autogrow();
-      send(text);
+      if (stagedPayload().total > 0) { if (!e.repeat) holdStart(); return; } // hold Enter = same physics
+      composerSend();
     }
+  });
+  inputEl.addEventListener('keyup', (e) => {
+    if (e.key === 'Enter') holdCancel();
   });
   inputEl.addEventListener('input', autogrow);
 
@@ -2282,6 +2911,7 @@ function wire() {
   $('#btn-debug').addEventListener('click', () => { refreshDebug(); openDrawer(debugDrawer); });
   $('#close-settings').addEventListener('click', closeDrawers);
   $('#close-debug').addEventListener('click', closeDrawers);
+  $('#close-devpanel').addEventListener('click', () => setDevPanel(false));
 
   // 用户中心: left-nav pane switching + scrim click closes
   $('#settings-nav').addEventListener('click', (e) => {
@@ -2356,7 +2986,7 @@ function wire() {
     }
   });
 
-  // model + 线路 change handlers live in buildGeneralPane (the select is built there)
+  // model-card + 线路 change handlers live in buildModelsPane (built there)
 }
 
 // -------------------------------------------------------------------- boot
@@ -2372,6 +3002,9 @@ function boot() {
       api_base: apiBase || '(same-origin)',
       course_id: courseState?.course_id ?? null,
       stage: courseState?.stage ?? null,
+      // 工作台 work-in-progress rides every export (Herman 2026-07-21):
+      // unsent 批注 + the living card answers, not just what was sent.
+      workbench: workbenchSnapshot(),
     }),
   });
   logEvent('session', 'boot', {

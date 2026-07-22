@@ -30,8 +30,17 @@ function trace(mode, stage, nodes, principles, stateNotes) {
  */
 export function mockTurn(state, history, message, opts = {}) {
   // 蓝图批注 (spec 2026-07-20): a packaged per-node comment message answers
-  // with blueprint_delta refinements, whatever mode the course is in.
-  if (/^【蓝图批注】/.test(message) && state.course_plan_blueprint?.modules?.length) {
+  // with blueprint_delta refinements, whatever mode the course is in. Matched
+  // per-line (not message-start) because the staged composer may pack 批注
+  // after other sections. But a §5c one-mouth send can ALSO carry a
+  // 【问题卡回复】 section, and turnBlueprintComments answers 批注 only — routing
+  // a combined send here silently drops the card answers, including 儿童原话 the
+  // teacher typed. Card answers are the higher-stakes content, so a combined
+  // send falls through to the normal flow (which reads the answers); a
+  // 批注-only send still gets the refinement reply. (mock can only run one flow
+  // per turn; ponytail: prioritise the content whose loss actually harms.)
+  if (/^【蓝图批注】/m.test(message) && !/^【问题卡回复】/m.test(message)
+      && state.course_plan_blueprint?.modules?.length) {
     return turnBlueprintComments(state, message);
   }
   // WF01 has not run yet → entry recognition on first contact (状态机优先).
@@ -83,7 +92,8 @@ function answersOnly(message) {
   return String(message)
     .replace(/^【问题卡回复】\s*/m, '')
     .replace(/^\d+[.、]\s*「[^」]*」：/gm, '')
-    .replace(/（跳过）/g, '');
+    .replace(/（跳过）/g, '')
+    .replace(/（暂未回答）/g, '');
 }
 
 function hasFieldFeedback(message) {

@@ -170,11 +170,18 @@ export function validateTurn(turn, state, opts = {}) {
   // (or hedged) — 预设 can say anything about children as long as it is
   // visibly a 预设. Density: blueprint turns keep ≤3 gap cards (warn).
   const blueprints = turn.artifacts.filter((a) => a && a.type === 'blueprint');
+  // Blueprint node text is child-facing (the nodes become the actual course
+  // activities), so it must meet the adult-slogan rule in section 4 too. The
+  // rebalance (ADR-0003) makes the blueprint the whole deliverable, so a slogan
+  // hiding in a node body would otherwise sail past non-negotiable #3. Collected
+  // here during the walk we already do; consumed below.
+  const blueprintNodeText = [];
   if (blueprints.length) {
     const offenders = [];
     const walk = (node, path) => {
       if (!node || typeof node !== 'object') return;
       const text = `${node.title ?? ''}。${node.body ?? ''}`;
+      blueprintNodeText.push(text);
       const tentative = node.status === 'hypothesis' || node.status === 'pending_validation';
       if (!tentative && CHILD_CLAIM_RE.test(text) && !HEDGE_RE.test(text)) {
         offenders.push(path || node.id || '(未命名节点)');
@@ -229,6 +236,7 @@ export function validateTurn(turn, state, opts = {}) {
         const { adult_phrasings_to_avoid, ...rest } = a.data ?? {};
         return JSON.stringify(rest);
       }),
+    ...blueprintNodeText, // blueprint nodes are child-facing script (ADR-0003)
     turn.closure_loop ? CLOSURE_KEYS.map((k) => turn.closure_loop[k]).join(' ') : '',
   ].join(' ');
   for (const slogan of ADULT_SLOGANS) {

@@ -155,6 +155,27 @@ test('adult slogan: still fires elsewhere in the same artifact carrying the exem
   assert.ok(v.some((x) => x.kind === 'adult_slogan'));
 });
 
+// Blueprint nodes are child-facing script and, under ADR-0003, the whole
+// deliverable — so the slogan rule (non-negotiable #3) must reach them. Both
+// directions: a slogan in a node body blocks; a clean node stays silent.
+test('adult slogan: fires inside a blueprint node body', () => {
+  const t = goodTurn({ artifacts: [{ type: 'blueprint', title: '预设蓝图', data: {
+    version: 'v0.1',
+    modules: [{ id: 'm1', title: '第一周', body: '带孩子理解传承精神', status: 'hypothesis' }],
+  } }] });
+  const v = validateTurn(t, createInitialState('c1'));
+  assert.ok(v.some((x) => x.kind === 'adult_slogan'), 'a slogan in a blueprint node must fire #3');
+});
+
+test('adult slogan: silent on a clean child-actionable blueprint node', () => {
+  const t = goodTurn({ artifacts: [{ type: 'blueprint', title: '预设蓝图', data: {
+    version: 'v0.1',
+    modules: [{ id: 'm1', title: '第一周', body: '带孩子到祠堂前看醒狮，数一数狮头有几种颜色', status: 'hypothesis' }],
+  } }] });
+  const v = validateTurn(t, createInitialState('c1'));
+  assert.equal(v.filter((x) => x.kind === 'adult_slogan').length, 0);
+});
+
 test('adult slogan: silent in teacher-backstage question_pool cultural hints', () => {
   const t = goodTurn({ artifacts: [{ type: 'question_pool', title: '问题池', data: { hint: '教师后台可关注：这背后有代际传承的生活经验（不讲给孩子）' } }] });
   const v = validateTurn(t, createInitialState('c1'));

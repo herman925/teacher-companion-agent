@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { normalizeBlueprint, countUnconfirmed, packBlueprintComments } from '../src/blueprint-util.mjs';
+import { normalizeBlueprint, countUnconfirmed, packBlueprintComments, packStagedMessage } from '../src/blueprint-util.mjs';
 import { parseTurn, validateTurn } from '../src/harness.mjs';
 import { createInitialState, applyDelta, absorbBlueprint, applyBlueprintDelta } from '../src/engine.mjs';
 import { mockTurn, parseBlueprintComments } from '../src/mock.mjs';
@@ -49,6 +49,51 @@ test('parseBlueprintComments round-trips what packBlueprintComments emits', () =
   ]);
   const rows = parseBlueprintComments(packed);
   assert.deepEqual(rows, [{ label: '2 网络图', id: 'network_map', text: '方向太多，收拢到三个' }]);
+});
+
+// ---------- packStagedMessage (§5c: the composer is the only mouth) ----------
+
+test('packStagedMessage composes card answers + 批注 + free text into one message', () => {
+  const packed = packStagedMessage({
+    cards: {
+      questions: [{ text: '班里孩子见过龙舟吗' }, { text: '想排几周' }, { text: '园里有水域吗' }],
+      answers: [
+        { value: '大部分见过，端午有巡游', skipped: false, locked: true },
+        { value: '', skipped: true, locked: true },
+        { value: '还没想好', skipped: false, locked: false },
+      ],
+    },
+    comments: [{ id: 'week_plan', number: '3', title: '周计划', text: '按两周排' }],
+    text: '另外材料预算不多',
+  });
+  const [cardSec, commentSec, freeSec] = packed.split('\n\n');
+  assert.ok(cardSec.startsWith('【问题卡回复】\n'));
+  assert.match(cardSec, /1\. 「班里孩子见过龙舟吗」：大部分见过，端午有巡游/);
+  assert.match(cardSec, /2\. 「想排几周」：（跳过）/, 'locked skip is an explicit 跳过');
+  assert.match(cardSec, /3\. 「园里有水域吗」：（暂未回答）/, 'unlocked cards are honestly 暂未回答');
+  assert.ok(commentSec.startsWith('【蓝图批注】\n'));
+  assert.equal(freeSec, '另外材料预算不多');
+});
+
+test('packStagedMessage: no locked answers → no card section; nothing at all → null', () => {
+  const onlyText = packStagedMessage({
+    cards: { questions: [{ text: 'q' }], answers: [{ value: '写了但没锁', skipped: false, locked: false }] },
+    comments: [],
+    text: '只发这句',
+  });
+  assert.equal(onlyText, '只发这句', 'unlocked answers never leak into the send');
+  assert.equal(packStagedMessage({}), null);
+  assert.equal(packStagedMessage({ text: '   ' }), null);
+});
+
+test('packStagedMessage sections stay mock-parseable (蓝图批注 mid-message)', () => {
+  const packed = packStagedMessage({
+    cards: { questions: [{ text: '想排几周' }], answers: [{ value: '两周', skipped: false, locked: true }] },
+    comments: [{ id: 'network_map', number: '2', title: '网络图', text: '收拢到三个方向' }],
+  });
+  assert.ok(/^【蓝图批注】/m.test(packed), 'per-line anchor still matches after a card section');
+  const rows = parseBlueprintComments(packed.split('\n\n')[1]);
+  assert.equal(rows[0].id, 'network_map');
 });
 
 // ---------- countUnconfirmed (chip badge) ----------
@@ -107,6 +152,32 @@ test('mock 批注 turn: unknown ids answer honestly with an empty delta', () => 
   assert.ok(parsed.turn);
   assert.equal(parsed.turn.blueprint_delta.length, 0);
   assert.match(parsed.turn.reply_markdown, /没有对上/);
+});
+
+// A §5c one-mouth send can pack a 【问题卡回复】 card section AND a 【蓝图批注】
+// section. turnBlueprintComments answers 批注 only, so routing a combined send
+// there silently drops the card answers — including 儿童原话 the teacher typed.
+// Both directions: 批注-only still refines; combined must NOT take the same path.
+test('§5c combined send is not routed into the 批注-only path that drops card answers', () => {
+  const state = stateWithBlueprint();
+  const comments = [{ id: 'network_map', number: '1', title: '网络图', text: '收拢到孩子问过的方向' }];
+  const commentOnly = packBlueprintComments(comments);
+  const combined = packStagedMessage({
+    cards: {
+      questions: [{ text: '昨天孩子说了什么' }],
+      answers: [{ value: '一个孩子说「龙的胡须会不会动」', skipped: false, locked: true }],
+    },
+    comments,
+  });
+  const bpTurn = parseTurn(mockTurn(state, [], commentOnly)).turn;
+  const combinedTurn = parseTurn(mockTurn(state, [], combined)).turn;
+  // Other direction: 批注-only still takes the refinement path.
+  assert.ok(bpTurn.blueprint_delta.length >= 1, '批注-only send still refines the blueprint');
+  // The fix: a combined send falls through to a normal flow, so it cannot be the
+  // identical 批注-only turn. Reverting the guard (matching 批注 regardless of a
+  // card section) makes both messages route to turnBlueprintComments and this
+  // deep-equal fails.
+  assert.notDeepEqual(combinedTurn, bpTurn, 'combined send must not resolve to the 批注-only reply');
 });
 
 // ---------- title-agent harness ----------

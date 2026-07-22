@@ -110,6 +110,44 @@ export function packBlueprintComments(comments) {
 }
 
 /**
+ * Package one staged composer send (DESIGN.md §5c: the composer is the only
+ * mouth) into ONE teacher message. Sections, in reading order:
+ *   【问题卡回复】 — locked card answers (skips explicit; untouched cards
+ *                   honestly marked 暂未回答 so the model never guesses);
+ *   【蓝图批注】   — via packBlueprintComments;
+ *   free text      — whatever the teacher typed in the composer this send.
+ * Pure and line-anchored on the parse side, same discipline as the two
+ * existing packers it composes.
+ * @param {{
+ *   cards?: {questions: Array<{text: string}>, answers: Array<{value: string, skipped: boolean, locked?: boolean}>}|null,
+ *   comments?: Array<{id: string, number: string, title: string, text: string}>,
+ *   text?: string,
+ * }} staged
+ * @returns {string|null} packed message, or null when nothing at all to send
+ */
+export function packStagedMessage({ cards, comments, text } = {}) {
+  const sections = [];
+  const qs = cards?.questions ?? [];
+  const as = cards?.answers ?? [];
+  const anyLocked = as.some((a) => a?.locked);
+  if (qs.length && anyLocked) {
+    const lines = qs.map((q, i) => {
+      const a = as[i] ?? { value: '', skipped: false, locked: false };
+      const answer = a.locked
+        ? (a.skipped || !String(a.value ?? '').trim() ? '（跳过）' : String(a.value).trim())
+        : '（暂未回答）';
+      return `${i + 1}. 「${q.text}」：${answer}`;
+    });
+    sections.push(`【问题卡回复】\n${lines.join('\n')}`);
+  }
+  const packedComments = packBlueprintComments(comments || []);
+  if (packedComments) sections.push(packedComments);
+  const free = String(text ?? '').trim();
+  if (free) sections.push(free);
+  return sections.length ? sections.join('\n\n') : null;
+}
+
+/**
  * Flatten a numbered tree into [{number, id, title, status}] rows — the
  * number→id snapshot that later lets a teacher's 「把2.3换掉」 resolve against
  * the version they actually saw (Phase 3 uses this; kept here so the mapping

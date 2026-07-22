@@ -180,39 +180,87 @@
 
   <main class="chat-main" id="messages" aria-live="polite"></main>
 
-  <!-- 蓝图 workspace panel (DESIGN.md §5b): the LIVING mother plan, rendered
-       from course_state.course_plan_blueprint — chat cards stay historical
-       snapshots. Desktop ≥1100px: resizable right panel. Mobile: full-height
-       sheet via the 蓝图 button; 导图 tab is desktop-only. -->
-  <aside class="bp-panel" id="bp-panel" aria-label="课程预设蓝图" hidden>
+  <!-- 工作台 panel (DESIGN.md §5b, 2026-07-20 evening): the single home of
+       everything needing the teacher's interactive input — 蓝图 (living mother
+       plan) + 问题卡 (living answer queue). The panel NEVER sends; every act
+       stages into the composer tray (§5c). Desktop ≥1100px: resizable right
+       panel. Mobile: full-height sheet via the 工作台 edge button. -->
+  <aside class="bp-panel" id="bp-panel" aria-label="工作台" hidden>
     <div class="bp-panel-resizer" id="bp-resizer" aria-hidden="true"></div>
     <header class="bp-panel-head">
-      <span class="artifact-seal">预设蓝图</span>
-      <div class="bp-view-toggle bp-panel-tabs">
-        <button type="button" class="bp-view-btn active" id="bp-tab-list">列表</button>
-        <button type="button" class="bp-view-btn" id="bp-tab-map">导图</button>
+      <div class="wb-tabs" role="tablist" aria-label="工作台">
+        <button type="button" class="wb-tab active" id="wb-tab-bp" role="tab">蓝图<span class="wb-badge" id="wb-bp-badge" hidden></span></button>
+        <button type="button" class="wb-tab" id="wb-tab-cards" role="tab">问题卡<span class="wb-badge wb-badge-red" id="wb-cards-badge" hidden></span></button>
+        <button type="button" class="craft-btn" id="btn-craft">制作</button>
+        <button type="button" class="icon-btn bp-panel-close" id="bp-panel-close" aria-label="收起工作台">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18"></path>
+          </svg>
+        </button>
       </div>
-      <span class="bp-version" id="bp-panel-version"></span>
-      <div class="bp-filter-row" aria-label="按状态筛选">
-        <button type="button" class="bp-filter-pill bp-confirmed" data-filter="confirmed">已确认</button>
-        <button type="button" class="bp-filter-pill bp-teacher_preset" data-filter="teacher_preset">老师预设</button>
-        <button type="button" class="bp-filter-pill bp-ai_suggestion" data-filter="ai_suggestion">AI建议</button>
-        <button type="button" class="bp-filter-pill bp-hypothesis" data-filter="hypothesis">待验证</button>
-        <button type="button" class="text-btn bp-bulk" id="bp-bulk-confirm" hidden>✓确认可见</button>
+      <div class="bp-head-controls" id="bp-head-controls">
+        <div class="bp-view-toggle bp-panel-tabs">
+          <button type="button" class="bp-view-btn active" id="bp-tab-list">列表</button>
+          <button type="button" class="bp-view-btn" id="bp-tab-map">导图</button>
+        </div>
+        <button type="button" class="text-btn bp-legend-btn" id="bp-legend-btn">图例</button>
+        <span class="bp-version" id="bp-panel-version"></span>
+        <div class="bp-filter-row" aria-label="按状态筛选">
+          <button type="button" class="bp-filter-pill bp-confirmed" data-filter="confirmed">已确认</button>
+          <button type="button" class="bp-filter-pill bp-teacher_preset" data-filter="teacher_preset">老师预设</button>
+          <button type="button" class="bp-filter-pill bp-ai_suggestion" data-filter="ai_suggestion">AI建议</button>
+          <button type="button" class="bp-filter-pill bp-hypothesis" data-filter="hypothesis">待验证</button>
+          <button type="button" class="text-btn bp-bulk" id="bp-bulk-confirm" hidden>✓确认可见</button>
+        </div>
       </div>
-      <button type="button" class="icon-btn bp-panel-close" id="bp-panel-close" aria-label="收起蓝图面板">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-          <path d="M6 6l12 12M18 6L6 18"></path>
-        </svg>
-      </button>
     </header>
     <div class="bp-panel-body" id="bp-panel-body"></div>
-    <footer class="bp-comment-bar" id="bp-comment-bar" hidden>
-      <span id="bp-comment-count">未发送批注 0 条</span>
-      <button type="button" class="text-btn" id="bp-comment-send">一起发送</button>
-    </footer>
+    <div class="bp-panel-body wb-cards-body" id="wb-cards-body" hidden></div>
   </aside>
-  <button type="button" class="bp-fab" id="btn-blueprint" hidden>蓝图</button>
+  <button type="button" class="bp-fab" id="btn-blueprint" hidden>工作台<span class="wb-badge wb-badge-red bp-fab-badge" id="bp-fab-badge" hidden></span></button>
+
+  <!-- 图例 modal: what every status colour / line style means, both renderers. -->
+  <div class="mini-modal-scrim" id="legend-modal" hidden>
+    <div class="mini-modal" role="dialog" aria-modal="true" aria-label="蓝图图例">
+      <div class="mini-modal-head">
+        <h3>蓝图图例</h3>
+        <button type="button" class="icon-btn" data-close-mini aria-label="关闭">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+        </button>
+      </div>
+      <ul class="legend-list">
+        <li><span class="bp-chip bp-confirmed">已确认</span><span>你亲自确认过的内容——实心绿是整个蓝图里唯一代表「定了」的颜色。</span></li>
+        <li><span class="bp-chip bp-teacher_preset">老师预设</span><span>你自己提出、还没最终确认的设想（信任蓝底）。</span></li>
+        <li><span class="bp-chip bp-ai_suggestion">AI建议</span><span>我根据已有信息提出的建议，等你取舍（柿色底）。</span></li>
+        <li><span class="bp-chip bp-hypothesis">预设·待验证</span><span>还没发生的儿童反应，一律只算预设——紫色底、虚线边，开课后才可能被验证。</span></li>
+        <li><span class="legend-dash" aria-hidden="true"></span><span>虚线（边框或导图连线）都表示「尚未在现场核实」。</span></li>
+        <li><span class="bp-rollup legend-rollup">n 项待确认</span><span>折叠的分支上，这个角标统计里面还有多少项等你过目。</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 制作 modal: placeholder for the document generators (敬请期待). -->
+  <div class="mini-modal-scrim" id="craft-modal" hidden>
+    <div class="mini-modal" role="dialog" aria-modal="true" aria-label="制作">
+      <div class="mini-modal-head">
+        <h3>制作</h3>
+        <button type="button" class="icon-btn" data-close-mini aria-label="关闭">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+        </button>
+      </div>
+      <p class="craft-intro">蓝图确认到位之后，这里会把它变成拿得出手的文档：</p>
+      <ul class="craft-list">
+        <li>
+          <div class="craft-item-head"><strong>完整方案文档</strong><span class="craft-soon">敬请期待</span></div>
+          <p>把已确认的蓝图打包成一份可下载的 Word 方案（.docx）：学习目标、评价量表、课程序列表、材料清单，一次备齐。</p>
+        </li>
+        <li>
+          <div class="craft-item-head"><strong>活动方案</strong><span class="craft-soon">敬请期待</span></div>
+          <p>课程序列里的每个活动，单独生成可打印的活动方案。方案定稿之后才开放——活动先有固定的位置，教案才不会跑偏。</p>
+        </li>
+      </ul>
+    </div>
+  </div>
 
   <div class="composer">
     <div class="composer-inner">
@@ -220,6 +268,7 @@
         <span class="status-caret" aria-hidden="true"></span>
         <span id="status-text"></span>
       </div>
+      <div class="stage-tray" id="stage-tray" hidden></div>
       <div class="composer-row">
         <textarea class="input-field" id="input" rows="1"
           placeholder="和我说说你手边的资源，或者现场发生的事…" aria-label="输入消息"></textarea>
@@ -250,25 +299,50 @@
       </div>
       <div class="modal-body">
         <nav class="modal-nav" id="settings-nav" aria-label="用户中心分区">
-          <button type="button" id="nav-account" data-pane="account" hidden>账号</button>
-          <button type="button" class="on" data-pane="profile">教师档案</button>
-          <button type="button" data-pane="general">通用</button>
-          <button type="button" data-pane="providers">模型服务</button>
-          <button type="button" id="nav-devices" data-pane="devices" hidden>登录设备</button>
+          <button type="button" id="nav-account" data-pane="account" hidden>
+            <span class="nav-glyph g-acct" aria-hidden="true"></span>
+            <span class="nav-text"><span class="nav-title">账号与设备</span><span class="nav-sub">昵称 · 密码 · 登录设备</span></span>
+          </button>
+          <button type="button" class="on" data-pane="profile">
+            <span class="nav-glyph g-file" aria-hidden="true"></span>
+            <span class="nav-text"><span class="nav-title">教师档案</span><span class="nav-sub">地区 · 教龄 · 回应风格</span></span>
+          </button>
+          <button type="button" data-pane="ui">
+            <span class="nav-glyph g-sun" aria-hidden="true"></span>
+            <span class="nav-text"><span class="nav-title">界面与体验</span><span class="nav-sub">外观 · 操作偏好</span></span>
+          </button>
+          <button type="button" data-pane="models">
+            <span class="nav-glyph g-model" aria-hidden="true"><i></i></span>
+            <span class="nav-text"><span class="nav-title">模型与服务</span><span class="nav-sub">选模型 · 随时可换</span></span>
+          </button>
         </nav>
         <div class="modal-panes">
           <section class="modal-pane" id="pane-account" data-pane="account"></section>
           <section class="modal-pane on" id="pane-profile" data-pane="profile"></section>
-          <section class="modal-pane" id="pane-general" data-pane="general"></section>
-          <section class="modal-pane" id="pane-providers" data-pane="providers">
-            <div id="provider-box"></div>
-            <p class="settings-note">密钥和模型 id 只保存在这台设备的浏览器里，随请求直接发给所选服务，不经过第三方。规划中：未来这里会简化为「官方服务」（平台代管密钥与用量）与「自备密钥」两种方式。</p>
-            <div id="provider-advanced"></div>
-          </section>
-          <section class="modal-pane" id="pane-devices" data-pane="devices"></section>
+          <section class="modal-pane" id="pane-ui" data-pane="ui"></section>
+          <section class="modal-pane" id="pane-models" data-pane="models"></section>
         </div>
       </div>
     </div>
+    <!-- 接入与服务 (developer drawer): the technical half of 模型与服务 — keys,
+         endpoints, capability toggles. Slides out beside the modal on desktop,
+         full-height right sheet below 1100px. Content built by JS. -->
+    <aside class="dev-panel" id="dev-panel" hidden aria-label="接入与服务（开发者）">
+      <div class="dev-panel-head">
+        <h3>接入与服务</h3>
+        <span class="devtag">开发者</span>
+        <button type="button" class="icon-btn" id="close-devpanel" aria-label="关闭接入与服务">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18"></path>
+          </svg>
+        </button>
+      </div>
+      <p class="settings-note dev-panel-note">配置模型服务商与密钥。日常备课不需要进入这里。</p>
+      <p class="settings-note dev-panel-note dev-panel-soon">「深度思考」「联网搜索」开关会保存设置，即将随对话请求生效。</p>
+      <div id="provider-box"></div>
+      <p class="settings-note">密钥和模型 id 只保存在这台设备的浏览器里，随请求直接发给所选服务，不经过第三方。规划中：未来这里会简化为「官方服务」（平台代管密钥与用量）与「自备密钥」两种方式。</p>
+      <div id="provider-advanced"></div>
+    </aside>
   </div>
 
   <aside class="drawer debug-drawer" id="debug-drawer" aria-label="调试">
