@@ -37,7 +37,20 @@
     },
     "tempCleanup": {
       "level": "warn"
+    },
+    "exportDuty": {
+      "level": "warn",
+      "note": "DESIGN.md §6b proxy: a staged commit that ADDS a new cst.* client-state key in demo/src/ui/ without touching any export/observability surface in the same change gets a reminder. Deterministic proxy for 'the data trail was designed', added 2026-07-21 (Herman)."
     }
+  },
+  "exportDuty": {
+    "observabilityPaths": [
+      "demo/src/ui/session-log.mjs",
+      "demo/serve.mjs",
+      "demo/src/store/",
+      "demo/DESIGN.md"
+    ],
+    "note": "Touching any of these in the same commit counts as having considered the data trail. Directories end with '/'."
   },
   "tempCleanup": {
     "paths": [

@@ -9,6 +9,12 @@
 //                 Soft (warn-level) by default: HANDOFF.md may not exist yet in
 //                 this young repo, so the reminder nudges without blocking.
 //   tempCleanup — scratch/temp paths are non-empty; prompt a cleanup.
+//   exportDuty  — a NEW client-state key (cst.*) is staged in demo/src/ui/
+//                 without any export/observability surface in the same commit
+//                 (DESIGN.md §6b: a feature is not designed until its data
+//                 trail is designed). Deterministic proxy, warn-level: it
+//                 cannot prove the consideration happened, only notice when
+//                 it visibly did not.
 //
 // Pure except for fs.existsSync against rootDir (so tests point rootDir at a temp dir).
 
@@ -26,7 +32,7 @@ function nonEmpty(p) {
   } catch { return false; }
 }
 
-export function computeReminders({ rootDir, stagedFiles = [], config = {} }) {
+export function computeReminders({ rootDir, stagedFiles = [], config = {}, uiStagedDiff = '' }) {
   const level = (name, dflt) => (config.checks && config.checks[name] && config.checks[name].level) || dflt;
   const staged = stagedFiles.map(norm);
   const committing = staged.length > 0;
@@ -55,6 +61,35 @@ export function computeReminders({ rootDir, stagedFiles = [], config = {} }) {
     out.push(present.length
       ? { name: 'tempCleanup', fire: true, level: tLevel, msg: `Temp clutter detected (${present.join(', ')}). Review and clean it, or run \`npm run clean:temp -- --apply\` (a temp-janitor style review should confirm before deleting).` }
       : { name: 'tempCleanup', fire: false, level: tLevel });
+  }
+
+  // ---- export duty (DESIGN.md §6b / AGENTS.md observable-and-exportable rule) ----
+  const eLevel = level('exportDuty', 'warn');
+  if (eLevel !== 'off') {
+    const keyRe = /['"](cst\.[A-Za-z0-9_.-]+)['"]/g;
+    // New keys = keys on added lines that are not also on removed lines — a
+    // moved/reformatted existing key must not fire.
+    const keysOn = (prefix) => {
+      const keys = new Set();
+      for (const line of String(uiStagedDiff).split('\n')) {
+        if (!line.startsWith(prefix)) continue;
+        if (line.startsWith('+++') || line.startsWith('---')) continue; // diff headers
+        for (const m of line.matchAll(keyRe)) keys.add(m[1]);
+      }
+      return keys;
+    };
+    const removed = keysOn('-');
+    const fresh = [...keysOn('+')].filter(k => !removed.has(k));
+    const surfaces = (config.exportDuty && config.exportDuty.observabilityPaths) || [
+      'demo/src/ui/session-log.mjs', 'demo/serve.mjs', 'demo/src/store/', 'demo/DESIGN.md',
+    ];
+    const touched = surfaces.some(p => {
+      const s = norm(p);
+      return s.endsWith('/') ? staged.some(f => f.startsWith(s)) : staged.includes(s);
+    });
+    out.push(fresh.length && !touched
+      ? { name: 'exportDuty', fire: true, level: eLevel, msg: `New client-state key(s) ${fresh.join(', ')} staged without touching any export/observability surface (session-log / serve / store / DESIGN.md). DESIGN.md §6b: a feature is not designed until its data trail is designed — wire the exports, or state in DESIGN.md why this state is client-only.` }
+      : { name: 'exportDuty', fire: false, level: eLevel });
   }
 
   return out;

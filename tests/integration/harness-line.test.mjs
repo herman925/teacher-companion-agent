@@ -329,6 +329,55 @@ test('LINE reminder: level "off" suppresses the reminder entirely', () => {
   const out = reminders.computeReminders({ rootDir: d, stagedFiles: [], config: { checks: { handoff: { level: 'off' } } } });
   assert.equal(remOf(out, 'handoff'), undefined);
 });
+
+// ---- exportDuty (DESIGN.md §6b proxy): both directions ----
+const uiDiffAddingKey = [
+  '+++ b/demo/src/ui/main.js',
+  '--- a/demo/src/ui/main.js',
+  "+  myFeature: 'cst.myFeature', // new widget state",
+].join('\n');
+test('LINE reminder\\exportDuty: FIRES on a new cst.* key with no observability surface staged', () => {
+  const d = remRoot({ handoff: true });
+  const out = reminders.computeReminders({
+    rootDir: d, stagedFiles: ['demo/src/ui/main.js', 'HANDOFF.md'], config: {}, uiStagedDiff: uiDiffAddingKey,
+  });
+  const e = remOf(out, 'exportDuty');
+  assert.equal(e.fire, true);
+  assert.equal(e.level, 'warn');
+  assert.match(e.msg, /cst\.myFeature/);
+  assert.match(e.msg, /§6b/);
+});
+test('LINE reminder\\exportDuty: SILENT when an observability surface rides the same commit', () => {
+  const d = remRoot({ handoff: true });
+  for (const surface of ['demo/src/ui/session-log.mjs', 'demo/serve.mjs', 'demo/src/store/json-store.mjs', 'demo/DESIGN.md']) {
+    const out = reminders.computeReminders({
+      rootDir: d, stagedFiles: ['demo/src/ui/main.js', surface], config: {}, uiStagedDiff: uiDiffAddingKey,
+    });
+    assert.equal(remOf(out, 'exportDuty').fire, false, `${surface} should satisfy the duty`);
+  }
+});
+test('LINE reminder\\exportDuty: SILENT when the key merely moved (also on a removed line)', () => {
+  const d = remRoot({ handoff: true });
+  const movedDiff = [
+    "-  old: 'cst.myFeature',",
+    "+  renamedSlot: 'cst.myFeature', // same key, reshuffled",
+  ].join('\n');
+  const out = reminders.computeReminders({
+    rootDir: d, stagedFiles: ['demo/src/ui/main.js'], config: {}, uiStagedDiff: movedDiff,
+  });
+  assert.equal(remOf(out, 'exportDuty').fire, false);
+});
+test('LINE reminder\\exportDuty: SILENT with no cst.* additions at all; off level suppresses', () => {
+  const d = remRoot({ handoff: true });
+  const out = reminders.computeReminders({
+    rootDir: d, stagedFiles: ['demo/src/ui/main.js'], config: {}, uiStagedDiff: '+  const x = 1;\n',
+  });
+  assert.equal(remOf(out, 'exportDuty').fire, false);
+  const off = reminders.computeReminders({
+    rootDir: d, stagedFiles: ['demo/src/ui/main.js'], config: { checks: { exportDuty: { level: 'off' } } }, uiStagedDiff: uiDiffAddingKey,
+  });
+  assert.equal(remOf(off, 'exportDuty'), undefined);
+});
 test('LINE reminder: level "block" is reported as blocking', () => {
   const d = remRoot({ handoff: false });
   const out = reminders.computeReminders({ rootDir: d, stagedFiles: [], config: { checks: { handoff: { level: 'block' } } } });

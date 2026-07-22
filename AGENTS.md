@@ -29,6 +29,7 @@ Two harnesses live here — do not confuse them:
 - **The gate must pass before a commit.** `node harness/gate.mjs` (or `npm run gate`). Don't bypass with `--no-verify` without a stated reason.
 - **The harness asks; it doesn't silently block.** Guarded paths trigger confirmation prompts, not hard failures. Agent-initiated destructive actions (deleting scratch, editing the glossary, bypassing the gate) require explicit user confirmation first.
 - **UI is verified by rendering.** Any change to the demo is verified in a real browser (screenshot or interactive check), never by "the server started."
+- **New state must be observable and exportable — mandatory design consideration.** Every feature that creates or holds state (client or server) must answer, in its design, before it ships: ① does the debug drawer / session log see it? ② does the client-side export (session-log JSON) carry it? ③ does the server-side / admin export carry it — or is it deliberately client-only, with the reason stated? State that exists only inside a widget is a defect, not an omission. (Added 2026-07-21 after 工作台 批注 and card answers initially shipped without export coverage.)
 - **Style.** Plain language a tired teacher could read. Short sentences. No emoji in documentation prose. Full-width punctuation in Chinese prose. Conventional Commits (`feat|fix|docs|design|harness|test|chore|refactor|ci|build|perf`).
 
 ## Layout
