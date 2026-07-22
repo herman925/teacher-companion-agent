@@ -163,6 +163,7 @@ test('material_support: direct text scaffold, no stage change, closure on delive
   assert.ok(turns[0].reply_markdown.includes('调查表'), 'turn 1 delivers the text scaffold directly in the reply');
   assert.ok(turns[0].question && turns[0].question.examples.length >= 2, 'turn 1 asks one scene question');
   assert.equal(turns[1].round_complete, true, 'delivery turn closes the round with a full closure loop');
+  assert.equal(state.awaiting_feedback, false, '素材交付无儿童证据——不得进入等待回传状态');
   assert.ok(traceNodeIds(turns).has('WF22'), 'material_support demonstrates WF22');
 });
 

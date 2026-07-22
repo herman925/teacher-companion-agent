@@ -451,7 +451,7 @@ function turnBlueprintRound2(state, history, message) {
       { id: 'WF03b', name: '资源意图确认', apply: '教师回复即确认——三问静默亮灯，不逐轮追问' },
       { id: 'WF04', name: '主题网络', apply: '网络图经教师确认，状态升级 confirmed' },
       { id: 'WF04b', name: '资源深度网络', apply: '四层并入预设包，意义层保持待验证' },
-    ], ['先给完整方案再一起改', '回传为了优化不为解锁'], '完整预设包 v0.2；awaiting_feedback 置 true'),
+    ], ['先给完整方案再一起改', '回传为了优化不为解锁'], '完整预设包 v0.2；备课期收轮，无儿童证据，引擎不置 awaiting_feedback'),
   };
 }
 

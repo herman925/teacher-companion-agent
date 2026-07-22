@@ -180,10 +180,14 @@ export function applyDelta(state, delta, ctx = {}) {
     }
   }
 
-  // Platform-controlled pacing: a completed round waits for the classroom;
-  // a new teacher message re-opens the conversation.
+  // Platform-controlled pacing: a completed round waits for the classroom —
+  // but only once real child evidence exists (实施/陪跑期). During 备课 the
+  // closure loop points at the plan itself, so there is no 回传 to await
+  // (stage1 rules; HANDOFF [19]). A new teacher message re-opens the
+  // conversation either way. Evidence delivered in this same delta counts:
+  // a 回传-ingest turn that also closes the round starts the wait.
   if (ctx.teacherTurn) next.awaiting_feedback = false;
-  if (ctx.roundComplete) next.awaiting_feedback = true;
+  if (ctx.roundComplete && (next.children_evidence || []).length) next.awaiting_feedback = true;
 
   return { state: next, violations, applied };
 }

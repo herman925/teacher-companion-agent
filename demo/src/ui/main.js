@@ -1820,16 +1820,21 @@ async function initProviders() {
 /** Turn stored message rows (teacher/agent) into the rich transcript shape. */
 function messagesToTranscript(rows) {
   const out = [];
+  // Mirrors the engine's evidence gate: a 备课 round_complete (no child
+  // evidence ingested yet) never showed the 等待回传 note live, so the
+  // restored transcript must not show it either.
+  let evidenceSeen = false;
   for (const m of rows) {
     if (m.role === 'agent') {
       const tc = m.turn_contract || { reply_markdown: m.content };
+      if ((tc.state_delta?.children_evidence || []).length) evidenceSeen = true;
       out.push({
         role: 'assistant',
         content: m.content,
         ev: {
           turn: tc,
           gate_report: { ok: true, violations: [] },
-          state: { awaiting_feedback: Boolean(tc.round_complete) },
+          state: { awaiting_feedback: Boolean(tc.round_complete) && evidenceSeen },
           provider: m.provider ?? null,
           providerLabel: m.provider_label ?? null,
           stageName: m.stage_name ?? null,

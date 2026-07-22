@@ -111,7 +111,9 @@ test('round 2 delta applies cleanly and the flow rejoins the normal from_zero pa
   const { state: s2, violations } = applyDelta(s1, r2.state_delta, { roundComplete: r2.round_complete });
   assert.equal(violations.filter((v) => v.action === 'strip').length, 0, 'no fields stripped from the round-2 delta');
   assert.ok(s2.resource_entry_card, 'entry card persisted');
-  assert.equal(s2.awaiting_feedback, true);
+  // 备课 delivery: no child evidence yet, so the round closes WITHOUT flipping
+  // awaiting_feedback — the teacher confirms the plan, nothing is "awaited".
+  assert.equal(s2.awaiting_feedback, false, '备课 round must not show 等待你带回现场反馈');
   // Next teacher message goes through the ordinary awaiting phase — no blueprint re-trigger.
   const r3 = mockTurn(s2, [], '孩子们围着龙舟模型看了很久，有人问「桨为什么是弯的」');
   assert.ok(!(r3.artifacts || []).some((a) => a.type === 'blueprint'), 'after round 2 the normal flow owns the course');

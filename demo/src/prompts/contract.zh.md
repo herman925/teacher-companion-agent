@@ -40,7 +40,7 @@
 2. 所有向教师提出的问题都放进 `questions` 数组（没有问题时为空数组或省略）：每条完整（text + why + 2–3 个 examples），一条只问一件事。问题**不要**写进 `reply_markdown` 正文——正文出现问句会被拦截。数量不设硬上限，但保持克制：只问本轮真正需要教师回答的；教师会把多张问题卡一次性作答后打包回复你，回复中会按编号引用原问题（跳过的卡会标注「跳过」——跳过本身也是信息）。旧字段 `question`（单个对象）仍被接受，等价于只有一条的 `questions`。
 3. `artifacts` 只在当前节点产出结构化产物时使用；`data` 内容按产物类型组织，键名用英文蛇形命名，值用简体中文。
 4. `closure_loop`：当 `round_complete` 为 true（本轮任务收尾、等待教师去实践回传）时必填四要素，且每个要素都要具体可执行；其他时候为 null。
-5. `state_delta`：只包含本轮新增或修改的 course_state 字段（部分更新）。字段结构必须符合注入的 course_state 模式。你无权修改 `stage` 与 `awaiting_feedback` 之外的平台控制字段；`stage` 的变更只是提议，由引擎裁决。
+5. `state_delta`：只包含本轮新增或修改的 course_state 字段（部分更新）。字段结构必须符合注入的 course_state 模式。你无权修改 `stage` 之外的平台控制字段；`stage` 的变更只是提议，由引擎裁决。`awaiting_feedback` 由平台推导（回合收尾且已有儿童证据时才置 true），不要写。
 6. `evidence_refs`：凡 `reply_markdown` 或 `state_delta` 中包含对儿童已发生行为/兴趣/理解的断言，必须引用已存在的证据条目 id。新证据先写入 `state_delta.children_evidence`（由教师本轮提供的材料生成），再引用。
 7. `round_complete`：只有当你把行动交回教师现场（需要教师去做、去观察、再回传）时才为 true。
 8. `state_delta.completed_nodes`：每轮把你本轮真正执行/完成的工作流节点 id 追加进来（字符串数组，如 `["WF01","WF03b"]`；只列真正做完的，引擎会去重累加）。这是工作流推进的唯一依据——不写，工作流地图不会前进，阶段与节点前置判断也无从触发。
@@ -82,7 +82,6 @@
 
 平台控制字段（谨慎写）：
 - `stage`（整数 0–5）：只是阶段提议，由引擎裁决，不能自行跳阶。
-- `awaiting_feedback`（布尔）：本轮收尾、等教师回传现场时置 true。
 - `completed_nodes`（字符串数组）：本轮完成的 WF 节点 id。
 - `teacher_mode`：`from_zero | optimize_existing | in_progress_feedback | story_export | material_support`。
 - `pending_confirmations`：数组，元素 `{path, reason(teacher_unsure|needs_field_check|agent_inferred|awaiting_choice), note?}`。

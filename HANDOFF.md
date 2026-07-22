@@ -2,6 +2,14 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-22 (later) — [19][21] rebalance incoherence fixed: awaiting_feedback is now evidence-gated
+
+- **Engine** ([demo/src/engine.mjs](demo/src/engine.mjs)): `round_complete` flips `awaiting_feedback=true` only when `children_evidence` is non-empty (evidence delivered in the same delta counts). 备课 rounds close without the 「等待你带回现场反馈」 note; 实施/陪跑 rounds still wait. Teacher turns still clear it.
+- **Contract prompt** ([demo/src/prompts/contract.zh.md](demo/src/prompts/contract.zh.md)): stopped instructing the model to write `awaiting_feedback` (the engine always stripped it as `bad_delta` — the field was never writable); now documented as platform-derived.
+- **Restore path** (`messagesToTranscript` in [demo/src/ui/main.js](demo/src/ui/main.js)): mirrors the evidence gate when rebuilding a stored transcript, so restored 备课 rounds don't regrow the note.
+- **Both directions proven**: reverting the engine line fails 3 tests (runtime-harness lifecycle, blueprint round-2, material_support walkthrough); full suite 179/179 with the fix; full gate green. Browser-verified on the mock 龙舟 flow: preset-pack delivery shows no awaiting note, the post-回传 round does.
+- Not deployed — commit only. Open decisions from the previous entry (GitHub mirror push, root umbrella repo divergence) still pending Herman.
+
 ## 2026-07-22 — SECURITY: static handler closed; pre-deploy audit; blocker fixes; feature work committed
 
 - **Two live exposures on the public instance, fixed and deployed first** ([demo/serve.mjs](demo/serve.mjs) static handler). (1) `demo/.data/` sits inside the served root, so `GET /.data/auth/sessions.json` returned live session bearer tokens and `users.json` returned password hashes + profile PII; `getSessionUser` compares tokens by plain equality, so a fetched token was full account takeover of any teacher or the admin. (2) `decodeURIComponent` runs after the URL parser normalises dot-segments, so `%2f` stayed a live separator and containment was checked against the checkout root, not `demo/` — `GET /..%2f.env` reached model keys, `DATABASE_URL`, `ADMIN_TOKEN`. Both pre-existing; both breached non-negotiables #4 and #5. Fix: containment verified per served base after `resolve`, dot-prefixed segments refused outright. Reproduced 200→403 locally and **verified 403 on the live public instance** (`127.0.0.1:3000` from the VM). [demo/tests/static-guard.test.mjs](demo/tests/static-guard.test.mjs) covers both directions with bait files; confirmed it fails against the old guard. Shipped alone as `3bad5de` to `server main` + `server dev` before anything else. **Session tokens rotated** (both instances' `sessions.json` emptied + services restarted) — every teacher/admin logged out, all leaked tokens dead. ADMIN_TOKEN / model keys / DB password NOT rotated (Herman's call — traversal needed the hole that is now closed).

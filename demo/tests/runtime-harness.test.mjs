@@ -233,12 +233,22 @@ test('applyDelta: appends evidence with id-dedupe (update in place)', () => {
   assert.ok(state.children_evidence[0].content.includes('修正'));
 });
 
-test('applyDelta: awaiting_feedback lifecycle — set on round_complete, cleared on teacher turn', () => {
-  const s = createInitialState('c1');
-  const closed = applyDelta(s, {}, { roundComplete: true }).state;
+test('applyDelta: awaiting_feedback lifecycle — evidence-gated set on round_complete, cleared on teacher turn', () => {
+  // 备课期 (no child evidence yet): a completed round does NOT wait for 回传.
+  const planned = applyDelta(createInitialState('c1'), {}, { roundComplete: true }).state;
+  assert.equal(planned.awaiting_feedback, false, '备课 round_complete must not flip awaiting_feedback');
+  // 实施期 (evidence exists): the completed round waits for the classroom.
+  const closed = applyDelta(stateWithEvidence(), {}, { roundComplete: true }).state;
   assert.equal(closed.awaiting_feedback, true);
   const reopened = applyDelta(closed, {}, { teacherTurn: true }).state;
   assert.equal(reopened.awaiting_feedback, false);
+});
+
+test('applyDelta: evidence arriving in the same delta as round_complete starts the wait', () => {
+  const { state } = applyDelta(createInitialState('c1'), {
+    children_evidence: [{ id: 'ev1', kind: 'child_words', content: '桨为什么是弯的？', recorded_at: 'r1' }],
+  }, { roundComplete: true });
+  assert.equal(state.awaiting_feedback, true);
 });
 
 // ---------- L4 ----------
