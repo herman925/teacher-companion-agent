@@ -697,13 +697,14 @@ export function renderQuestionBlock(q) {
 
 /**
  * Multi-question cue-card carousel (DESIGN.md §4 问题卡). Rendered when a turn
- * carries 2+ questions: horizontal scroll-snap track of cards (swipe / ‹ › / dots),
- * a 查看全部 stacked-list toggle for the review-everything pass, and one submit
- * bar that packages every answer into a SINGLE teacher message via onSubmit —
- * skipped cards are reported as 跳过 (a skip is information too).
+ * carries 2+ questions: horizontal scroll-snap track of cards (swipe / ‹ › /
+ * segments) and a 查看全部 stacked-list toggle for the review-everything pass.
+ * Cards have no send of their own: per-card 确认 locks an answer into the
+ * shared staged batch (§5c) and the composer packages the whole set into one
+ * teacher message — skipped cards report as 跳过 (a skip is information too).
  * Chips fill their own card's answer field (insert, never auto-send).
  * @param {Array<import('../types.mjs').TurnQuestion>} questions
- * @param {{ onSubmit?: (packed: string, meta: {total: number, answered: number, skipped: number}) => void }} opts
+ * @param {{ answers?: Array<{value: string, skipped: boolean, locked: boolean}>, onChange?: () => void, variant?: string }} opts
  */
 export function renderQuestionCards(questions, opts = {}) {
   const root = el('div', 'qcards');
@@ -789,9 +790,13 @@ export function renderQuestionCards(questions, opts = {}) {
     skip.type = 'button';
     skip.addEventListener('click', () => {
       const on = !answers[i].skipped;
-      // An explicit skip is information too — it stages as locked 跳过.
-      answers[i] = on ? { value: '', skipped: true, locked: true } : { value: input.value, skipped: false, locked: false };
-      if (on) input.value = '';
+      // An explicit skip is information too — it stages as locked 跳过. The
+      // typed draft survives in `value` so 恢复作答 brings it back; packing
+      // reports locked+skipped as 跳过 regardless of value.
+      answers[i] = on
+        ? { value: input.value, skipped: true, locked: true }
+        : { ...answers[i], skipped: false, locked: false };
+      input.value = on ? '' : answers[i].value;
       refresh();
       notify();
     });

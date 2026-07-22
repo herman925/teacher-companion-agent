@@ -2900,7 +2900,17 @@ function wire() {
   });
   inputEl.addEventListener('input', autogrow);
 
-  skipLink.addEventListener('click', () => send('先跳过'));
+  skipLink.addEventListener('click', () => {
+    // 先跳过 while content is staged must not orphan it: route through the
+    // composer so locked answers/批注 ride along instead of being silently
+    // replaced by the next question set. Explicit click, so no hold physics.
+    if (stagedPayload().total > 0) {
+      inputEl.value = [inputEl.value.trim(), '先跳过'].filter(Boolean).join('\n');
+      composerSend();
+    } else {
+      send('先跳过');
+    }
+  });
 
   $('#btn-new').addEventListener('click', resetCourse);
   // Header theme toggle: one click flips light↔dark as an explicit choice
