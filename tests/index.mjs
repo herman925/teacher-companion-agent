@@ -21,3 +21,4 @@ import '../demo/tests/blueprint.test.mjs';
 import '../demo/tests/blueprint-map.test.mjs';
 import '../demo/tests/blueprint-state.test.mjs';
 import '../demo/tests/blueprint-comments.test.mjs';
+import '../demo/tests/mock-provenance.test.mjs';

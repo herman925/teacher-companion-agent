@@ -23,6 +23,21 @@ function trace(mode, stage, nodes, principles, stateNotes) {
 }
 
 /**
+ * Stamp scripted evidence rows as demo samples.
+ *
+ * The walkthrough needs a populated ledger to demonstrate stages 1–5, but a
+ * scripted row is NOT something the teacher reported. Unmarked, these rows are
+ * indistinguishable from real observations everywhere they travel — course
+ * state, session log, admin export — and a teacher can end up attesting to
+ * children who were never in her class (non-negotiable #1). The marker rides
+ * inside course_state, so every export and the debug drawer carry it for free.
+ * @param {Array<Object>} rows
+ */
+function demoEvidence(rows) {
+  return rows.map((row) => ({ ...row, source: 'demo_sample' }));
+}
+
+/**
  * @param {Object} state current course_state
  * @param {Array} history prior chat messages
  * @param {string} message the teacher's message
@@ -374,7 +389,11 @@ function turnBlueprintRound2(state, history, message) {
   const groupNote = classSize ? `班里 ${classSize} 个孩子：体验角每次 6–8 人轮流，小组活动分 ${Math.ceil(classSize / 8)} 组进行。` : '体验角每次 6–8 人轮流。';
   // The pivotal REAL choice (panel finding: intake answers ≠ direction confirmation):
   // the map only escalates when the teacher actually picks directions.
-  const pickedDirections = /方向|来源|故事|场景|制作|材料|问题/.test(message);
+  // answersOnly, NOT the raw message: the packaging header 【问题卡回复】 and the
+  // echoed question titles carry 问题/资源/材料, so reading raw text let a plain
+  // intake reply confirm the map on the teacher's behalf (pilot session
+  // 2026-07-21). Only what she actually wrote counts as a pick.
+  const pickedDirections = /方向|来源|故事|场景|制作|材料|问题/.test(answersOnly(message));
   const weekKids = [
     bpNode('week_plan.w1', '第 1 周：建立共同经验', `集体：一起看一场${resource}（视频或现场，完整教案见活动方案包）；环创：教室里开${resource}体验角。${groupNote}`, 'ai_suggestion'),
     bpNode('week_plan.w2', '第 2 周：发掘已知（多通道）与问题墙', '「我们已经知道的」不止靠说：集体讨论记录清单＋自选表征——画出来、搭出来、演出来（画纸/积木/角色区三个通道同时开放）。问题墙上墙，游戏中随手记孩子的问题。', 'ai_suggestion'),
@@ -449,7 +468,7 @@ function turnBlueprintRound2(state, history, message) {
     wf_trace: trace('from_zero', 0, [
       { id: 'WF02b', name: '主题适配性筛查', apply: '判定 theme_inquiry：先做一轮主题探究' },
       { id: 'WF03b', name: '资源意图确认', apply: '教师回复即确认——三问静默亮灯，不逐轮追问' },
-      { id: 'WF04', name: '主题网络', apply: '网络图经教师确认，状态升级 confirmed' },
+      { id: 'WF04', name: '主题网络', apply: pickedDirections ? '教师点选方向，网络图升级 confirmed' : '网络图停在 teacher_preset——方向未选，不代教师确认' },
       { id: 'WF04b', name: '资源深度网络', apply: '四层并入预设包，意义层保持待验证' },
     ], ['先给完整方案再一起改', '回传为了优化不为解锁'], '完整预设包 v0.2；备课期收轮，无儿童证据，引擎不置 awaiting_feedback'),
   };
@@ -617,11 +636,11 @@ function turnAwaitOrIngest(state, history, message) {
 function turnIngestFeedback() {
   return {
     reply_markdown:
-      '这轮反馈非常有料——尤其是你注意到孩子们**自己开始模仿马步**，这比任何提问都真实。我把这些都记进证据里了。\n\n从证据看，孩子现在的问题主要围着「狮头这个物件」和「里面的人」转，这正是好的探究起点。下面是我整理的问题池，你确认一下哪些是孩子真实说过的。',
+      '收到你的现场反馈。往下这一段是**演示样例**：问题池和候选驱动问题用的是一组示范用的儿童问题（证据账本里都标了「演示样例」），让你先看清楚流程怎么走。\n\n真实使用时，这里长出来的是你自己带回的那几句话——孩子说过什么，才会有什么。',
     question: {
-      text: '问题池里的问题，哪些是孩子的原话，哪些是你事后概括的？',
-      why: '真实儿童问题才能推导核心驱动问题，成人概括要单独标记',
-      examples: ['前三个都是原话，最后一个是我概括的', '都是原话，我尽量没有加工', '有两个我记不清了，下次我当场记下来'],
+      text: '你手上真实的儿童原话，有哪几句？',
+      why: '演示样例只是示范；能推导核心驱动问题的，只有孩子真实说过的话',
+      examples: ['我补两句孩子的原话给你', '照片和作品有，原话还没记下来', '先按样例往下看流程，原话我下次补'],
     },
     artifacts: [
       {
@@ -655,13 +674,13 @@ function turnIngestFeedback() {
       i_will: '根据孩子的选择生成第一轮协作行动方案和观察重点',
     },
     state_delta: {
-      children_evidence: [
+      children_evidence: demoEvidence([
         { id: 'ev-words-1', kind: 'child_words', content: '狮子的眼睛为什么会眨？', child_ref: '男孩A', round: 1, recorded_at: 'round1' },
         { id: 'ev-words-2', kind: 'child_words', content: '我能进到狮子里面吗？', child_ref: '女孩B', round: 1, recorded_at: 'round1' },
         { id: 'ev-words-3', kind: 'child_words', content: '鼓为什么有时候快有时候慢？', child_ref: '男孩C', round: 1, recorded_at: 'round1' },
         { id: 'ev-behavior-1', kind: 'behavior', content: '五六个孩子自发模仿马步，持续约十分钟', round: 1, recorded_at: 'round1' },
         { id: 'ev-dwell-1', kind: 'dwell_point', content: '狮头存放架前停留最久，反复看眼睛的机关', round: 1, recorded_at: 'round1' },
-      ],
+      ]),
       child_question_pool: [
         { question: '狮子的眼睛为什么会眨？', category: 'why', evidence_refs: ['ev-words-1'], potential: 'promising' },
         { question: '我能进到狮子里面吗？', category: 'identity_imitation', evidence_refs: ['ev-words-2'], potential: 'promising' },
@@ -889,11 +908,11 @@ function turnOptimizeEvidence() {
       i_will: '根据孩子的选择梳理目标与评估轴心——先定核心理解目标，再对四维展开',
     },
     state_delta: {
-      children_evidence: [
+      children_evidence: demoEvidence([
         { id: 'ev-lz-1', kind: 'child_words', content: '龙舟为什么要有鼓？', child_ref: '男孩A', round: 1, recorded_at: 'backfill' },
         { id: 'ev-lz-2', kind: 'child_words', content: '想自己做一条会浮的龙舟', child_ref: '女孩B', round: 1, recorded_at: 'backfill' },
         { id: 'ev-lz-3', kind: 'child_words', content: '龙头看起来像狮子头', child_ref: '男孩C', round: 1, recorded_at: 'backfill' },
-      ],
+      ]),
       child_question_pool: [
         { question: '龙舟为什么要有鼓？', category: 'why', evidence_refs: ['ev-lz-1'], potential: 'promising' },
         { question: '我们能自己做一条会浮的龙舟吗？', category: 'can_we', evidence_refs: ['ev-lz-2'], potential: 'promising' },
@@ -998,11 +1017,11 @@ function turnStoryMaterials() {
         gaps: ['儿童原话记录', '卡点与转折记录', '教师反思'],
         narrative_spine: null,
       },
-      children_evidence: [
+      children_evidence: demoEvidence([
         { id: 'ev-st-photo-1', kind: 'photo', content: '活动过程照片一批：孩子们分组动手制作', round: 1, recorded_at: 'backfill' },
         { id: 'ev-st-work-1', kind: 'work', content: '孩子作品与涂鸦一批：主题相关的画和手工', round: 1, recorded_at: 'backfill' },
         { id: 'ev-st-video-1', kind: 'video', content: '采访视频片段：孩子对着镜头介绍自己做的东西', round: 1, recorded_at: 'backfill' },
-      ],
+      ]),
       completed_nodes: ['WF28'],
     },
     evidence_refs: ['ev-st-photo-1', 'ev-st-work-1', 'ev-st-video-1'],
@@ -1050,10 +1069,10 @@ function turnStorySpine() {
     ],
     closure_loop: null,
     state_delta: {
-      children_evidence: [
+      children_evidence: demoEvidence([
         { id: 'ev-st-words-1', kind: 'child_words', content: '这是我们一起做出来的', round: 1, recorded_at: 'backfill' },
         { id: 'ev-st-words-2', kind: 'child_words', content: '下次我还想再做一遍', round: 1, recorded_at: 'backfill' },
-      ],
+      ]),
       story_materials: {
         available: ['活动过程照片', '孩子作品与涂鸦', '采访视频片段', '儿童原话两句'],
         gaps: ['卡点与转折记录', '教师反思', '目标与评估对照'],
@@ -1152,10 +1171,10 @@ function turnMidCourseReview() {
       i_will: '我会根据各组结果判断项目化信号，并给出下一轮循环建议',
     },
     state_delta: {
-      children_evidence: [
+      children_evidence: demoEvidence([
         { id: 'ev-mc-1', kind: 'behavior', content: '孩子们用纸箱试做狮头，卡在狮头固定不住', round: 1, recorded_at: 'teacher_recall' },
         { id: 'ev-mc-2', kind: 'behavior', content: '小宇全程最活跃，主要在指挥其他孩子操作', child_ref: '小宇', round: 1, recorded_at: 'teacher_recall' },
-      ],
+      ]),
       child_participation_difference: [
         { round: 1, profile: 'director', child_ref: '小宇', observation: '偏好指挥而非动手，需观察是否挤占同伴的尝试机会' },
       ],
@@ -1610,10 +1629,10 @@ function turnSecondCycleReview() {
       i_will: '根据孩子的决定准备师傅到访支架，或直接进入下一轮循环与项目化信号判断',
     },
     state_delta: {
-      children_evidence: [
+      children_evidence: demoEvidence([
         { id: 'ev-r2-1', kind: 'behavior', content: '第一次排练两人配合卡住，孩子自发提议喊一二一二来对节奏', round: 2, recorded_at: 'round2' },
         { id: 'ev-r2-2', kind: 'child_words', content: '想请师傅来看看我们排得像不像', round: 2, recorded_at: 'round2' },
-      ],
+      ]),
       cycle_history: [{ round: 2, phase: 'stuck_review', sub_question: '两个人怎么才能同时迈脚？', agent_judgment: '卡点真实，留给孩子的一二一二先跑一轮' }],
       child_learning_stage: 'trial_inquiry',
       completed_nodes: ['WF19', 'WF20', 'WF21'],
@@ -1814,10 +1833,10 @@ function turnMidCourseSecond() {
       i_will: '判断项目化信号（多组主动改进就是信号），并预告成果展示的可能形态',
     },
     state_delta: {
-      children_evidence: [
+      children_evidence: demoEvidence([
         { id: 'ev-mc2-1', kind: 'behavior', content: '胶带组用宽胶带把狮头固定住了，其他组围过来要学', round: 2, recorded_at: 'round2' },
         { id: 'ev-mc2-2', kind: 'behavior', content: '小宇这一轮自己动手缠胶带，没有指挥别人', child_ref: '小宇', round: 2, recorded_at: 'round2' },
-      ],
+      ]),
       child_participation_difference: [
         { round: 2, profile: 'director', child_ref: '小宇', observation: '从指挥转向动手，小组机制自然分流了角色' },
       ],

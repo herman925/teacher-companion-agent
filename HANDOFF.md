@@ -2,6 +2,16 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-22 (evening) — Two demo-honesty defects found in a real pilot session, fixed
+
+Source: a server-side export of a real pilot course (演示模式 throughout — every reply `provider: mock`). The teacher-behaviour read was discarded as unsound (she was reacting to a script, not the product); only the two code defects survived, both reproducible without any session data.
+
+- **Direction-pick gate was defeated by the question-card packaging** ([demo/src/mock.mjs](demo/src/mock.mjs) `turnBlueprintRound2`): the gate tested the RAW message, so the literal 「问题」 inside the 【问题卡回复】 header matched at index 1 and confirmed 主题预设网络图 on the teacher's behalf — the one judgment ADR-0003 amendment 4 and the pedagogy panel reserved for her. Plain intake answers (资源/周期/班额) silently escalated the map to `confirmed` while `pending_confirmations` still said 「网络图方向待教师筛选」. Now reads `answersOnly(message)`, the same guard the sibling 原话 gate already used. `wf_trace` no longer claims 教师确认 on the un-picked branch.
+- **Scripted child evidence was indistinguishable from reported evidence** (7 sites in mock.mjs): named children (男孩A/女孩B/男孩C/小宇), dwell points and quotes entered `children_evidence` as plain fact, travelled into course state / session log / admin export, and an example chip (「前三个都是原话」) let a teacher attest to them in one click. Every scripted row now goes through `demoEvidence()` and carries `source: 'demo_sample'` (schema: new enum `teacher_supplied | demo_sample`, [harness/schema/course-state.schema.json](harness/schema/course-state.schema.json)). The marker rides inside `course_state`, so debug drawer and every export carry it for free. The ingest turn now says the section is 演示样例 and asks for her real 原话 instead of offering one-click attestation.
+- **Fixture pollution found**: `blueprint.test.mjs` round-2 asserted `confirmedModules == ['network_map']` for a fixture that picks no direction — green only because of the defect. Corrected to `[]` with the reason inline; both gate directions now covered in [demo/tests/mock-provenance.test.mjs](demo/tests/mock-provenance.test.mjs) (new, registered in `tests/index.mjs`).
+- Tests 224 → **244**, full gate green. Browser-verified end to end: intake reply → 老师预设 + direction card asked; real pick → `confirmed`; ingest turn → every evidence row `demo_sample` + honest prose. Screenshots `tmp/verify-direction-card.png`, `tmp/verify-cards-staged.png`.
+- **Not committed** — awaiting review. Two related things left alone deliberately: `pending_confirmations` is still not cleared when the teacher does pick (the state keeps saying 待筛选 after `confirmed`), and `demo_sample` evidence still satisfies the engine's stage-2/stage-5 evidence gates ([demo/src/engine.mjs](demo/src/engine.mjs)) — demo samples unlock real stage progression.
+
 ## 2026-07-22 (later) — [19][21] rebalance incoherence fixed: awaiting_feedback is now evidence-gated
 
 - **Engine** ([demo/src/engine.mjs](demo/src/engine.mjs)): `round_complete` flips `awaiting_feedback=true` only when `children_evidence` is non-empty (evidence delivered in the same delta counts). 备课 rounds close without the 「等待你带回现场反馈」 note; 实施/陪跑 rounds still wait. Teacher turns still clear it.

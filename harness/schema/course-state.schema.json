@@ -109,7 +109,12 @@
           "content": { "type": "string" },
           "child_ref": { "type": "string", "description": "Anonymized child reference (e.g. 男孩A), never full names." },
           "round": { "type": "integer", "minimum": 0 },
-          "recorded_at": { "type": "string" }
+          "recorded_at": { "type": "string" },
+          "source": {
+            "type": "string",
+            "enum": ["teacher_supplied", "demo_sample"],
+            "description": "Provenance. Absent or teacher_supplied = the teacher reported it. demo_sample = written by the scripted 演示模式 walkthrough and NEVER observed in a real classroom; it must stay distinguishable in every export and never be presented to the teacher as her own record."
+          }
         }
       }
     },

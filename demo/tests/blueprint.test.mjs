@@ -98,9 +98,15 @@ test('round 2: teacher reply → full 预设包 v0.2, closure loop, entry card i
   assert.ok(r2.closure_loop && r2.closure_loop.bring_back, 'closure loop hands work back to the field');
   assert.ok(r2.state_delta.resource_entry_card, 'entry card lands via state_delta so the normal flow continues');
   assert.equal(blocking(validateTurn(r2, next)).length, 0);
-  // Confirmed status only where the teacher's reply confirmed it.
+  // Confirmed status only where the teacher's reply confirmed it. This fixture
+  // answers the INTAKE cards (资源/周期/班额) and picks no direction, so nothing
+  // may escalate. It expected ['network_map'] until 2026-07-22 — green only
+  // because the gate read the raw message and matched 「问题」 in the packaging
+  // header. The fixture documented the defect, not the rule (ADR-0003: an old
+  // fixture needing edits is a pollution finding). Both directions of the gate
+  // are covered in demo/tests/mock-provenance.test.mjs.
   const confirmedModules = bp.data.modules.filter((m) => m.status === 'confirmed').map((m) => m.id);
-  assert.deepEqual(confirmedModules, ['network_map'], 'only the teacher-confirmed module escalates');
+  assert.deepEqual(confirmedModules, [], 'an intake reply escalates nothing — the direction pick is still hers');
 });
 
 test('round 2 delta applies cleanly and the flow rejoins the normal from_zero path', () => {
