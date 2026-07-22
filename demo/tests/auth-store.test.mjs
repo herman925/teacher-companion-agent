@@ -206,3 +206,39 @@ test('cookie helpers: parse + httpOnly attributes', () => {
   const set = sessionCookie('abc');
   assert.ok(set.includes('HttpOnly') && set.includes('SameSite=Lax') && set.includes('Max-Age='));
 });
+
+test('setWorkbench: mirrors 批注 + card answers onto the course record; scoped; sanitized; no version bump', async () => {
+  const { user } = await store.createUser({ username: 'wb_teacher', displayName: '工作台老师' });
+  const { user: other } = await store.createUser({ username: 'wb_other', displayName: '别的老师' });
+  const course = await store.createCourse(user.id, '龙舟');
+  const before = await store.adminGetCourse(course.id);
+
+  const wb = await store.setWorkbench(user.id, course.id, {
+    blueprint_comments: [{ id: 'theme_judgment', number: '1', title: '主题判断', text: '更贴近镇里的龙舟基地' }],
+    question_cards: {
+      questions: [{ text: '想排几周', why: '周期决定计划粒度' }],
+      answers: [{ value: '两周', skipped: false, locked: true }],
+    },
+  });
+  assert.equal(wb.blueprint_comments[0].id, 'theme_judgment');
+  assert.equal(wb.question_cards.answers[0].locked, true);
+
+  const after = await store.adminGetCourse(course.id);
+  assert.equal(after.workbench.blueprint_comments.length, 1, 'admin full record carries the workbench');
+  assert.equal(after.workbench.question_cards.questions[0].why, '周期决定计划粒度');
+  assert.equal(after.state_version, before.state_version, 'scratch state never bumps state_version');
+  assert.equal((after.snapshots || []).length, (before.snapshots || []).length, 'and never writes a snapshot row');
+
+  // scoping: another user cannot write into this course's workbench
+  await assert.rejects(() => store.setWorkbench(other.id, course.id, { blueprint_comments: [] }), /课程不存在/);
+
+  // sanitization: junk shapes collapse to safe strings/booleans, oversize trimmed
+  const dirty = await store.setWorkbench(user.id, course.id, {
+    blueprint_comments: [{ id: 42, text: 'x'.repeat(9000) }],
+    question_cards: { questions: [{ text: null }], answers: [{ value: 7, locked: 'yes' }] },
+  });
+  assert.equal(dirty.blueprint_comments[0].id, '42');
+  assert.equal(dirty.blueprint_comments[0].text.length, 500);
+  assert.equal(dirty.question_cards.answers[0].value, '7');
+  assert.equal(dirty.question_cards.answers[0].locked, true);
+});

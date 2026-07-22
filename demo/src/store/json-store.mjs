@@ -177,6 +177,30 @@ export function createJsonStore(opts = {}) {
       });
     },
 
+    /** Mirror of the teacher's unsent 工作台 state — per-node 批注 + the
+     * living question-card answers (DESIGN.md §5c). Scratch, not history:
+     * no state_version bump, no snapshot row; admin exports simply show
+     * work-in-progress alongside what was actually sent. */
+    async setWorkbench(userId, courseId, workbench) {
+      return withLock(async () => {
+        const c = await readCourse(courseId);
+        if (!c || c.user_id !== userId) throw err(404, '课程不存在');
+        const s = (v, max) => String(v ?? '').slice(0, max);
+        const comments = (Array.isArray(workbench?.blueprint_comments) ? workbench.blueprint_comments : [])
+          .slice(0, 200)
+          .map((r) => ({ id: s(r?.id, 120), number: s(r?.number, 20), title: s(r?.title, 200), text: s(r?.text, 500) }));
+        const qc = workbench?.question_cards;
+        const cards = qc && Array.isArray(qc.questions) ? {
+          questions: qc.questions.slice(0, 50).map((q) => ({ text: s(q?.text, 500), ...(q?.why ? { why: s(q.why, 500) } : {}) })),
+          answers: (Array.isArray(qc.answers) ? qc.answers : []).slice(0, 50)
+            .map((a) => ({ value: s(a?.value, 2000), skipped: Boolean(a?.skipped), locked: Boolean(a?.locked) })),
+        } : null;
+        c.workbench = { blueprint_comments: comments, question_cards: cards, updated_at: nowISO() };
+        await writeCourse(c);
+        return c.workbench;
+      });
+    },
+
     /** True when auto-titling should run: still on the default name, not human-locked. */
     async isUntitled(courseId) {
       return withLock(async () => {

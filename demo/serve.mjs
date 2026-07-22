@@ -548,6 +548,19 @@ const server = http.createServer(async (req, res) => {
         const owned = await store.getCourse(uid, courseId);
         if (!owned) return json(404, { ok: false, message: '课程不存在' });
       }
+      // PUT /api/courses/:id/workbench — mirror of the unsent 工作台 state
+      // (批注 + card answers, §5c) so admin exports show work-in-progress.
+      if (seg.length === 2 && seg[1] === 'workbench' && req.method === 'PUT') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const q = body ? JSON.parse(body) : {};
+        try {
+          const workbench = await store.setWorkbench(uid, courseId, q);
+          return json(200, { ok: true, workbench });
+        } catch (e) {
+          return json(e.status ?? 500, { ok: false, message: e.message });
+        }
+      }
       // GET /api/courses/:id/messages?before=&limit= — paged history
       if (seg.length === 2 && seg[1] === 'messages' && req.method === 'GET') {
         const before = url.searchParams.get('before');
@@ -742,14 +755,24 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { return json(500, { ok: false, message: e.message }); }
   }
 
-  // static: demo/ files, plus /schema/ passthrough for the debug drawer
-  let filePath = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
-  if (filePath.startsWith('/schema/')) {
-    filePath = path.join(ROOT, '..', 'harness', filePath);
-  } else {
-    filePath = path.join(ROOT, filePath);
-  }
-  if (!path.resolve(filePath).startsWith(path.resolve(path.join(ROOT, '..')))) {
+  // static: demo/ files, plus /schema/ passthrough for the debug drawer.
+  //
+  // Containment is checked against the SERVED base, never the checkout root: the
+  // old guard allowed anything under path.join(ROOT, '..'), so `GET /..%2f.env`
+  // walked straight out of demo/ and served the checkout's .env — model keys,
+  // DATABASE_URL, ADMIN_TOKEN (OPERATIONS.md §Deploying). decodeURIComponent runs
+  // AFTER the URL parser has normalised dot-segments, so a %2f is still a live
+  // separator at this point; resolve-then-verify is the only guard that holds.
+  //
+  // Dot-prefixed segments are refused outright. demo/.data sits INSIDE the served
+  // root and holds live session tokens, password hashes and course records, so
+  // containment alone would happily serve it — child-data non-negotiable #4.
+  // Nothing legitimate under demo/ or harness/schema/ starts with a dot.
+  const rel = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
+  const schema = rel.startsWith('/schema/');
+  const base = path.resolve(schema ? path.join(ROOT, '..', 'harness') : ROOT);
+  const filePath = path.resolve(path.join(base, rel));
+  if (!filePath.startsWith(base + path.sep) || rel.split('/').some((seg) => seg.startsWith('.'))) {
     res.writeHead(403); res.end('forbidden'); return;
   }
   try {

@@ -59,6 +59,13 @@ function stagedFiles() {
   return r.stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean).map(s => s.replace(/\\/g, '/'));
 }
 
+// Staged diff of the demo UI only — feeds the exportDuty reminder (new cst.*
+// key detection). -U0 keeps it cheap; content, not just names, is required.
+function stagedUiDiff() {
+  const r = spawnSync('git', ['diff', '--cached', '-U0', '--', 'demo/src/ui'], { cwd: ROOT, encoding: 'utf8' });
+  return r.status === 0 ? (r.stdout || '') : '';
+}
+
 // Build the check list (name, level, command). Skipped if level==off.
 const checks = [];
 const add = (name, cmd, argv) => { const lv = level(name); if (lv !== 'off' && cmd) checks.push({ name, level: lv, cmd, argv }); };
@@ -84,11 +91,19 @@ if (!noJudges && !fast) {
   }
 }
 if (!fast && fs.existsSync(path.join(ROOT, 'tests'))) add('tests', NODE, ['--test', 'tests/']);
+// The demo suite was never gated — 175 tests, including the static-file guard
+// that keeps demo/.data and the checkout's .env off the public instance, ran
+// only when someone remembered to. A regression net nobody runs is not a net.
+// Glob form on purpose: Node 25 resolves `--test <dir>` as a module and throws.
+if (!fast && fs.existsSync(path.join(ROOT, 'demo', 'tests'))) {
+  add('demoTests', NODE, ['--test', 'demo/tests/*.test.mjs']);
+}
 
 const label = {
   glossary: 'Glossary check', typewriter: 'Typewriter lint', parity: 'Parity check',
   schemaCheck: 'Schema check', promptLint: 'Prompt lint',
   designJudge: 'Design judge', wordingJudge: 'Wording judge', tests: 'Tests',
+  demoTests: 'Demo tests',
 };
 
 console.log(c.bold('╔══════════════════════════════════════════════════╗'));
@@ -109,7 +124,7 @@ for (const check of checks) {
 
 // ---- Reminders (handoff, temp cleanup) — logic lives in lib/reminders.mjs ----
 const staged = stagedFiles();
-for (const rem of computeReminders({ rootDir: ROOT, stagedFiles: staged, config: cfg })) {
+for (const rem of computeReminders({ rootDir: ROOT, stagedFiles: staged, config: cfg, uiStagedDiff: stagedUiDiff() })) {
   if (!rem.fire) continue;
   const blocking = rem.level === 'block';
   results.push({ name: rem.name, ok: false, blocking, reminder: true });
