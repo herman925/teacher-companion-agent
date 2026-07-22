@@ -89,6 +89,8 @@ export function createJsonStore(opts = {}) {
   const usersFile = path.join(AUTH_DIR, 'users.json');
   const sessionsFile = path.join(AUTH_DIR, 'sessions.json');
   const auditFile = path.join(AUTH_DIR, 'audit.json');
+  const keysFile = path.join(AUTH_DIR, 'keys.json');         // { userId: { provider: ciphertext } }
+  const rateFile = path.join(AUTH_DIR, 'rate-limits.json');  // rate-gate state blob
   const readUsers = () => readJson(usersFile, []);
   const readSessions = () => readJson(sessionsFile, []);
   /** Public shape: never the password hash. */
@@ -407,9 +409,45 @@ export function createJsonStore(opts = {}) {
         const courses = (await allCourses()).filter((c) => c.user_id === userId);
         for (const c of courses) await unlink(coursePath(c.id)).catch(() => {});
         await writeAtomic(sessionsFile, (await readSessions()).filter((s) => s.user_id !== userId));
+        // Vaulted keys must not outlive the account.
+        const keyRows = await readJson(keysFile, {});
+        if (keyRows[userId]) { delete keyRows[userId]; await writeAtomic(keysFile, keyRows); }
         await writeAtomic(usersFile, users.filter((x) => x.id !== userId));
         return { username: u.username, courses_deleted: courses.length };
       });
+    },
+
+    // ============ per-account model-key vault (ciphertext only) ============
+    // The store never sees plaintext keys: serve.mjs encrypts/decrypts via
+    // key-vault.mjs. These rows are excluded from every export path — the
+    // admin console, adminExportAll and course records never touch keysFile.
+
+    /** Save/replace (blob string) or delete (null) one provider's ciphertext. */
+    async setUserKey(userId, provider, blobOrNull) {
+      return withLock(async () => {
+        const all = await readJson(keysFile, {});
+        const mine = { ...(all[userId] ?? {}) };
+        if (blobOrNull) mine[provider] = String(blobOrNull);
+        else delete mine[provider];
+        if (Object.keys(mine).length) all[userId] = mine; else delete all[userId];
+        await writeAtomic(keysFile, all);
+        return true;
+      });
+    },
+
+    /** @returns {Object} { provider: ciphertext } for one user (may be empty). */
+    async getUserKeys(userId) {
+      return withLock(async () => ({ ...((await readJson(keysFile, {}))[userId] ?? {}) }));
+    },
+
+    // ================= rate-gate persistence (opaque blob) =================
+
+    async loadRateState() {
+      return withLock(async () => readJson(rateFile, null));
+    },
+
+    async saveRateState(state) {
+      return withLock(async () => writeAtomic(rateFile, state ?? {}));
     },
 
     // ================= sessions (SECURITY.md §2) =================

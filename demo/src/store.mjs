@@ -21,5 +21,8 @@
 
 import { createJsonStore } from './store/json-store.mjs';
 
+// DEMO_DATA_DIR override keeps server-level tests hermetic (scratch .data).
 // Later: if (process.env.DATABASE_URL) store = createPgStore(process.env.DATABASE_URL);
-export const store = createJsonStore();
+export const store = createJsonStore(
+  process.env.DEMO_DATA_DIR ? { baseDir: process.env.DEMO_DATA_DIR } : {},
+);

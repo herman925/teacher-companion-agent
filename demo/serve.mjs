@@ -10,7 +10,7 @@
 //         GLM_API_KEY, OPENROUTER_API_KEY, FREEMODEL_API_KEY, KILO_API_KEY, …).
 
 import http from 'node:http';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -26,6 +26,8 @@ import { store } from './src/store.mjs';
 import { deriveCourseTitle, TITLE_MAX } from './src/store/json-store.mjs';
 import { shouldRegenTitle, buildTitleMessages, sanitizeTitle, TITLE_INTERVALS, TITLE_INTERVAL_DEFAULT } from './src/title-agent.mjs';
 import { parseCookies, sessionCookie, clearSessionCookie, SESSION_COOKIE, displayNameError } from './src/auth-util.mjs';
+import { vaultReady, encryptKey, decryptKey } from './src/key-vault.mjs';
+import { createRateGate } from './src/rate-gate.mjs';
 
 // Auth (SECURITY.md): opaque session cookie → store lookup. Courses are scoped
 // to the session user; no session = visitor (演示模式 only, /api/courses* 401s).
@@ -46,10 +48,90 @@ async function sessionUser(req) {
 // the server .env — never in the repo (AGENTS.md non-negotiable 5).
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 const ADMIN_TOKEN_SHA256 = ADMIN_TOKEN ? createHash('sha256').update(ADMIN_TOKEN).digest('hex') : '';
+// Constant-time compare: hash both sides so lengths always match, then
+// timingSafeEqual — a plain `===` leaks match-prefix timing.
+const H = (s) => createHash('sha256').update(String(s)).digest();
 function adminAuthorized(req) {
   if (!ADMIN_TOKEN) return true;
   const supplied = String(req.headers['x-admin-token'] || '');
-  return supplied === ADMIN_TOKEN || supplied.toLowerCase() === ADMIN_TOKEN_SHA256;
+  return timingSafeEqual(H(supplied), H(ADMIN_TOKEN))
+    || timingSafeEqual(H(supplied.toLowerCase()), H(ADMIN_TOKEN_SHA256));
+}
+
+// ---------- per-account key vault (spec 2026-07-22, SECURITY.md) ----------
+// KEYS_SECRET lives in the server .env. Missing/short secret disables the
+// vault loudly: login still works, key-save answers 503, turns fall back to
+// env keys only.
+const KEYS_SECRET = process.env.KEYS_SECRET || '';
+const VAULT_ON = vaultReady(KEYS_SECRET);
+
+/** Decrypted account keys for one user (server-internal — never serialized). */
+async function accountKeys(userId) {
+  if (!VAULT_ON || !userId) return {};
+  const out = {};
+  for (const [pid, blob] of Object.entries(await store.getUserKeys(userId))) {
+    const v = decryptKey(KEYS_SECRET, blob);
+    if (v) out[pid] = v; // undecryptable rows (rotated secret) read as absent
+  }
+  return out;
+}
+
+// ---------- rate-limit gate (persistent, server clock) ----------
+const rateLimit = (name, fallback) => {
+  const n = Number(process.env[`RATE_${name}`]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+const RATE_POLICIES = {
+  login_user: { limit: rateLimit('LOGIN_USER', 5), windowMs: 15 * 60_000 },
+  login_ip: { limit: rateLimit('LOGIN_IP', 10), windowMs: 15 * 60_000 },
+  login_device: { limit: rateLimit('LOGIN_DEVICE', 10), windowMs: 15 * 60_000 },
+  login_global: { limit: rateLimit('LOGIN_GLOBAL', 60), windowMs: 60_000 },
+  admin_ip: { limit: rateLimit('ADMIN_IP', 5), windowMs: 15 * 60_000 },
+  password_user: { limit: rateLimit('PASSWORD_USER', 5), windowMs: 15 * 60_000 },
+  turns_user: { limit: rateLimit('TURNS_HOUR', 30), windowMs: 60 * 60_000 },
+  turns_user_day: { limit: rateLimit('TURNS_DAY', 200), windowMs: 24 * 60 * 60_000 },
+  turns_ip: { limit: rateLimit('TURNS_HOUR', 30), windowMs: 60 * 60_000 },
+  turns_ip_day: { limit: rateLimit('TURNS_DAY', 200), windowMs: 24 * 60 * 60_000 },
+  keysave_user: { limit: rateLimit('KEYSAVE_USER', 20), windowMs: 60 * 60_000 },
+};
+const gate = createRateGate({
+  load: () => store.loadRateState(),
+  save: (s) => store.saveRateState(s),
+  policies: RATE_POLICIES,
+});
+
+const RATE_MSG = '尝试次数过多，请稍后再试';
+
+/** Best client address: first X-Forwarded-For hop (nginx) else the socket. */
+function clientIp(req) {
+  const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return fwd || req.socket?.remoteAddress || 'unknown';
+}
+
+// Anonymous device cookie — third login-limit key (no PII, no fingerprint;
+// spoofable, which is why it is a supplement to the per-username counter,
+// never the defense).
+const DEVICE_COOKIE = 'cst_dev';
+function deviceCookieHeader(req) {
+  if (parseCookies(req)[DEVICE_COOKIE]) return {};
+  const id = createHash('sha256').update(`${Date.now()}${Math.random()}`).digest('hex').slice(0, 32);
+  return { 'set-cookie': `${DEVICE_COOKIE}=${id}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax` };
+}
+
+/** Model-turn quota check-and-record. @returns null when allowed, else 429 payload. */
+async function turnQuota(userId, ip) {
+  const kinds = userId
+    ? [['turns_user', userId], ['turns_user_day', userId]]
+    : [['turns_ip', ip], ['turns_ip_day', ip]];
+  for (const [kind, key] of kinds) {
+    const v = await gate.check(kind, key);
+    if (v.limited) {
+      console.warn(`[rate] turn quota tripped: ${kind} ${key}`);
+      return { kind: 'rate_limited', retry_after: v.retryAfterSec, message: '本时段的对话次数已用完，请稍后再试' };
+    }
+  }
+  for (const [kind, key] of kinds) await gate.use(kind, key);
+  return null;
 }
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -396,6 +478,9 @@ const server = http.createServer(async (req, res) => {
       // Deploy channel: the public instance sets CHANNEL=public in its .env,
       // which hides dev instruments (the debug spanner) in the UI.
       channel: process.env.CHANNEL === 'public' ? 'public' : 'dev',
+      // Per-account key vault available? Client switches to write-only server
+      // keys when true; false keeps the legacy localStorage path (honest note).
+      key_vault: VAULT_ON,
       providers: Object.entries(PROVIDERS)
         .filter(([, p]) => p.enabled !== false)
         .map(([id, p]) => ({ id, label: p.label, defaultModel: p.model, hasEnvKey: Boolean(ENV_KEYS[id]) })),
@@ -418,16 +503,38 @@ const server = http.createServer(async (req, res) => {
     try {
       if (url.pathname === '/api/auth/login' && req.method === 'POST') {
         const q = await readBody();
+        const uname = String(q.username ?? '').trim().toLowerCase();
+        const ip = clientIp(req);
+        const device = parseCookies(req)[DEVICE_COOKIE] || '';
+        const devHdr = deviceCookieHeader(req);
+        // Brute-force gate: username (the real defense — IP rotation doesn't
+        // help a targeted attack), IP, device cookie, and a global circuit
+        // breaker against spray attacks. One generic message — no oracle.
+        const limitKeys = [
+          ['login_user', uname], ['login_ip', ip],
+          ...(device ? [['login_device', device]] : []),
+          ['login_global', 'all'],
+        ];
+        for (const [kind, key] of limitKeys) {
+          const v = await gate.check(kind, key);
+          if (v.limited) {
+            console.warn(`[rate] login blocked (${kind}) for ${JSON.stringify(uname.slice(0, 32))} from ${ip}`);
+            return json(429, { ok: false, retry_after: v.retryAfterSec, message: RATE_MSG }, devHdr);
+          }
+        }
         const user = await store.verifyLogin(q.username, q.password);
         if (!user) {
           // Failed attempts were invisible in the journal, which made "temp
           // password doesn't work" reports undiagnosable. Username only — never
           // the password.
-          console.warn(`[auth] login failed for ${JSON.stringify(String(q.username ?? '').slice(0, 32))}`);
-          return json(401, { ok: false, message: '用户名或密码不对，或账号已停用' });
+          for (const [kind, key] of limitKeys) await gate.record(kind, key);
+          console.warn(`[auth] login failed for ${JSON.stringify(uname.slice(0, 32))} from ${ip}`);
+          return json(401, { ok: false, message: '用户名或密码不对，或账号已停用' }, devHdr);
         }
+        await gate.reset('login_user', uname);
         const { token } = await store.createSession(user.id, req.headers['user-agent']);
-        return json(200, { ok: true, user }, { 'set-cookie': sessionCookie(token) });
+        const cookies = [sessionCookie(token), ...(devHdr['set-cookie'] ? [devHdr['set-cookie']] : [])];
+        return json(200, { ok: true, user }, { 'set-cookie': cookies });
       }
       if (url.pathname === '/api/auth/logout' && req.method === 'POST') {
         const token = parseCookies(req)[SESSION_COOKIE];
@@ -451,16 +558,42 @@ const server = http.createServer(async (req, res) => {
           } catch (e) { return json(e.status ?? 500, { ok: false, message: e.message }); }
         }
         if (q.password) {
+          // Old-password guessing is a brute-force surface too.
+          const v = await gate.check('password_user', me.id);
+          if (v.limited) return json(429, { ok: false, retry_after: v.retryAfterSec, message: RATE_MSG });
           try {
             await store.changePassword(me.id, q.password.old, q.password.new);
+            await gate.reset('password_user', me.id);
             return json(200, { ok: true });
-          } catch (e) { return json(e.status ?? 500, { ok: false, message: e.message }); }
+          } catch (e) {
+            if (e.status === 403) await gate.record('password_user', me.id);
+            return json(e.status ?? 500, { ok: false, message: e.message });
+          }
         }
         if (q.profile !== undefined) {
           await store.saveUserProfile(me.id, q.profile);
           return json(200, { ok: true });
         }
         return json(400, { ok: false, message: '没有可更新的字段' });
+      }
+      // ---- per-account model keys (write-only vault; spec 2026-07-22) ----
+      if (url.pathname === '/api/me/keys' && req.method === 'GET') {
+        // Flags ONLY. No endpoint anywhere returns a key value.
+        const flags = {};
+        for (const pid of Object.keys(await store.getUserKeys(me.id))) flags[pid] = true;
+        return json(200, { ok: true, keys: flags, vault: VAULT_ON });
+      }
+      const keyPath = url.pathname.match(/^\/api\/me\/keys\/([a-z0-9_-]+)$/);
+      if (keyPath && req.method === 'PUT') {
+        if (!VAULT_ON) return json(503, { ok: false, message: '服务器还没有配置密钥保管（KEYS_SECRET）——请联系管理员' });
+        const pid = keyPath[1];
+        if (!(pid in PROVIDERS) && pid !== 'custom') return json(400, { ok: false, message: '未知服务' });
+        const v = await gate.use('keysave_user', me.id);
+        if (v.limited) return json(429, { ok: false, retry_after: v.retryAfterSec, message: RATE_MSG });
+        const q = await readBody();
+        const val = String(q.key ?? '').trim();
+        await store.setUserKey(me.id, pid, val ? encryptKey(KEYS_SECRET, val) : null);
+        return json(200, { ok: true, provider: pid, configured: Boolean(val) });
       }
       if (url.pathname === '/api/me/sessions' && req.method === 'GET') {
         return json(200, { ok: true, sessions: await store.listSessions(me.id, me._token) });
@@ -577,6 +710,23 @@ const server = http.createServer(async (req, res) => {
         for await (const chunk of req) body += chunk;
         const accept = req.headers.accept || '';
         const parsed = JSON.parse(body);
+        // Account keys override anything client-supplied; runTurn layers the
+        // merged map over ENV_KEYS (precedence: account > env > body).
+        parsed.keys = { ...(parsed.keys || {}), ...(await accountKeys(uid)) };
+        // Spend protection: real-model turns count against the user's quota
+        // (mock is free — it never leaves the process).
+        if (parsed.provider && parsed.provider !== 'mock') {
+          const refusal = await turnQuota(uid, clientIp(req));
+          if (refusal) {
+            if (accept.includes('application/json') && !accept.includes('text/event-stream')) {
+              return json(200, { events: [{ event: 'error', data: refusal }] });
+            }
+            res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive' });
+            res.write(`event: error\ndata: ${JSON.stringify(refusal)}\n\n`);
+            res.end();
+            return;
+          }
+        }
         if (accept.includes('application/json') && !accept.includes('text/event-stream')) {
           const events = [];
           const emit = (event, data) => events.push({ event, data });
@@ -611,7 +761,11 @@ const server = http.createServer(async (req, res) => {
       const registry = effectiveRegistry({ ...q, provider: q.provider });
       const p = registry[q.provider];
       if (!p) throw new Error(`未知供应商：${q.provider}`);
-      const key = q.key || ENV_KEYS[q.provider] || '';
+      // A freshly typed key wins (the teacher is testing it), then the
+      // account vault, then env.
+      const modelsMe = await sessionUser(req);
+      const acct = modelsMe ? await accountKeys(modelsMe.id) : {};
+      const key = q.key || acct[q.provider] || ENV_KEYS[q.provider] || '';
       if (!key) throw new Error('缺少 API 密钥——先填密钥再获取模型列表');
       const models = await listModels(p, key);
       res.end(JSON.stringify({ ok: true, provider: q.provider, defaultModel: p.model, models }));
@@ -624,6 +778,27 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/chat' && req.method === 'POST') {
     let body = '';
     for await (const chunk of req) body += chunk;
+    const chatBody = JSON.parse(body);
+    // Same quota discipline as the course endpoint. Without a session this
+    // endpoint could otherwise burn env keys anonymously (per-IP quota); with
+    // one, account keys ride along and the per-user quota applies.
+    const chatMe = await sessionUser(req);
+    if (chatMe) chatBody.keys = { ...(chatBody.keys || {}), ...(await accountKeys(chatMe.id)) };
+    if (chatBody.provider && chatBody.provider !== 'mock') {
+      const refusal = await turnQuota(chatMe?.id ?? null, clientIp(req));
+      if (refusal) {
+        const accept0 = req.headers.accept || '';
+        if (accept0.includes('application/json') && !accept0.includes('text/event-stream')) {
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ events: [{ event: 'error', data: refusal }] }));
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive' });
+        res.write(`event: error\ndata: ${JSON.stringify(refusal)}\n\n`);
+        res.end();
+        return;
+      }
+    }
     // Buffered mode (Accept: application/json, no event-stream): collect the SSE events
     // and return them as one JSON payload. Cross-origin / serverless deploys (e.g. Alibaba
     // FC) use this when response streaming is constrained; the browser replays the events.
@@ -635,7 +810,7 @@ const server = http.createServer(async (req, res) => {
       const LIVE = new Set(['thinking', 'progress', 'ttft', 'phase']);
       const emit = (event, data) => { if (!LIVE.has(event)) events.push({ event, data }); };
       try {
-        await runTurn(JSON.parse(body), emit);
+        await runTurn(chatBody, emit);
       } catch (e) {
         emit('error', { kind: e.kind ?? 'internal', message: e.message, chain: e.chain ?? [] });
       }
@@ -650,7 +825,7 @@ const server = http.createServer(async (req, res) => {
     });
     const emit = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     try {
-      await runTurn(JSON.parse(body), emit);
+      await runTurn(chatBody, emit);
     } catch (e) {
       emit('error', { kind: e.kind ?? 'internal', message: e.message, chain: e.chain ?? [] });
     }
@@ -673,7 +848,14 @@ const server = http.createServer(async (req, res) => {
       } catch { res.writeHead(404); res.end('admin.html missing'); }
       return;
     }
+    // Admin token brute-force gate (per-IP), checked before evaluating.
+    const adminIp = clientIp(req);
+    const adminGate = await gate.check('admin_ip', adminIp);
+    if (adminGate.limited) {
+      return json(429, { ok: false, retry_after: adminGate.retryAfterSec, message: RATE_MSG });
+    }
     if (!adminAuthorized(req)) {
+      await gate.record('admin_ip', adminIp);
       return json(401, { ok: false, message: '密码不对，或还没有输入密码' });
     }
     const seg = url.pathname.slice('/api/admin/'.length).split('/').filter(Boolean).map(decodeURIComponent);
@@ -730,6 +912,20 @@ const server = http.createServer(async (req, res) => {
       }
       if (seg[0] === 'audit' && req.method === 'GET') {
         return json(200, { ok: true, audit: await store.listAudit({ limit: 200 }) });
+      }
+      // ---- 限流 relief (spec 2026-07-22 §6): view + unlock, audited ----
+      if (seg[0] === 'rate-limits' && seg.length === 1 && req.method === 'GET') {
+        return json(200, { ok: true, limits: await gate.list() });
+      }
+      if (seg[0] === 'rate-limits' && seg.length === 2 && req.method === 'DELETE') {
+        const removed = await gate.clearEntry(seg[1]);
+        await store.audit('console', 'rate_limit_clear', null, { entry: seg[1] });
+        return json(removed ? 200 : 404, removed ? { ok: true, cleared: seg[1] } : { ok: false, message: '条目不存在' });
+      }
+      if (seg[0] === 'rate-limits' && seg.length === 1 && req.method === 'DELETE') {
+        await gate.clearAll();
+        await store.audit('console', 'rate_limit_clear_all', null, null);
+        return json(200, { ok: true });
       }
       if (seg[0] === 'export' && req.method === 'GET') {
         const courses = await store.adminExportAll();
