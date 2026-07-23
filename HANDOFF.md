@@ -2,6 +2,15 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-23 (later) — "answer now": thinking budget + forced-answer retry; ceiling 30→15 min
+
+Herman asked for ChatGPT's "answer now" and called 30 min too much. ChatGPT's button works because OpenAI owns the decoding loop and can end the reasoning phase server-side; chat/completions has no mid-request steer channel, so [demo/src/adapter.mjs](demo/src/adapter.mjs) now does the closest honest analog:
+
+- **Thinking budget (default 4 min, streaming)**: armed until the FIRST answer-content delta（tool args count; `<think>` interior doesn't）. A model still reasoning with zero answer at the budget is cut (`timeout`/`phase:'thinking'`) and retried ONCE with `disableThinking` merged into the body（GLM/Z.AI ×3: `thinking:{type:"disabled"}`, verified against docs.bigmodel.cn 2026-07）plus a 「思考时间已用完…直接输出最终回复」 system nudge, budget off, idle+total still armed. A model already answering is never touched, however long it runs. Retry-refuses-to-answer → normal timeout error, no third attempt.
+- **Total ceiling 1800s → 900s** (15 min).
+- Tests: 3 new both-directions cases in [demo/tests/adapter-timeout.test.mjs](demo/tests/adapter-timeout.test.mjs) (budget fires on endless reasoning → forced retry succeeds with switch+nudge on the wire; silent once answering starts; retry happens once). 208/208.
+- **Real-key verification still pending**: `thinking:{type:"disabled"}` is docs-verified but untested against live GLM; the aggregators (FreeModel/OpenRouter/Kilo) get nudge-only retries.
+
 ## 2026-07-23 — timeout physics: idle timer replaces the flat 600s kill; 30-min ceiling
 
 Herman's testing lost an ~8-min healthy generation to the flat 600s abort. Rework in [demo/src/adapter.mjs](demo/src/adapter.mjs):

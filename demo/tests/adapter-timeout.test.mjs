@@ -100,6 +100,83 @@ test('failover chain STOPS after a total timeout instead of starting a second ma
   } finally { babble.close(); good.close(); }
 });
 
+// ---------------- thinking budget: the "answer now" analog ----------------
+
+const THINK_CHUNK = `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: '想…' } }] })}\n\n`;
+
+/** Stub that thinks forever on attempt 1; scripts attempt 2 via handler2. */
+function thinkingServer(handler2) {
+  const bodies = [];
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      bodies.push(JSON.parse(raw));
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      if (bodies.length === 1) {
+        const t = setInterval(() => res.write(THINK_CHUNK), 50); // reasons forever, never answers
+        res.on('close', () => clearInterval(t));
+      } else {
+        handler2(res);
+      }
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve({
+      server,
+      base: `http://127.0.0.1:${server.address().port}/v1`,
+      bodies,
+      close: () => { server.closeAllConnections?.(); server.close(); },
+    }));
+  });
+}
+
+test('thinking budget FIRES on endless reasoning: one forced-answer retry with thinking disabled + nudge', async () => {
+  const { close, base, bodies } = await thinkingServer((res) => {
+    res.write(CHUNK('{"reply_markdown":"好"}'));
+    res.write(FINAL);
+    res.end();
+  });
+  try {
+    const p = { ...stub(base), disableThinking: { thinking: { type: 'disabled' } } };
+    const r = await callProvider(p, 'k', MESSAGES, { onDelta: () => {}, thinkingBudgetMs: 300, idleTimeoutMs: 60000, timeoutMs: 60000 });
+    assert.equal(r.payload, '{"reply_markdown":"好"}', 'forced retry delivers the answer');
+    assert.equal(bodies.length, 2, 'exactly one retry');
+    assert.deepEqual(bodies[1].thinking, { type: 'disabled' }, 'vendor thinking switch off on the retry');
+    assert.ok(bodies[1].messages.at(-1).content.includes('思考时间已用完'), 'nudge appended');
+    assert.equal(bodies[0].thinking, undefined, 'first attempt untouched');
+  } finally { close(); }
+});
+
+test('thinking budget STAYS SILENT once answer content has started, however long the turn runs', async () => {
+  const { close, base } = await sseServer((res) => {
+    res.write(CHUNK('{"reply_'));           // answer starts immediately…
+    let i = 0;
+    const t = setInterval(() => {
+      i += 1;
+      if (i === 5) { res.write(CHUNK('markdown":"好"}')); res.write(FINAL); res.end(); clearInterval(t); }
+    }, 150); // …then finishes at 750ms, well past the 300ms budget
+  });
+  try {
+    const r = await callProvider(stub(base), 'k', MESSAGES, { onDelta: () => {}, thinkingBudgetMs: 300, idleTimeoutMs: 60000, timeoutMs: 60000 });
+    assert.ok(String(r.payload).endsWith('"好"}'), 'long answering turn is never cut by the budget');
+  } finally { close(); }
+});
+
+test('forced retry happens ONCE: still no answer → the timeout surfaces, no third attempt', async () => {
+  const { close, base, bodies } = await thinkingServer((res) => {
+    const t = setInterval(() => res.write(THINK_CHUNK), 50); // retry also refuses to answer
+    res.on('close', () => clearInterval(t));
+  });
+  try {
+    await assert.rejects(
+      callProvider(stub(base), 'k', MESSAGES, { onDelta: () => {}, thinkingBudgetMs: 300, idleTimeoutMs: 60000, timeoutMs: 1200 }),
+      (e) => e instanceof AdapterError && e.kind === 'timeout' && e.phase === 'total',
+    );
+    assert.equal(bodies.length, 2, 'no third attempt');
+  } finally { close(); }
+});
+
 test('an idle-silent PRIMARY node hops to the alternate node and succeeds', async () => {
   const dead = await sseServer((res) => { res.write(CHUNK('半')); });
   const good = await sseServer((res) => { res.write(CHUNK('{"reply_markdown":"好"}')); res.write(FINAL); res.end(); });

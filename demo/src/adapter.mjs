@@ -28,12 +28,16 @@ export const PROVIDERS = {
   // DIFFERENT platforms with different keys/balances — a Z.AI key gets 429
   // 余额不足 on bigmodel.cn. Z.AI Coding Plan subscriptions bill only through
   // the dedicated coding endpoint (…/api/coding/paas/v4), not the general one.
+  // disableThinking: request-body patch for the forced-answer retry (thinking
+  // budget exceeded). GLM-5.x thinks by DEFAULT; the documented off-switch is
+  // thinking:{type:"disabled"} (docs.bigmodel.cn thinking-mode, 2026-07).
   glm: {
     id: 'glm',
     label: 'GLM（智谱国内 bigmodel.cn）',
     baseURL: 'https://open.bigmodel.cn/api/paas/v4',
     model: 'glm-5.2',
     jsonStrategy: 'json_schema',
+    disableThinking: { thinking: { type: 'disabled' } },
     enabled: true,
   },
   zai: {
@@ -42,6 +46,7 @@ export const PROVIDERS = {
     baseURL: 'https://api.z.ai/api/paas/v4',
     model: 'glm-5.2',
     jsonStrategy: 'json_schema',
+    disableThinking: { thinking: { type: 'disabled' } },
     enabled: true,
   },
   'zai-coding': {
@@ -50,6 +55,7 @@ export const PROVIDERS = {
     baseURL: 'https://api.z.ai/api/coding/paas/v4',
     model: 'glm-5.2',
     jsonStrategy: 'json_schema',
+    disableThinking: { thinking: { type: 'disabled' } },
     enabled: true,
   },
   kimi: {
@@ -254,19 +260,37 @@ const USER_AGENT = 'teacher-platform-demo/0.1';
  * onDelta({kind:'first'|'thinking'|'content', …}); the RESULT is identical to
  * the non-streaming path — chunks are accumulated and go through the same
  * extractPayload, so the harness never knows the difference.
- * Two timers, two failure modes (both AdapterError kind 'timeout', .phase set):
+ * Three timers, three failure modes (all AdapterError kind 'timeout', .phase set):
  *   - idle (streaming only): every vendor byte re-arms it, so a long
  *     PRODUCTIVE generation is never cut — only a stream that stops talking.
+ *   - thinking (streaming only): fires when the model has produced ONLY
+ *     reasoning and no answer content within the budget — the caller
+ *     (callProvider) catches this phase and retries with thinking disabled,
+ *     the closest an open API gets to ChatGPT's "answer now" (their button
+ *     works because OpenAI owns the decoding loop; chat/completions has no
+ *     mid-request steer channel, so we abort-and-redirect instead).
  *   - total: hard ceiling backstop; without onDelta it is the only guard,
  *     because a buffered call gives no progress signal to watch. */
-async function callNode(p, base, apiKey, body, timeoutMs, onDelta, idleTimeoutMs) {
+async function callNode(p, base, apiKey, body, timeoutMs, onDelta, idleTimeoutMs, thinkingBudgetMs) {
   const ctl = new AbortController();
-  let timedOut = null; // 'total' | 'idle'
+  let timedOut = null; // 'total' | 'idle' | 'thinking'
   const hardTimer = setTimeout(() => { timedOut = 'total'; ctl.abort(); }, timeoutMs);
   let idleTimer = null;
   const armIdle = onDelta && idleTimeoutMs
     ? () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => { timedOut = 'idle'; ctl.abort(); }, idleTimeoutMs); }
     : null;
+  // Thinking budget: armed until the FIRST answer-content delta (tool args
+  // count; <think> interior does not). A model reasoning past it gets cut for
+  // the forced-answer retry; a model already answering is never touched.
+  let thinkTimer = null;
+  let wrappedDelta = onDelta;
+  if (onDelta && thinkingBudgetMs) {
+    thinkTimer = setTimeout(() => { timedOut = 'thinking'; ctl.abort(); }, thinkingBudgetMs);
+    wrappedDelta = (d) => {
+      if (d.kind === 'content' && thinkTimer) { clearTimeout(thinkTimer); thinkTimer = null; }
+      onDelta(d);
+    };
+  }
   let res;
   try {
     armIdle?.();
@@ -280,14 +304,17 @@ async function callNode(p, base, apiKey, body, timeoutMs, onDelta, idleTimeoutMs
       const text = await res.text().catch(() => '');
       throw new AdapterError('http', `${p.label}（${base}）返回 ${res.status}：${text.slice(0, 300)}`, res.status);
     }
-    const completion = onDelta ? await readStream(p, res, onDelta, armIdle) : await res.json();
+    const completion = onDelta ? await readStream(p, res, wrappedDelta, armIdle) : await res.json();
     return { payload: extractPayload(p, completion), usage: completion.usage ?? null, base_url_used: base };
   } catch (e) {
     if (e instanceof AdapterError) throw e;
     if (timedOut) {
-      const err = new AdapterError('timeout', timedOut === 'idle'
-        ? `${p.label}（${base}）连续 ${Math.round(idleTimeoutMs / 1000)} 秒没有任何输出，已断开——服务可能卡住了，可再试一次或换个服务`
-        : `${p.label}（${base}）生成超过 ${Math.round(timeoutMs / 60000)} 分钟仍未完成，已停止`);
+      const err = new AdapterError('timeout',
+        timedOut === 'idle'
+          ? `${p.label}（${base}）连续 ${Math.round(idleTimeoutMs / 1000)} 秒没有任何输出，已断开——服务可能卡住了，可再试一次或换个服务`
+          : timedOut === 'thinking'
+            ? `${p.label}（${base}）思考了 ${Math.round(thinkingBudgetMs / 60000)} 分钟还没开始作答，已切断并要求直接作答`
+            : `${p.label}（${base}）生成超过 ${Math.round(timeoutMs / 60000)} 分钟仍未完成，已停止`);
       err.phase = timedOut;
       throw err;
     }
@@ -295,6 +322,7 @@ async function callNode(p, base, apiKey, body, timeoutMs, onDelta, idleTimeoutMs
   } finally {
     clearTimeout(hardTimer);
     clearTimeout(idleTimer);
+    clearTimeout(thinkTimer);
   }
 }
 
@@ -405,21 +433,41 @@ function nodeHopWorthy(e) {
 // vendor keeps streaming bytes the call lives, however long it runs; only a
 // silent stream is cut (120s covers real inter-token gaps and stays far below
 // the public nginx 660s read window, whose clock our SSE progress events keep
-// resetting client-side). The total ceiling is a 30-min backstop against a
-// stream that babbles forever, and the only guard on non-streaming calls.
-export async function callProvider(p, apiKey, messages, { timeoutMs = 1800000, idleTimeoutMs = 120000, plain = false, onDelta = null } = {}) {
-  const body = buildRequest(p, messages, { plain });
-  const bases = [p.baseURL, ...(Array.isArray(p.altBaseURLs) ? p.altBaseURLs : [])];
-  let lastErr = null;
-  for (const base of bases) {
-    try {
-      return await callNode(p, base, apiKey, body, timeoutMs, onDelta, idleTimeoutMs);
-    } catch (e) {
-      lastErr = e;
-      if (!(e instanceof AdapterError) || !nodeHopWorthy(e) || base === bases[bases.length - 1]) throw e;
+// resetting client-side). The THINKING budget is the "answer now" analog:
+// a model that reasons past it without producing any answer content gets one
+// forced-answer retry — thinking disabled where the vendor has a switch
+// (disableThinking), plus a system nudge — instead of a dead error. The total
+// ceiling (15 min, Herman: 30 was too much) is the backstop against a stream
+// that babbles forever, and the only guard on non-streaming calls.
+export async function callProvider(p, apiKey, messages, { timeoutMs = 900000, idleTimeoutMs = 120000, thinkingBudgetMs = 240000, plain = false, onDelta = null } = {}) {
+  const tryBases = async (body, budget) => {
+    const bases = [p.baseURL, ...(Array.isArray(p.altBaseURLs) ? p.altBaseURLs : [])];
+    let lastErr = null;
+    for (const base of bases) {
+      try {
+        return await callNode(p, base, apiKey, body, timeoutMs, onDelta, idleTimeoutMs, budget);
+      } catch (e) {
+        lastErr = e;
+        if (!(e instanceof AdapterError) || !nodeHopWorthy(e) || base === bases[bases.length - 1]) throw e;
+      }
     }
+    throw lastErr; // unreachable; loop always returns or throws
+  };
+
+  const body = buildRequest(p, messages, { plain });
+  try {
+    return await tryBases(body, thinkingBudgetMs);
+  } catch (e) {
+    if (!(e instanceof AdapterError) || e.phase !== 'thinking') throw e;
+    // Forced answer, once: same request minus the runway. No budget on the
+    // retry (thinking is off / told to stop); idle + total still guard it.
+    const forced = {
+      ...body,
+      ...(p.disableThinking ?? {}),
+      messages: [...body.messages, { role: 'system', content: '思考时间已用完：不要再推理，立刻直接输出最终回复。' }],
+    };
+    return await tryBases(forced, 0);
   }
-  throw lastErr; // unreachable; loop always returns or throws
 }
 
 /**
