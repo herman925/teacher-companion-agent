@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { buildSystemPrompt, profileSectionText, stageModuleName, STAGE_MODULE, STYLE_DIRECTIVES } from '../src/prompt-builder.mjs';
+import { buildSystemPrompt, buildPromptParts, cacheStableHistory, profileSectionText, stageModuleName, STAGE_MODULE, STYLE_DIRECTIVES } from '../src/prompt-builder.mjs';
 import { createInitialState, applyDelta } from '../src/engine.mjs';
 import { mockTurn } from '../src/mock.mjs';
 
@@ -110,6 +110,51 @@ test('async loaders work: loadPrompt may return promises', async () => {
   const asyncStub = (name) => Promise.resolve('<' + name + '>');
   const out = await buildSystemPrompt({ stage: 3 }, asyncStub);
   assert.ok(out.startsWith('<base>') && out.includes('<stage3>'));
+});
+
+// ---------------- prompt caching: stable prefix + volatile tail ----------------
+
+test('buildPromptParts: static system carries rules + profile and NO snapshot; stateNote carries snapshot + pacing (both directions)', async () => {
+  const state = { stage: 1, awaiting_feedback: true, course_id: 'cache-1' };
+  const { system, stateNote } = await buildPromptParts(state, stub, { profile: { ageBand: '大班' } });
+  assert.ok(system.startsWith('[base]') && system.includes('[contract]') && system.includes('[stage1]'));
+  assert.ok(system.includes('不要向教师复述档案内容'), 'profile lives in the static prefix');
+  assert.ok(!system.includes('course_state'), 'no snapshot in the cacheable prefix');
+  assert.ok(stateNote.includes('cache-1') && stateNote.includes('awaiting_feedback 为 true'), 'snapshot + pacing in the tail');
+  // Same content overall: parts vs legacy single prompt agree section-for-section.
+  const legacy = await buildSystemPrompt(state, stub);
+  assert.ok(legacy.includes(stateNote), 'the tail is the same section the legacy prompt embeds');
+});
+
+test('buildPromptParts: static system is byte-stable while state churns within a stage', async () => {
+  const a = await buildPromptParts({ stage: 2, awaiting_feedback: false, children_evidence: [] }, stub);
+  const b = await buildPromptParts({ stage: 2, awaiting_feedback: true, children_evidence: [{ id: 'ev1' }] }, stub);
+  assert.equal(a.system, b.system, 'prefix identical across turns → vendor cache hit');
+  assert.notEqual(a.stateNote, b.stateNote, 'volatility confined to the tail');
+});
+
+test('cacheStableHistory: ≤36 messages pass through untouched', () => {
+  const h = Array.from({ length: 36 }, (_, i) => ({ role: 'user', content: String(i) }));
+  assert.deepEqual(cacheStableHistory(h), h);
+  assert.deepEqual(cacheStableHistory([]), []);
+});
+
+test('cacheStableHistory: window start moves in 12-message blocks, size stays 24–35', () => {
+  let prevStart = null;
+  let jumps = 0;
+  for (let len = 37; len <= 72; len += 1) {
+    const h = Array.from({ length: len }, (_, i) => ({ role: 'user', content: String(i) }));
+    const kept = cacheStableHistory(h);
+    assert.ok(kept.length >= 24 && kept.length <= 35, `len ${len} keeps ${kept.length}`);
+    assert.equal(kept.at(-1).content, String(len - 1), 'newest message always kept');
+    const start = Number(kept[0].content);
+    if (prevStart !== null && start !== prevStart) {
+      assert.equal(start - prevStart, 12, 'start only ever jumps by a whole block');
+      jumps += 1;
+    }
+    prevStart = start;
+  }
+  assert.ok(jumps >= 2, 'the window does advance');
 });
 
 test('profile is never model-writable: profile keys in state_delta strip as bad_delta', () => {

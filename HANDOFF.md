@@ -4,7 +4,9 @@ Latest session first. Keep entries short and factual; link instead of restating.
 
 ## 2026-07-23 (latest) — draft carry-over into the forced retry; 5-min gate / 10-min wall-clock ceiling
 
-**TEST NEXT SESSION with a real GLM key**: one long 备课 turn — confirm ① `thinking:{type:"disabled"}` is accepted live, ② the forced retry answers fast, ③ the draft handoff doesn't break `json_schema` output. Numbers live in `callProvider` defaults ([demo/src/adapter.mjs](demo/src/adapter.mjs)); spec in [docs/MODEL-APIS.md](docs/MODEL-APIS.md) §4.5.
+**TEST NEXT SESSION with a real GLM key**: one long 备课 turn — confirm ① `thinking:{type:"disabled"}` is accepted live, ② the forced retry answers fast, ③ the draft handoff doesn't break `json_schema` output, ④ the second mid-conversation `system` message (state note, prompt-caching layout) is accepted by GLM/MiniMax/Kimi, ⑤ vendors' cached-token counters appear in `usage` (debug drawer) on turn 2+ of a conversation — proof the prefix cache actually hits. Numbers live in `callProvider` defaults ([demo/src/adapter.mjs](demo/src/adapter.mjs)); spec in [docs/MODEL-APIS.md](docs/MODEL-APIS.md) §4.5 + §4.7b.
+
+**Prompt caching implemented (same day, Herman's call)**: vendors cache automatically, but only on a byte-stable prefix — the old assembly embedded the per-turn `course_state` snapshot in `messages[0]`, busting the whole conversation every turn. `buildPromptParts` now splits: static rules(+档案) stay in `messages[0]`, the snapshot+pacing ride as a SECOND system message just before the newest teacher message, and `cacheStableHistory` trims history in 12-message blocks (window 24–35) instead of sliding every turn. L4 retries re-send a fully cached prefix. `buildSystemPrompt` kept byte-identical for the debug drawer / mock reconstruction (`prompt_debug` gains `state_note`). Verified live on the server mock path: snapshot absent from `system`, present in `state_note`, turn + gate clean. 212/212.
 
 Herman confirmed the retry-is-a-reprompt reading and asked whether the aborted thinking is regurgitated into attempt 2 — it wasn't; now it is:
 

@@ -22,7 +22,7 @@ import { mockTurn } from './src/mock.mjs';
 import { WF_NODES } from './src/wf-nodes.mjs';
 import { parseTurn, validateTurn, violationFeedback, safeTemplate } from './src/harness.mjs';
 import { applyDelta, absorbBlueprint, applyBlueprintDelta, confirmBlueprintNode, createInitialState, STAGE_NAMES } from './src/engine.mjs';
-import { buildSystemPrompt, stageModuleName, profileSectionText } from './src/prompt-builder.mjs';
+import { buildPromptParts, cacheStableHistory, stageModuleName, profileSectionText } from './src/prompt-builder.mjs';
 import { store } from './src/store.mjs';
 import { deriveCourseTitle, TITLE_MAX } from './src/store/json-store.mjs';
 import { shouldRegenTitle, buildTitleMessages, sanitizeTitle, TITLE_INTERVALS, TITLE_INTERVAL_DEFAULT } from './src/title-agent.mjs';
@@ -211,11 +211,17 @@ async function runTurn(req, emit) {
 
   // Prompt assembly is shared with the demo UI (prompt-builder.mjs); the
   // optional 教师档案 travels as read-only context, never through state_delta.
-  const systemPrompt = await buildSystemPrompt(state, loadPrompt, { profile: req.profile });
-  const keptHistory = (req.history || []).slice(-24);
+  // Cache-friendly layout (2026-07-23): static rules first, history behind
+  // them untouched, and the per-turn state snapshot as a second system
+  // message just before the newest teacher message — so vendors' automatic
+  // prefix caches survive across turns instead of being busted by the
+  // snapshot changing inside messages[0].
+  const { system: systemPrompt, stateNote } = await buildPromptParts(state, loadPrompt, { profile: req.profile });
+  const keptHistory = cacheStableHistory(req.history || []);
   const messages = [
     { role: 'system', content: systemPrompt },
     ...keptHistory,
+    { role: 'system', content: stateNote },
     { role: 'user', content: req.message },
   ];
 
@@ -342,6 +348,7 @@ async function runTurn(req, emit) {
     ...(debug ? {
       prompt_debug: {
         system: systemPrompt,
+        state_note: stateNote, // sent as a second system message before the teacher's turn
         stage_module: stageModuleName(state),
         history_count: keptHistory.length,
         profile_injected: Boolean(profileSectionText(req.profile)),

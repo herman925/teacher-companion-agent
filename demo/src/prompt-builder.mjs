@@ -64,6 +64,9 @@ export function profileSectionText(profile) {
  * Assemble the full system prompt: base + contract + stage module + live
  * state snapshot (+ optional 教师档案 section). Byte-identical to the legacy
  * serve.mjs assembly when opts.profile is empty.
+ * Kept for the debug drawer's mock reconstruction and prompt visibility;
+ * real vendor requests use buildPromptParts so the volatile state snapshot
+ * stops busting the vendors' automatic prefix caches.
  * @param {Object} state current course_state
  * @param {(name: string) => string|Promise<string>} loadPrompt injected loader
  * @param {{profile?: Object}} [opts]
@@ -73,17 +76,62 @@ export async function buildSystemPrompt(state, loadPrompt, opts = {}) {
   const base = await loadPrompt('base');
   const contract = await loadPrompt('contract');
   const stageDoc = await loadPrompt(stageModuleName(state));
-  const snapshot = JSON.stringify(state, null, 1);
-  const pacing = state.awaiting_feedback
-    ? '当前 awaiting_feedback 为 true：上一轮已收尾，教师尚未回传现场反馈。若这条消息就是回传，先提取证据；若只是追问或要素材，就地支持，不虚构课堂进展。'
-    : '';
   const sections = [
     base,
     contract,
     stageDoc,
-    `# 当前 course_state（只读快照）\n\n${FENCE}json\n${snapshot}\n${FENCE}\n\n${pacing}`,
+    stateNoteText(state),
   ];
   const profileText = profileSectionText(opts.profile);
   if (profileText) sections.push(profileText);
   return sections.join('\n\n---\n\n');
+}
+
+/** The volatile per-turn section: live state snapshot + pacing note. */
+export function stateNoteText(state) {
+  const snapshot = JSON.stringify(state, null, 1);
+  const pacing = state.awaiting_feedback
+    ? '当前 awaiting_feedback 为 true：上一轮已收尾，教师尚未回传现场反馈。若这条消息就是回传，先提取证据；若只是追问或要素材，就地支持，不虚构课堂进展。'
+    : '';
+  return `# 当前 course_state（只读快照）\n\n${FENCE}json\n${snapshot}\n${FENCE}\n\n${pacing}`;
+}
+
+/**
+ * Cache-friendly split of the same content (2026-07-23, prompt caching):
+ * every provider we call runs AUTOMATIC prefix caching (MiniMax cache-hit
+ * pricing, Kimi context caching, GLM implicit) — but a cache hit needs a
+ * byte-stable token PREFIX, and the legacy assembly put the per-turn state
+ * snapshot inside messages[0], invalidating the whole conversation every
+ * turn. Split instead:
+ *   - `system`: base + contract + stage module + 教师档案 — stable within a
+ *     stage, so the static rules AND the whole conversation history behind
+ *     them stay cache-hot;
+ *   - `stateNote`: snapshot + pacing — injected as a SECOND system message
+ *     just before the newest teacher message, where it can change freely
+ *     without touching the prefix (and where recency helps adherence).
+ * Same sections, same wording — only the placement differs.
+ * @returns {Promise<{system: string, stateNote: string}>}
+ */
+export async function buildPromptParts(state, loadPrompt, opts = {}) {
+  const base = await loadPrompt('base');
+  const contract = await loadPrompt('contract');
+  const stageDoc = await loadPrompt(stageModuleName(state));
+  const sections = [base, contract, stageDoc];
+  const profileText = profileSectionText(opts.profile);
+  if (profileText) sections.push(profileText);
+  return { system: sections.join('\n\n---\n\n'), stateNote: stateNoteText(state) };
+}
+
+/**
+ * History window with cache hysteresis. A plain slice(-24) slides by 2 every
+ * turn, moving the window start and re-tokenizing the whole tail each time.
+ * Instead the start index advances in blocks of 12 messages (6 turns), so the
+ * prefix stays byte-stable between jumps: the window holds 24–35 messages,
+ * and 5 of every 6 turns are pure cache extensions.
+ * @param {Array<{role: string, content: string}>} history
+ */
+export function cacheStableHistory(history) {
+  const h = Array.isArray(history) ? history : [];
+  if (h.length <= 36) return h.slice();
+  return h.slice(Math.floor((h.length - 24) / 12) * 12);
 }
