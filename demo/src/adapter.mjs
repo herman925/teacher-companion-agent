@@ -281,13 +281,17 @@ async function callNode(p, base, apiKey, body, timeoutMs, onDelta, idleTimeoutMs
     : null;
   // Thinking budget: armed until the FIRST answer-content delta (tool args
   // count; <think> interior does not). A model reasoning past it gets cut for
-  // the forced-answer retry; a model already answering is never touched.
+  // the forced-answer retry; a model already answering is never touched. The
+  // reasoning streamed so far is KEPT (err.thinkingSoFar) so the retry can
+  // hand the model its own draft back instead of rethinking from zero.
   let thinkTimer = null;
+  let thinkingLog = '';
   let wrappedDelta = onDelta;
   if (onDelta && thinkingBudgetMs) {
     thinkTimer = setTimeout(() => { timedOut = 'thinking'; ctl.abort(); }, thinkingBudgetMs);
     wrappedDelta = (d) => {
       if (d.kind === 'content' && thinkTimer) { clearTimeout(thinkTimer); thinkTimer = null; }
+      else if (d.kind === 'thinking' && thinkTimer) thinkingLog += d.text;
       onDelta(d);
     };
   }
@@ -316,6 +320,7 @@ async function callNode(p, base, apiKey, body, timeoutMs, onDelta, idleTimeoutMs
             ? `${p.label}（${base}）思考了 ${Math.round(thinkingBudgetMs / 60000)} 分钟还没开始作答，已切断并要求直接作答`
             : `${p.label}（${base}）生成超过 ${Math.round(timeoutMs / 60000)} 分钟仍未完成，已停止`);
       err.phase = timedOut;
+      if (timedOut === 'thinking') err.thinkingSoFar = thinkingLog;
       throw err;
     }
     throw new AdapterError('network', `无法连接 ${p.label}（${base}）：${e.message}`);
@@ -428,24 +433,25 @@ function nodeHopWorthy(e) {
  * returned as `base_url_used` so the debug drawer / session log can show it.
  * @returns {Promise<{payload: string|Object, usage: Object|null, base_url_used: string}>}
  */
-// Timeouts (2026-07-23, after an ~8-min healthy generation was killed by the
-// old flat 600s abort): the graceful guard is the IDLE timer — while the
-// vendor keeps streaming bytes the call lives, however long it runs; only a
-// silent stream is cut (120s covers real inter-token gaps and stays far below
-// the public nginx 660s read window, whose clock our SSE progress events keep
-// resetting client-side). The THINKING budget is the "answer now" analog:
-// a model that reasons past it without producing any answer content gets one
-// forced-answer retry — thinking disabled where the vendor has a switch
-// (disableThinking), plus a system nudge — instead of a dead error. The total
-// ceiling (15 min, Herman: 30 was too much) is the backstop against a stream
-// that babbles forever, and the only guard on non-streaming calls.
-export async function callProvider(p, apiKey, messages, { timeoutMs = 900000, idleTimeoutMs = 120000, thinkingBudgetMs = 240000, plain = false, onDelta = null } = {}) {
-  const tryBases = async (body, budget) => {
+// Timeouts (2026-07-23, tuned with Herman): the graceful guard is the IDLE
+// timer — while the vendor keeps streaming bytes the call lives, however long
+// it runs; only a silent stream is cut (120s covers real inter-token gaps and
+// stays far below the public nginx 660s read window, whose clock our SSE
+// progress events keep resetting client-side). The THINKING budget (5 min) is
+// the "answer now" analog: a model that reasons past it without producing any
+// answer content gets one forced-answer retry — thinking disabled where the
+// vendor has a switch (disableThinking), plus its OWN captured draft handed
+// back so the burned minutes aren't wasted. The total ceiling (10 min) is a
+// WALL-CLOCK budget across both attempts (5 thinking + ~5 forced answer),
+// and the only guard on non-streaming calls.
+export async function callProvider(p, apiKey, messages, { timeoutMs = 600000, idleTimeoutMs = 120000, thinkingBudgetMs = 300000, plain = false, onDelta = null } = {}) {
+  const t0 = Date.now();
+  const tryBases = async (body, budget, ceiling) => {
     const bases = [p.baseURL, ...(Array.isArray(p.altBaseURLs) ? p.altBaseURLs : [])];
     let lastErr = null;
     for (const base of bases) {
       try {
-        return await callNode(p, base, apiKey, body, timeoutMs, onDelta, idleTimeoutMs, budget);
+        return await callNode(p, base, apiKey, body, ceiling, onDelta, idleTimeoutMs, budget);
       } catch (e) {
         lastErr = e;
         if (!(e instanceof AdapterError) || !nodeHopWorthy(e) || base === bases[bases.length - 1]) throw e;
@@ -456,17 +462,24 @@ export async function callProvider(p, apiKey, messages, { timeoutMs = 900000, id
 
   const body = buildRequest(p, messages, { plain });
   try {
-    return await tryBases(body, thinkingBudgetMs);
+    return await tryBases(body, thinkingBudgetMs, timeoutMs);
   } catch (e) {
     if (!(e instanceof AdapterError) || e.phase !== 'thinking') throw e;
-    // Forced answer, once: same request minus the runway. No budget on the
-    // retry (thinking is off / told to stop); idle + total still guard it.
+    // Forced answer, once. The retry is a NEW request (no way to steer the
+    // aborted one), but not from zero: the reasoning streamed before the cut
+    // rides along (tail-truncated — the end of a draft is its most decided
+    // part), so the model resumes instead of rethinking. No budget on the
+    // retry; idle still guards it; the ceiling is whatever wall-clock remains.
+    const draft = String(e.thinkingSoFar ?? '').slice(-6000);
+    const nudge = draft
+      ? `思考时间已用完。下面是你已完成的思考草稿（直接采用其结论，不要重新推理）：\n${draft}\n——现在立刻直接输出最终回复。`
+      : '思考时间已用完：不要再推理，立刻直接输出最终回复。';
     const forced = {
       ...body,
       ...(p.disableThinking ?? {}),
-      messages: [...body.messages, { role: 'system', content: '思考时间已用完：不要再推理，立刻直接输出最终回复。' }],
+      messages: [...body.messages, { role: 'system', content: nudge }],
     };
-    return await tryBases(forced, 0);
+    return await tryBases(forced, 0, Math.max(timeoutMs - (Date.now() - t0), 60000));
   }
 }
 

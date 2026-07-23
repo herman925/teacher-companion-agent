@@ -2,6 +2,16 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-23 (latest) — draft carry-over into the forced retry; 5-min gate / 10-min wall-clock ceiling
+
+**TEST NEXT SESSION with a real GLM key**: one long 备课 turn — confirm ① `thinking:{type:"disabled"}` is accepted live, ② the forced retry answers fast, ③ the draft handoff doesn't break `json_schema` output. Numbers live in `callProvider` defaults ([demo/src/adapter.mjs](demo/src/adapter.mjs)); spec in [docs/MODEL-APIS.md](docs/MODEL-APIS.md) §4.5.
+
+Herman confirmed the retry-is-a-reprompt reading and asked whether the aborted thinking is regurgitated into attempt 2 — it wasn't; now it is:
+
+- `callNode` keeps the reasoning streamed before the cut (`err.thinkingSoFar`); the forced retry hands the model its own draft back (tail 6000 chars, 「直接采用其结论，不要重新推理」) instead of rethinking from zero.
+- Thinking gate 4→**5 min**; total ceiling 15→**10 min wall-clock across both attempts** (retry ceiling = remaining time, floor 60s). Documented in MODEL-APIS.md §4.5 (old flat-600s bullet replaced).
+- Tests updated: retry body must carry the draft + framing; once-only test now exercises the idle guard on the retry. 208/208.
+
 ## 2026-07-23 (later) — "answer now": thinking budget + forced-answer retry; ceiling 30→15 min
 
 Herman asked for ChatGPT's "answer now" and called 30 min too much. ChatGPT's button works because OpenAI owns the decoding loop and can end the reasoning phase server-side; chat/completions has no mid-request steer channel, so [demo/src/adapter.mjs](demo/src/adapter.mjs) now does the closest honest analog:

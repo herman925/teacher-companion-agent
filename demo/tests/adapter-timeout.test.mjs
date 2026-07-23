@@ -143,7 +143,10 @@ test('thinking budget FIRES on endless reasoning: one forced-answer retry with t
     assert.equal(r.payload, '{"reply_markdown":"好"}', 'forced retry delivers the answer');
     assert.equal(bodies.length, 2, 'exactly one retry');
     assert.deepEqual(bodies[1].thinking, { type: 'disabled' }, 'vendor thinking switch off on the retry');
-    assert.ok(bodies[1].messages.at(-1).content.includes('思考时间已用完'), 'nudge appended');
+    const nudge = bodies[1].messages.at(-1).content;
+    assert.ok(nudge.includes('思考时间已用完'), 'nudge appended');
+    assert.ok(nudge.includes('想…'), 'the aborted reasoning rides into the retry as a draft');
+    assert.ok(nudge.includes('不要重新推理'), 'draft framed as reusable, not restartable');
     assert.equal(bodies[0].thinking, undefined, 'first attempt untouched');
   } finally { close(); }
 });
@@ -165,13 +168,12 @@ test('thinking budget STAYS SILENT once answer content has started, however long
 
 test('forced retry happens ONCE: still no answer → the timeout surfaces, no third attempt', async () => {
   const { close, base, bodies } = await thinkingServer((res) => {
-    const t = setInterval(() => res.write(THINK_CHUNK), 50); // retry also refuses to answer
-    res.on('close', () => clearInterval(t));
+    res.write(THINK_CHUNK); // retry also refuses to answer, then goes silent
   });
   try {
     await assert.rejects(
-      callProvider(stub(base), 'k', MESSAGES, { onDelta: () => {}, thinkingBudgetMs: 300, idleTimeoutMs: 60000, timeoutMs: 1200 }),
-      (e) => e instanceof AdapterError && e.kind === 'timeout' && e.phase === 'total',
+      callProvider(stub(base), 'k', MESSAGES, { onDelta: () => {}, thinkingBudgetMs: 300, idleTimeoutMs: 400, timeoutMs: 60000 }),
+      (e) => e instanceof AdapterError && e.kind === 'timeout',
     );
     assert.equal(bodies.length, 2, 'no third attempt');
   } finally { close(); }
