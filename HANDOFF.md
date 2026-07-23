@@ -2,6 +2,17 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## 2026-07-23 — timeout physics: idle timer replaces the flat 600s kill; 30-min ceiling
+
+Herman's testing lost an ~8-min healthy generation to the flat 600s abort. Rework in [demo/src/adapter.mjs](demo/src/adapter.mjs):
+
+- **Idle timer (streaming, default 120s)** is the real guard: every vendor byte re-arms it, so a long PRODUCTIVE stream is never cut — only one that goes silent. Idle-dead primaries still hop to alt nodes (FreeModel tiers).
+- **Total ceiling raised 600s → 1800s**, backstop only (and the sole guard on non-streaming calls, which give no progress signal). A total timeout does NOT continue the failover chain — 30 minutes are burned, the teacher decides the retry; error kind `timeout` with `.phase: 'idle'|'total'`, distinct zh messages.
+- nginx 660s read window is safe: SSE progress/heartbeat keeps client-side gaps ≤ the 120s idle window.
+- Both directions: [demo/tests/adapter-timeout.test.mjs](demo/tests/adapter-timeout.test.mjs) (5 tests — idle fires on silence / stays silent on slow drip, ceiling fires on babble, chain stops on total, idle hops nodes); 7 failures against the old adapter, 205/205 with the fix.
+- **Not built (asked, answered honestly): a "force the model to answer now" cutoff.** OpenAI-compatible streams have no mid-flight steer channel — once a request runs, we can only read or abort. Nearest real option = on timeout, auto-retry once with a "答题时间到，直接给最终 JSON，不展开思考" system nudge (costs a fresh request; the burned minutes stay burned). Deliberately left for a product call.
+- **联网搜索/深度思考 toggles are still UI-only placeholders** (`cst.providerCaps` is consumed by nothing; the drawer's 即将生效 note says so). GLM does NOT search when the switch is on — `buildRequest` never sends a `web_search` tool or thinking params. Wiring is per-vendor work (GLM/Z.AI `tools:[{type:"web_search"}]`, Kimi `$web_search` builtin; interaction with json_object/json_schema output modes untested) and needs real-key verification — tracked, not started.
+
 ## 2026-07-22 (evening) — Two demo-honesty defects found in a real pilot session, fixed
 
 Source: a server-side export of a real pilot course (演示模式 throughout — every reply `provider: mock`). The teacher-behaviour read was discarded as unsound (she was reacting to a script, not the product); only the two code defects survived, both reproducible without any session data.

@@ -253,12 +253,23 @@ const USER_AGENT = 'teacher-platform-demo/0.1';
  * With onDelta the request streams (stream:true) and progress flows out as
  * onDelta({kind:'first'|'thinking'|'content', …}); the RESULT is identical to
  * the non-streaming path — chunks are accumulated and go through the same
- * extractPayload, so the harness never knows the difference. */
-async function callNode(p, base, apiKey, body, timeoutMs, onDelta) {
+ * extractPayload, so the harness never knows the difference.
+ * Two timers, two failure modes (both AdapterError kind 'timeout', .phase set):
+ *   - idle (streaming only): every vendor byte re-arms it, so a long
+ *     PRODUCTIVE generation is never cut — only a stream that stops talking.
+ *   - total: hard ceiling backstop; without onDelta it is the only guard,
+ *     because a buffered call gives no progress signal to watch. */
+async function callNode(p, base, apiKey, body, timeoutMs, onDelta, idleTimeoutMs) {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  let timedOut = null; // 'total' | 'idle'
+  const hardTimer = setTimeout(() => { timedOut = 'total'; ctl.abort(); }, timeoutMs);
+  let idleTimer = null;
+  const armIdle = onDelta && idleTimeoutMs
+    ? () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => { timedOut = 'idle'; ctl.abort(); }, idleTimeoutMs); }
+    : null;
   let res;
   try {
+    armIdle?.();
     res = await fetch(`${base}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}`, 'user-agent': USER_AGENT },
@@ -269,13 +280,21 @@ async function callNode(p, base, apiKey, body, timeoutMs, onDelta) {
       const text = await res.text().catch(() => '');
       throw new AdapterError('http', `${p.label}（${base}）返回 ${res.status}：${text.slice(0, 300)}`, res.status);
     }
-    const completion = onDelta ? await readStream(p, res, onDelta) : await res.json();
+    const completion = onDelta ? await readStream(p, res, onDelta, armIdle) : await res.json();
     return { payload: extractPayload(p, completion), usage: completion.usage ?? null, base_url_used: base };
   } catch (e) {
     if (e instanceof AdapterError) throw e;
+    if (timedOut) {
+      const err = new AdapterError('timeout', timedOut === 'idle'
+        ? `${p.label}（${base}）连续 ${Math.round(idleTimeoutMs / 1000)} 秒没有任何输出，已断开——服务可能卡住了，可再试一次或换个服务`
+        : `${p.label}（${base}）生成超过 ${Math.round(timeoutMs / 60000)} 分钟仍未完成，已停止`);
+      err.phase = timedOut;
+      throw err;
+    }
     throw new AdapterError('network', `无法连接 ${p.label}（${base}）：${e.message}`);
   } finally {
-    clearTimeout(timer);
+    clearTimeout(hardTimer);
+    clearTimeout(idleTimer);
   }
 }
 
@@ -288,7 +307,7 @@ async function callNode(p, base, apiKey, body, timeoutMs, onDelta) {
  * Tool-call argument chunks count as content progress (raw JSON args are not
  * teacher-facing thinking). Usage is whatever the final chunk carries.
  */
-async function readStream(p, res, onDelta) {
+async function readStream(p, res, onDelta, onBytes) {
   const decoder = new TextDecoder();
   let buf = '';
   let content = '';
@@ -346,6 +365,7 @@ async function readStream(p, res, onDelta) {
   };
 
   for await (const part of res.body) {
+    onBytes?.(); // any vendor byte re-arms the caller's idle timer
     buf += decoder.decode(part, { stream: true });
     let nl;
     while ((nl = buf.indexOf('\n')) !== -1) {
@@ -364,9 +384,13 @@ async function readStream(p, res, onDelta) {
 }
 
 /** Node failures worth retrying on an alternate node of the SAME provider:
- * unreachable, throttled, or server-side — NOT auth errors (same key everywhere). */
+ * unreachable, throttled, server-side, or a stream that went silent (idle
+ * timeout, cheap to have waited) — NOT auth errors (same key everywhere) and
+ * NOT a total-ceiling timeout (that wait must not be paid twice). */
 function nodeHopWorthy(e) {
-  return e.kind === 'network' || (e.kind === 'http' && (e.status === 429 || e.status >= 500));
+  return e.kind === 'network'
+    || (e.kind === 'http' && (e.status === 429 || e.status >= 500))
+    || (e.kind === 'timeout' && e.phase === 'idle');
 }
 
 /**
@@ -376,17 +400,20 @@ function nodeHopWorthy(e) {
  * returned as `base_url_used` so the debug drawer / session log can show it.
  * @returns {Promise<{payload: string|Object, usage: Object|null, base_url_used: string}>}
  */
-// 10 min: glm-5.2 coding-plan turns run 80–115s healthy and blew past the old
-// 180s under load (2026-07-20 feng session). Keep BELOW every proxy in front —
-// the public nginx reads at 660s — so the adapter aborts first and the teacher
-// gets a real error instead of a dead stream.
-export async function callProvider(p, apiKey, messages, { timeoutMs = 600000, plain = false, onDelta = null } = {}) {
+// Timeouts (2026-07-23, after an ~8-min healthy generation was killed by the
+// old flat 600s abort): the graceful guard is the IDLE timer — while the
+// vendor keeps streaming bytes the call lives, however long it runs; only a
+// silent stream is cut (120s covers real inter-token gaps and stays far below
+// the public nginx 660s read window, whose clock our SSE progress events keep
+// resetting client-side). The total ceiling is a 30-min backstop against a
+// stream that babbles forever, and the only guard on non-streaming calls.
+export async function callProvider(p, apiKey, messages, { timeoutMs = 1800000, idleTimeoutMs = 120000, plain = false, onDelta = null } = {}) {
   const body = buildRequest(p, messages, { plain });
   const bases = [p.baseURL, ...(Array.isArray(p.altBaseURLs) ? p.altBaseURLs : [])];
   let lastErr = null;
   for (const base of bases) {
     try {
-      return await callNode(p, base, apiKey, body, timeoutMs, onDelta);
+      return await callNode(p, base, apiKey, body, timeoutMs, onDelta, idleTimeoutMs);
     } catch (e) {
       lastErr = e;
       if (!(e instanceof AdapterError) || !nodeHopWorthy(e) || base === bases[bases.length - 1]) throw e;
@@ -445,6 +472,9 @@ export async function callWithFailover(preferred, keys, messages, opts = {}) {
       errors.push({ provider: id, kind: e.kind ?? 'unknown', message: e.message });
       // content_filter and 4xx auth errors: try the next provider; anything else too —
       // the chain is short and the demo favors resilience over precision.
+      // EXCEPT a total-ceiling timeout: 30 minutes are already burned; starting
+      // another marathon uninvited is worse than handing the teacher the retry.
+      if (e.kind === 'timeout' && e.phase === 'total') break;
     }
   }
   // Nothing was even attempted (every provider skipped for lack of a key) reads
