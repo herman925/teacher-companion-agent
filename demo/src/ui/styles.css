@@ -1845,6 +1845,15 @@ body.rail-pinned .composer { left: 260px; }
   align-self: flex-start; color: var(--ink-faded); font-size: 12px;
   margin: -2px 0 6px; padding-left: 4px;
 }
+/* Timeout-guard notice (§ timeout physics): quiet but visible — a protection
+ * acted, the teacher deserves to know why the rhythm changed. */
+.guard-note {
+  align-self: flex-start; color: var(--ink-faded); font-size: 12.5px;
+  margin: 2px 0 6px; padding: 4px 10px;
+  border-left: 2px solid var(--brick);
+  background: var(--cream);
+  border-radius: 0 8px 8px 0;
+}
 .thinking-panel {
   align-self: stretch; margin: 2px 0 6px;
   background: var(--cream); border: 1px solid var(--border-warm); border-radius: 10px;

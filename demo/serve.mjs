@@ -17,7 +17,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { PROVIDERS, callWithFailover, listModels } from './src/adapter.mjs';
+import { PROVIDERS, callWithFailover, listModels, cacheInfoFromUsage } from './src/adapter.mjs';
 import { mockTurn } from './src/mock.mjs';
 import { WF_NODES } from './src/wf-nodes.mjs';
 import { parseTurn, validateTurn, violationFeedback, safeTemplate } from './src/harness.mjs';
@@ -238,6 +238,7 @@ async function runTurn(req, emit) {
   // harness verdict on each attempt. Never gated behind the model — pure transparency.
   const apiAttempts = [];
   let chainErrors = [];
+  const guards = []; // timeout-guard events across all attempts (adapter onDelta kind 'guard')
 
   while (attempt <= 2) {
     emit('status', { text: attempt === 1 ? '正在思考这一轮…' : '第一稿被护栏拦下，正在重写…' });
@@ -257,6 +258,9 @@ async function runTurn(req, emit) {
       if (d.kind === 'first') emit('ttft', { ms: d.ms });
       else if (d.kind === 'thinking') { thinkBuf += d.text; if (Date.now() - lastThink > 300) flushThink(); }
       else if (d.kind === 'content' && Date.now() - lastProgress > 1000) { lastProgress = Date.now(); emit('progress', { chars: d.chars, elapsed_ms: Date.now() - t0 }); }
+      // Timeout-guard events (idle/total cutoffs, the forced-answer retry):
+      // forwarded live so the UI can say WHY, and kept for the turn record.
+      else if (d.kind === 'guard') { flushThink(); guards.push(d); emit('guard', d); }
     };
     // 'mock' provider: scripted walkthrough through the SAME L2/L3/L4 pipeline.
     const result = preferred === 'mock'
@@ -367,6 +371,11 @@ async function runTurn(req, emit) {
     provider,
     providerLabel: provider === 'mock' ? '演示模式' : `${registry[provider]?.label ?? provider} · ${registry[provider]?.model ?? ''}`,
     usage,
+    // Normalized prompt-cache report (null when the vendor sent none) and the
+    // timeout-guard events of this turn — both render in the UI only when
+    // present and only if the teacher's 回合进度显示 toggles allow.
+    cache: cacheInfoFromUsage(usage),
+    guards,
     stageName: STAGE_NAMES[applied.state.stage],
   });
 }

@@ -321,6 +321,12 @@ async function callNode(p, base, apiKey, body, timeoutMs, onDelta, idleTimeoutMs
             : `${p.label}（${base}）生成超过 ${Math.round(timeoutMs / 60000)} 分钟仍未完成，已停止`);
       err.phase = timedOut;
       if (timedOut === 'thinking') err.thinkingSoFar = thinkingLog;
+      // Guard events surface through the SAME delta channel as progress, so
+      // the UI can show WHY a stream ended without waiting for the error path
+      // (a thinking cutoff is followed by a retry, not an error).
+      if (timedOut !== 'thinking') {
+        onDelta?.({ kind: 'guard', event: `${timedOut}_timeout`, limit_ms: timedOut === 'idle' ? idleTimeoutMs : timeoutMs });
+      }
       throw err;
     }
     throw new AdapterError('network', `无法连接 ${p.label}（${base}）：${e.message}`);
@@ -416,6 +422,23 @@ async function readStream(p, res, onDelta, onBytes) {
   return { choices: [{ message, finish_reason: finishReason }], usage };
 }
 
+/**
+ * Normalize the vendor-specific cached-token report out of a usage object.
+ * Shapes seen in the wild: OpenAI-compat `prompt_tokens_details.cached_tokens`
+ * (GLM/Kimi follow this), DeepSeek-style `prompt_cache_hit_tokens`, bare
+ * `cached_tokens`. Returns null when the vendor reported nothing — the UI
+ * shows cache info only when it exists ("appearing if needed").
+ */
+export function cacheInfoFromUsage(usage) {
+  if (!usage || typeof usage !== 'object') return null;
+  const cached = usage.prompt_tokens_details?.cached_tokens
+    ?? usage.prompt_cache_hit_tokens
+    ?? usage.cached_tokens
+    ?? null;
+  if (cached == null || typeof cached !== 'number') return null;
+  return { cached_tokens: cached, prompt_tokens: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : null };
+}
+
 /** Node failures worth retrying on an alternate node of the SAME provider:
  * unreachable, throttled, server-side, or a stream that went silent (idle
  * timeout, cheap to have waited) — NOT auth errors (same key everywhere) and
@@ -471,6 +494,7 @@ export async function callProvider(p, apiKey, messages, { timeoutMs = 600000, id
     // part), so the model resumes instead of rethinking. No budget on the
     // retry; idle still guards it; the ceiling is whatever wall-clock remains.
     const draft = String(e.thinkingSoFar ?? '').slice(-6000);
+    onDelta?.({ kind: 'guard', event: 'forced_answer_retry', budget_ms: thinkingBudgetMs, draft_chars: draft.length });
     const nudge = draft
       ? `思考时间已用完。下面是你已完成的思考草稿（直接采用其结论，不要重新推理）：\n${draft}\n——现在立刻直接输出最终回复。`
       : '思考时间已用完：不要再推理，立刻直接输出最终回复。';

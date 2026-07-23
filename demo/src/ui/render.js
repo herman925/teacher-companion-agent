@@ -1193,8 +1193,18 @@ export function renderDebug(container, info) {
 
   if (ev) {
     const usage = ev.usage
-      ? Object.entries(ev.usage).map(([k, v]) => `${k}=${v}`).join(' · ')
+      ? Object.entries(ev.usage).map(([k, v]) => `${k}=${v && typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ')
       : 'usage: —';
-    container.append(debugSection('provider', el('div', '', `${ev.providerLabel ?? ev.provider ?? '—'} · ${usage}`)));
+    const lines = [el('div', '', `${ev.providerLabel ?? ev.provider ?? '—'} · ${usage}`)];
+    if (ev.cache) {
+      const pct = ev.cache.prompt_tokens ? ` (${Math.round((ev.cache.cached_tokens / ev.cache.prompt_tokens) * 100)}%)` : '';
+      lines.push(el('div', '', `prompt cache: ${ev.cache.cached_tokens} / ${ev.cache.prompt_tokens ?? '?'}${pct}`));
+    }
+    for (const g of ev.guards ?? []) {
+      lines.push(el('div', '', `guard: ${g.event}${g.budget_ms ? ` budget=${g.budget_ms}ms` : ''}${g.limit_ms ? ` limit=${g.limit_ms}ms` : ''}${g.draft_chars ? ` draft=${g.draft_chars}字` : ''}`));
+    }
+    const wrap = el('div', '');
+    for (const l of lines) wrap.append(l);
+    container.append(debugSection('provider', wrap));
   }
 }

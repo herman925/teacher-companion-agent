@@ -435,7 +435,18 @@ function setStatus(text) {
 // default; stats (TTFT/字数/全程) and the streamed thinking panel are opt-in
 // (用户中心 · 通用). feng feedback 2026-07-20: long silent turns read as broken.
 let turnMeta = load(LS.turnMeta, {});
-const turnMetaOn = (k) => ({ timer: true, stats: false, thinking: false, ...turnMeta })[k];
+const turnMetaOn = (k) => ({ timer: true, stats: false, thinking: false, cache: true, guards: true, ...turnMeta })[k];
+
+/** Teacher-readable line for one adapter guard event ('appearing if needed'). */
+function guardNoteText(g) {
+  const min = (ms) => Math.round((ms ?? 0) / 60000);
+  if (g.event === 'forced_answer_retry') {
+    return `思考超过 ${min(g.budget_ms)} 分钟：已切换为直接作答重试${g.draft_chars ? `（带回 ${g.draft_chars} 字思考草稿）` : ''}`;
+  }
+  if (g.event === 'idle_timeout') return `连续 ${Math.round((g.limit_ms ?? 0) / 1000)} 秒没有任何输出，连接已断开`;
+  if (g.event === 'total_timeout') return `生成超过 ${min(g.limit_ms)} 分钟仍未完成，已停止`;
+  return null;
+}
 
 /** Wire one in-flight turn's live progress: ticking timer beside the status
  * line, optional TTFT/char readouts, optional ChatGPT-style 思考过程 panel
@@ -481,6 +492,12 @@ function beginTurnMeta() {
     progress(d) { chars = d.chars ?? 0; renderMeta(); },
     thinking(text) { if (ensurePanel()) body.append(text); },
     phase() { if (body) body.replaceChildren(); }, // L4 retry / failover: fresh pass, fresh panel
+    guard(g) {
+      logEvent('harness', 'timeout_guard', g);
+      if (!turnMetaOn('guards')) return;
+      const note = guardNoteText(g);
+      if (note) { messagesEl.append(el('div', 'guard-note', note)); scrollToEnd(); }
+    },
     end(gotTurn) {
       clearInterval(tick);
       meta.remove();
@@ -807,6 +824,7 @@ async function send(message, opts = {}) {
     else if (name === 'progress') liveMeta.progress(data);
     else if (name === 'thinking') liveMeta.thinking(data.text ?? '');
     else if (name === 'phase') liveMeta.phase();
+    else if (name === 'guard') liveMeta.guard(data);
     else if (name === 'turn') { gotTurn = true; handleTurn(text, data); }
     else if (name === 'course') {
       // server auto-titled the course (theme extracted) — update the rail row
@@ -914,6 +932,8 @@ function handleTurn(userText, ev) {
     provider_label: ev.providerLabel ?? null,
     simulated: Boolean(ev.simulated),
     usage: ev.usage ?? null,
+    cache: ev.cache ?? null,
+    guards: ev.guards ?? [],
     reply_markdown: ev.turn?.reply_markdown ?? '',
     question: ev.turn?.question ?? null,
     artifacts: (ev.turn?.artifacts ?? []).map((a) => ({ type: a.type, title: a.title })),
@@ -975,6 +995,14 @@ function handleTurn(userText, ev) {
 
   setStatus(null);
   renderTurnGroup(ev, { animate: true });
+  // Prompt-cache readout, only when the vendor actually reported one and the
+  // teacher hasn't switched it off (回合进度显示 · 提示缓存命中).
+  if (ev.cache && turnMetaOn('cache')) {
+    const { cached_tokens: c, prompt_tokens: p } = ev.cache;
+    const pct = p ? `，命中 ${Math.round((c / p) * 100)}%` : '';
+    messagesEl.append(el('div', 'turn-meta-badge cache-badge',
+      c > 0 ? `提示缓存：命中 ${c} / ${p ?? '?'} tokens${pct}` : `提示缓存：本轮未命中（0 / ${p ?? '?'}）`));
+  }
   updateHeader();
   refreshDebug();
   scrollToEnd();
@@ -1630,6 +1658,8 @@ function buildUiPane() {
     ['timer', '等待计时器（生成中显示已等待时间）'],
     ['stats', '生成统计（首字耗时、字数、全程用时）'],
     ['thinking', '显示模型思考过程（模型支持时流式展开）'],
+    ['cache', '提示缓存命中（供应商返回缓存数据时显示）'],
+    ['guards', '超时保护提示（思考超时改直接作答、断流、停止）'],
   ];
   for (const [key, text] of metaDefs) {
     const row = el('label', 'settings-check');

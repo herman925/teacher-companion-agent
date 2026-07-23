@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 
-import { callProvider, callWithFailover, AdapterError } from '../src/adapter.mjs';
+import { callProvider, callWithFailover, cacheInfoFromUsage, AdapterError } from '../src/adapter.mjs';
 
 const MESSAGES = [{ role: 'user', content: '测试' }];
 const CHUNK = (text) => `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
@@ -177,6 +177,46 @@ test('forced retry happens ONCE: still no answer → the timeout surfaces, no th
     );
     assert.equal(bodies.length, 2, 'no third attempt');
   } finally { close(); }
+});
+
+test('guard deltas: forced retry announces itself; idle cutoff announces itself (both directions)', async () => {
+  // Direction 1: the forced-answer retry emits a guard delta with the budget + draft size.
+  const t = await thinkingServer((res) => { res.write(CHUNK('{"reply_markdown":"好"}')); res.write(FINAL); res.end(); });
+  try {
+    const deltas = [];
+    await callProvider(stub(t.base), 'k', MESSAGES, { onDelta: (d) => deltas.push(d), thinkingBudgetMs: 300, idleTimeoutMs: 60000, timeoutMs: 60000 });
+    const g = deltas.find((d) => d.kind === 'guard');
+    assert.ok(g && g.event === 'forced_answer_retry' && g.budget_ms === 300 && g.draft_chars > 0, JSON.stringify(g));
+  } finally { t.close(); }
+
+  // Direction 2: an idle cutoff emits its guard; a clean fast turn emits NONE.
+  const dead = await sseServer((res) => { res.write(CHUNK('半')); });
+  try {
+    const deltas = [];
+    await assert.rejects(callProvider(stub(dead.base), 'k', MESSAGES, { onDelta: (d) => deltas.push(d), idleTimeoutMs: 250, timeoutMs: 60000 }));
+    assert.ok(deltas.some((d) => d.kind === 'guard' && d.event === 'idle_timeout' && d.limit_ms === 250));
+  } finally { dead.close(); }
+  const clean = await sseServer((res) => { res.write(CHUNK('{"reply_markdown":"好"}')); res.write(FINAL); res.end(); });
+  try {
+    const deltas = [];
+    await callProvider(stub(clean.base), 'k', MESSAGES, { onDelta: (d) => deltas.push(d) });
+    assert.equal(deltas.filter((d) => d.kind === 'guard').length, 0, 'healthy turn: no guard noise');
+  } finally { clean.close(); }
+});
+
+test('cacheInfoFromUsage: normalizes all vendor shapes; null when absent (both directions)', () => {
+  assert.deepEqual(
+    cacheInfoFromUsage({ prompt_tokens: 100, prompt_tokens_details: { cached_tokens: 60 } }),
+    { cached_tokens: 60, prompt_tokens: 100 }, 'OpenAI-compat nested shape');
+  assert.deepEqual(
+    cacheInfoFromUsage({ prompt_tokens: 80, prompt_cache_hit_tokens: 40 }),
+    { cached_tokens: 40, prompt_tokens: 80 }, 'DeepSeek-style flat shape');
+  assert.deepEqual(
+    cacheInfoFromUsage({ prompt_tokens: 50, cached_tokens: 0 }),
+    { cached_tokens: 0, prompt_tokens: 50 }, 'bare shape, zero is still a report');
+  assert.equal(cacheInfoFromUsage({ prompt_tokens: 9, completion_tokens: 3 }), null, 'no cache field → null');
+  assert.equal(cacheInfoFromUsage(null), null);
+  assert.equal(cacheInfoFromUsage({ prompt_tokens_details: { cached_tokens: 'x' } }), null, 'non-numeric → null');
 });
 
 test('an idle-silent PRIMARY node hops to the alternate node and succeeds', async () => {
