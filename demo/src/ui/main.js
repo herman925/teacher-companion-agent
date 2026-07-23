@@ -1997,6 +1997,9 @@ function messagesToTranscript(rows) {
           state: { awaiting_feedback: Boolean(tc.round_complete) && evidenceSeen },
           provider: m.provider ?? null,
           providerLabel: m.provider_label ?? null,
+          usage: m.usage ?? null,
+          cache: m.cache ?? null,
+          guards: m.guards ?? [],
           stageName: m.stage_name ?? null,
         },
       });

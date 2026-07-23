@@ -242,3 +242,27 @@ test('setWorkbench: mirrors 批注 + card answers onto the course record; scoped
   assert.equal(dirty.question_cards.answers[0].value, '7');
   assert.equal(dirty.question_cards.answers[0].locked, true);
 });
+
+test('message rows persist cache + guards so admin exports carry them (both directions)', async () => {
+  const { user } = await store.createUser({ username: 'cache_teacher', displayName: '缓存老师' });
+  const course = await store.createCourse(user.id, '缓存课');
+  await store.appendMessage(course.id, { role: 'teacher', content: '第一问' });
+  await store.appendMessage(course.id, {
+    role: 'agent', content: '回', turn_contract: { reply_markdown: '回' },
+    usage: { prompt_tokens: 100, prompt_tokens_details: { cached_tokens: 60 } },
+    cache: { cached_tokens: 60, prompt_tokens: 100 },
+    guards: [{ kind: 'guard', event: 'forced_answer_retry', budget_ms: 300000, draft_chars: 1200 }],
+  });
+  await store.appendMessage(course.id, { role: 'agent', content: '素', turn_contract: { reply_markdown: '素' } });
+
+  const record = await store.adminGetCourse(course.id);
+  const [, withCache, plain] = record.messages;
+  assert.equal(withCache.cache.cached_tokens, 60, 'admin full record carries the cache report');
+  assert.equal(withCache.guards[0].event, 'forced_answer_retry', '…and the guard events');
+  assert.equal(plain.cache, null, 'a turn without a report stays honestly null');
+  assert.equal(plain.guards, null);
+
+  const all = await store.adminExportAll();
+  const mine = all.find((c) => c.id === course.id);
+  assert.equal(mine.messages[1].cache.cached_tokens, 60, '导出全部 carries it too');
+});

@@ -232,6 +232,9 @@ export function createJsonStore(opts = {}) {
           turn_contract: msg.turn_contract ?? null,
           provider: msg.provider ?? null, provider_label: msg.provider_label ?? null,
           usage: msg.usage ?? null, stage_name: msg.stage_name ?? null,
+          // Observability duty (AGENTS.md): cache report + timeout-guard
+          // events persist with the turn so admin exports carry them.
+          cache: msg.cache ?? null, guards: msg.guards ?? null,
           created_at: nowISO(),
         };
         c.next_message_id += 1;

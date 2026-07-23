@@ -411,6 +411,8 @@ async function runCourseTurn(userId, courseId, body, emit) {
       provider: captured.provider ?? null,
       provider_label: captured.providerLabel ?? null,
       usage: captured.usage ?? null,
+      cache: captured.cache ?? null,
+      guards: captured.guards?.length ? captured.guards : null,
       stage_name: captured.stageName ?? null,
     });
     try {
