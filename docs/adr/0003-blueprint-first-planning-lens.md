@@ -4,7 +4,7 @@
 
 ## Context
 
-Pilot teachers reported the agent 「锁得有点死」: generation crushed preset. The hard chain (no child questions → no driving question → no goals/actions) forced office-hours prep users through a one-question-one-answer unlock loop; several lost interest before Stage 1 ended. The upstream discussion doc ([source-docs/workflow-v1.3-contradictions.zh-CN.md](../../source-docs/workflow-v1.3-contradictions.zh-CN.md)) diagnosed the root cause: 「不能虚构儿童的真实过程」 was over-executed into 「不能提前帮助教师形成完整预设」 — course-implementation order was mistaken for conversation order.
+Pilot teachers reported the agent 「锁得有点死」: generation crushed preset. The hard chain (no child questions → no driving question → no goals/actions) forced office-hours prep users through a one-question-one-answer unlock loop; several lost interest before Stage 1 ended. The upstream discussion doc ([source-docs/archive/workflow-v1.3-contradictions.zh-CN.md](../../source-docs/archive/workflow-v1.3-contradictions.zh-CN.md)) diagnosed the root cause: 「不能虚构儿童的真实过程」 was over-executed into 「不能提前帮助教师形成完整预设」 — course-implementation order was mistaken for conversation order.
 
 On the 2026-07-17 锋×枫 call, 枫 (spec author) settled the open questions: the product is a **主题探究 agent** (项目式 is a branch surfaced by signal around Stage 3, never the spine); the workflow needs no rewrite — the agent simply never implemented her Stage 1, which is five concrete steps from 小小探索家; and delivery must be 「不要一点一点吐给我，直接给我一个比较明确的蓝图」. Her five steps: ① 教师预先计划 (preset theme network map, warned against 极左/极右 误区), ② 建立共同经验 (activities in exactly five organization types: 集体教学/小组教学/个别指导/自主游戏·环创/亲子活动), ③ 发掘孩子已有知识 (清单/网络图/KWL), ④ 发展幼儿想探究的问题 (KWL/KWHL, 问题墙, core driving question), ⑤ 创设探究环境 (环创方案, 材料清单, 给家长的一封信, activities folded into 周/月计划). Steps are not strictly sequential and span 2–3 weeks.
 
@@ -25,7 +25,7 @@ Rollout is phased: this ADR (Phase 0) → prompt-only spike with blueprint as a 
 
 ## Acceptance amendments (2026-07-19)
 
-Ratified against [source-docs/stage1-workflow-v1.0.zh-CN.md](../../source-docs/stage1-workflow-v1.0.zh-CN.md) (锋's reworked Stage 1 — now the canonical Stage-1 content; the generic PBL guide is branch/reference material only) and the 2026-07-17 team meeting ([source-docs/20260719_Team Meeting.md](../../source-docs/20260719_Team%20Meeting.md)):
+Ratified against [source-docs/stage1-workflow-v1.0.zh-CN.md](../../source-docs/stage1-workflow-v1.0.zh-CN.md) (锋's reworked Stage 1 — now the canonical Stage-1 content; the generic PBL guide is branch/reference material only) and the 2026-07-17 team meeting ([source-docs/archive/20260719_Team Meeting.md](../../source-docs/archive/20260719_Team%20Meeting.md)):
 
 1. **Delivery is two rounds, not one shot.** Round 1: intent intake (unstructured 大白话 accepted; agent summarizes and extends it, 亮灯 skips what's already known, card-questions cover only gaps) + 主题预设网络图 + 资源深度网络图 for teacher confirmation. Round 2 (after confirmation): the full 预设包 — activities across the five organization types, environment/materials/家长信, 2–3 周计划.
 2. **蓝图共创 becomes the default planning behavior** rather than folding away; the other response styles remain selectable options.
