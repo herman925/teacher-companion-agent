@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="workflow-v2">
+    <mxGraphModel dx="1400" dy="1400" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1450" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="小小探索家 · 工作流 v2（2026-07-28 共识）&#xa;Little Explorers — Workflow v2 (ratified 2026-07-28)" style="text;html=1;align=left;verticalAlign=middle;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="0" width="900" height="36" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pA" value="A · 入口  Entry" style="swimlane;startSize=40;html=1;whiteSpace=wrap;fillColor=none;strokeColor=#6c8ebf;fontStyle=1;fontSize=14;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="1120" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="a1" value="新建课程&#xa;New course" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="pA">
+          <mxGeometry x="40" y="60" width="240" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="a2" value="两个开场，不是两种模式&#xa;「帮我想想做什么」／「我已经有想法了」&#xa;Two openings, one product from turn 3" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="pA">
+          <mxGeometry x="360" y="55" width="320" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="a3" value="确认班级（多班才问）&#xa;Confirm class (only if she has more than one)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="pA">
+          <mxGeometry x="760" y="55" width="300" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="eA1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="pA" source="a1" target="a2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eA2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="pA" source="a2" target="a3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pB" value="B · 信息收集（阈值门控，不是固定四轮）  Intake — gated by a threshold, not a round count" style="swimlane;startSize=40;html=1;whiteSpace=wrap;fillColor=none;strokeColor=#d6b656;fontStyle=1;fontSize=14;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="230" width="1120" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="b1" value="教师自由输入&#xa;主题＋班级，大白话即可&#xa;Free input, plain words" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="pB">
+          <mxGeometry x="40" y="55" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="b2" value="智能体检索并梳理资源&#xa;历史 · 由来 · 习俗 · 特点&#xa;给出四个可走的方向" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="pB">
+          <mxGeometry x="360" y="55" width="320" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="b3" value="只问缺口，不问已知&#xa;Ask only the gaps" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="pB">
+          <mxGeometry x="760" y="55" width="300" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="b4" value="教育期待校准&#xa;「你希望一个月后孩子发生怎样的变化？」" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="pB">
+          <mxGeometry x="760" y="185" width="300" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="bd" value="六项信息是否达标？&#xa;Threshold met?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="pB">
+          <mxGeometry x="380" y="180" width="280" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="b5" value="生成前最后一次确认&#xa;Final confirmation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="pB">
+          <mxGeometry x="40" y="185" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="eB1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="pB" source="b1" target="b2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eB2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="pB" source="b2" target="b3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eB3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="pB" source="b3" target="b4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eB4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="pB" source="b4" target="bd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eB5" value="是 yes" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;labelBackgroundColor=#ffffff;fontSize=11;" edge="1" parent="pB" source="bd" target="b5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eB6" value="否，继续补 no, keep filling" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;labelBackgroundColor=#ffffff;fontSize=11;dashed=1;" edge="1" parent="1" source="bd" target="b3">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="560" y="382" />
+              <mxPoint x="950" y="382" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="pC" value="C · 生成  Generation" style="swimlane;startSize=40;html=1;whiteSpace=wrap;fillColor=none;strokeColor=#82b366;fontStyle=1;fontSize=14;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="570" width="1120" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="c1" value="右侧一次性生成计划树&#xa;月计划 → 周计划 → 活动（活动带日期）&#xa;这棵树同时就是主题网络图 — 同一个对象" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="pC">
+          <mxGeometry x="40" y="55" width="520" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="c2" value="左侧解释：为什么这样设计、孩子可能获得什么、&#xa;第一周观察重点&#xa;Left side explains the basis" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="pC">
+          <mxGeometry x="640" y="55" width="420" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="eC1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="pC" source="c1" target="c2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pD" value="D · 使用与修改  Use and revise" style="swimlane;startSize=40;html=1;whiteSpace=wrap;fillColor=none;strokeColor=#d79b00;fontStyle=1;fontSize=14;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="770" width="1120" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="d1" value="右侧工作台＝只读&#xa;看与导航，不输入&#xa;Read-only" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="pD">
+          <mxGeometry x="40" y="55" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="d2" value="点开节点 → 左侧带出该节点的活动方案&#xa;＋一句静态引导语&#xa;引导语只给老师看，绝不进 API 上下文" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="pD">
+          <mxGeometry x="360" y="50" width="320" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="d3" value="节点上下文＝本节点＋祖先计划&#xa;最小必要集，不倒进历史对话" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="pD">
+          <mxGeometry x="760" y="50" width="300" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="d4" value="在对话里改，没有修改按钮&#xa;引擎写回节点，回执可撤销" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="pD">
+          <mxGeometry x="360" y="190" width="320" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="d5" value="牵动别的节点 → 「一起改」一键应用&#xa;没点就不动，下游标 待复查" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="pD">
+          <mxGeometry x="760" y="190" width="300" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="eD1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="pD" source="d1" target="d2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eD2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="pD" source="d2" target="d3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eD3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="pD" source="d2" target="d4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eD4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="pD" source="d4" target="d5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pE" value="E · 陪跑（轻）  Light accompaniment" style="swimlane;startSize=40;html=1;whiteSpace=wrap;fillColor=none;strokeColor=#9673a6;fontStyle=1;fontSize=14;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1110" width="1120" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="不强制回传，观察点只作提示&#xa;实施途中随时提问，随时解答&#xa;No mandatory reporting" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="pE">
+          <mxGeometry x="40" y="55" width="480" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="孩子反复问同一件事 → 智能体判断是否收成探究聚焦点&#xa;并调整后续计划；核心驱动问题从不强求" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="pE">
+          <mxGeometry x="600" y="55" width="460" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="eE1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="pE" source="e1" target="e2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ph1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="pA" target="pB">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ph2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="pB" target="pC">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ph3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="pC" target="pD">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ph4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="pD" target="pE">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mem" value="记忆四层  Four memory scopes&#xa;（每一轮都在，不做相关性检索）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;verticalAlign=top;fontStyle=1;fontSize=12;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="230" width="280" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="mem1" value="节点 Node — 这个节点为什么长这样&#xa;听到你说 · 我据此猜 · 教学依据 · 改动理由" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="mem">
+          <mxGeometry x="16" y="60" width="248" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="mem2" value="课程 Course — 这门课的事实" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="mem">
+          <mxGeometry x="16" y="124" width="248" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="mem3" value="班级 Class — 班上没有鼓 · 几个孩子怕大声&#xa;跨课程存活，换主题不用重讲" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="mem">
+          <mxGeometry x="16" y="176" width="248" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="mem4" value="教师 Teacher — 交互画像六维度、长期偏好" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="mem">
+          <mxGeometry x="16" y="240" width="248" height="44" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rm" value="本版删掉的东西  Removed in v2" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;verticalAlign=top;fontStyle=1;fontSize=12;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="770" width="280" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="rm1" value="资源深度网络图 — 与计划树重复，整张删掉" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="rm">
+          <mxGeometry x="16" y="48" width="248" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="rm2" value="强制核心驱动问题 — 只要探究聚焦点" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="rm">
+          <mxGeometry x="16" y="98" width="248" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="rm3" value="强制回传 — 老师抗拒信息回流" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="rm">
+          <mxGeometry x="16" y="148" width="248" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="rm4" value="✓确认按钮 — 改为引用教师原话的引擎事件" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="rm">
+          <mxGeometry x="16" y="198" width="248" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="rm5" value="调整分支按钮、问题卡页签 — 一律回到对话" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;align=left;spacingLeft=8;" vertex="1" parent="rm">
+          <mxGeometry x="16" y="248" width="248" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend" value="图例  Legend" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#666666;verticalAlign=top;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1300" width="1120" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="lg1" value="" style="rounded=0;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="legend">
+          <mxGeometry x="16" y="34" width="28" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="lg1t" value="入口 Entry" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="50" y="32" width="120" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lg2" value="" style="rounded=0;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="legend">
+          <mxGeometry x="190" y="34" width="28" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="lg2t" value="信息收集 Intake" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="224" y="32" width="130" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lg3" value="" style="rounded=0;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="legend">
+          <mxGeometry x="374" y="34" width="28" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="lg3t" value="生成 Generation" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="408" y="32" width="130" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lg4" value="" style="rounded=0;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="legend">
+          <mxGeometry x="558" y="34" width="28" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="lg4t" value="使用与修改 Use and revise" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="592" y="32" width="180" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lg5" value="" style="rounded=0;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="legend">
+          <mxGeometry x="782" y="34" width="28" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="lg5t" value="陪跑 Accompaniment" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="816" y="32" width="160" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lg6" value="" style="rounded=0;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="legend">
+          <mxGeometry x="986" y="34" width="28" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="lg6t" value="已删除 Removed" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="1020" y="32" width="130" height="20" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -116,6 +116,18 @@ Every item in the transcript belongs to exactly ONE of four visually distinct ca
 
 ### 5b. 工作台 — three panels (blueprint panel BUILT 2026-07-20; 工作台 tabs + staging are the living spec, 2026-07-20 evening)
 
+> **SUPERSEDED IN PART, 2026-07-29** — [ADR-0010](../docs/adr/0010-conversation-and-workbench-model.md) / [ADR-0011](../docs/adr/0011-memory-scopes-and-serialization.md). The text below remains an accurate description of what is BUILT; these are the agreed changes, not yet implemented.
+>
+> - **The governing sentence changes.** 「工作台 = what needs you (living state)」 becomes **「工作台 is for looking and navigating; all input happens on the left」**. Tapping a node swaps the LEFT panel into node mode (node detail + rationale + that node's conversation) while the tree stays visible on the right. Tapping transmits nothing, so §5c's 「the composer is the only mouth」 survives intact.
+> - **问题卡 tab is removed.** Cards render inline in the conversation where they were asked; the lost-up-scroll problem it solved is handled instead by a slim pending strip above the composer (count + jump-back). The shared answer state and staging (§5c) survive — only the panel renderer goes.
+> - **Per-node 批注 is absorbed.** A 批注 on a node *is* the first message of that node's conversation (one tagged message log per course, ADR-0010 §1). `packBlueprintComments` and the 批注 staging chips retire with it.
+> - **✓确认 is removed.** Confirmation becomes a quoted engine event: the model may escalate to `confirmed` only by citing the teacher's own words from that turn, and the harness strips an uncited escalation. §5c's 「a module can never be born confirmed」 custody rule is unchanged — the clean channel moves from a click to a citation.
+> - **Receipts.** Every state-changing turn (memory captured, node confirmed, node edited) surfaces a **toast with undo** at the moment, plus one compact line under that turn's reply (「记住了 1 条 · 已确认 2 处 · 周2 已改」), tappable and still undoable. Events, not messages: never sent to the model.
+> - **The tree shown is one hierarchy**: 月计划 (a phase, 2–5 weeks, not a calendar month) → 周 → 活动, each activity carrying its date(s) — a day is a date, not a level — then a 课程资料 branch for 环创方案 / 材料清单 / 家长信 / 网络图. Badges: message count on nodes with conversation, 待确认 rollup, 待复查 for staleness (naming what changed upstream; clears only on 跟着改 / 我自己改 / 这样就行, never on merely opening; retires once the dates pass).
+> - **Node detail moves, contents unchanged.** The five-part detail contract below (body → 你说过 → 我据此猜 / 为什么这样安排 → 来自你的档案 → 不合适怎么调) moves from a map popover into the left node view, plus a static randomised greeting above the composer — roughly ten fixed variants, never stored, never sent to the model, never exported as agent speech.
+> - **Mobile landing depends on course state**: no plan yet → the conversation; plan exists → the tree with today highlighted.
+> - **Step zero** (no plan yet): headline stating what the workbench is, a live checklist of what has been understood (real data only), and a collapsed 「看看做出来是什么样」 revealing a sample on request — sample text must contain zero child-observation-shaped content.
+
 The blueprint outgrows the chat. Cards scroll away with the conversation; a living mother-plan must not. The right panel is the **工作台**: the single home of everything that needs the teacher's *interactive* input beyond typing — currently two tabs, 蓝图 and 问题卡. The governing sentence: **transcript = what was said (append-only snapshots), 工作台 = what needs you (living state), composer = what goes out (staged, §5c).** Target layout (desktop):
 
 ```
@@ -140,6 +152,8 @@ The blueprint outgrows the chat. Cards scroll away with the conversation; a livi
 - Depth is unbounded by design: every level folds independently in both renderers; default-collapse policy at depth ≥3 keeps first paint calm.
 
 ### 5c. Staging tray — the composer is the only mouth (SPEC 2026-07-20 evening)
+
+> **AMENDED 2026-07-29** — [ADR-0010](../docs/adr/0010-conversation-and-workbench-model.md). The rule survives: nothing sends except the composer. What stages narrows to **question-card answers only** — per-node 批注 no longer stages because it is no longer a separate mechanism (it is a message in that node's conversation), so the tray shows 「2 张答卡」 and the 批注 chips retire. Hold-to-send, the packed single message, and the state-custody paragraph all stand, except that ✓确认 no longer exists as a click: the clean escalation channel becomes a quoted engine event (ADR-0010 §6).
 
 The old fragmentation — card submit bar, 批注 send, blueprint send, each transmitting partial context — is retired. One rule: **nothing sends except the composer, and the composer sends everything staged.**
 

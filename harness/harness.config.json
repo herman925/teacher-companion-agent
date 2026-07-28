@@ -68,6 +68,10 @@
     {
       "en": "README.md",
       "zh": "README.zh-CN.md"
+    },
+    {
+      "en": "docs/WORKFLOW.md",
+      "zh": "docs/WORKFLOW.zh-CN.md"
     }
   ],
   "handoff": {

@@ -4,7 +4,7 @@ Canonical source of truth for how humans and coding agents work in this reposito
 
 ## What this repository is
 
-The spec, governance, and demo home of **小小探索家：学前教育主题探究课程助手 (Little Explorers — Preschool Theme-Inquiry Course Assistant**; formerly the working title 教师资源发展平台, renamed 2026-07-16) — a web-based 陪跑智能体 (companion agent) that accompanies kindergarten teachers through local-culture theme-inquiry courses. The behavioral contract is the V1.3 workflow spec at [source-docs/workflow-v1.3.zh-CN.md](source-docs/workflow-v1.3.zh-CN.md); an upstream revision proposal ([source-docs/workflow-v1.3-contradictions.zh-CN.md](source-docs/workflow-v1.3-contradictions.zh-CN.md), 2026-07 讨论稿) argued for rebalancing 预设/生成 — **adopted** as the blueprint-first planning lens in [docs/adr/0003-blueprint-first-planning-lens.md](docs/adr/0003-blueprint-first-planning-lens.md). The product thesis is in [docs/PRD.md](docs/PRD.md).
+The spec, governance, and demo home of **小小探索家：学前教育主题探究课程助手 (Little Explorers — Preschool Theme-Inquiry Course Assistant**; formerly the working title 教师资源发展平台, renamed 2026-07-16) — a web-based 陪跑智能体 (companion agent) that accompanies kindergarten teachers through local-culture theme-inquiry courses. The behavioral contract is the V1.3 workflow spec at [source-docs/workflow-v1.3.zh-CN.md](source-docs/workflow-v1.3.zh-CN.md); an upstream revision proposal ([source-docs/archive/workflow-v1.3-contradictions.zh-CN.md](source-docs/archive/workflow-v1.3-contradictions.zh-CN.md), 2026-07 讨论稿) argued for rebalancing 预设/生成 — **adopted** as the blueprint-first planning lens in [docs/adr/0003-blueprint-first-planning-lens.md](docs/adr/0003-blueprint-first-planning-lens.md). The product thesis is in [docs/PRD.md](docs/PRD.md).
 
 Two harnesses live here — do not confuse them:
 
@@ -30,14 +30,16 @@ Two harnesses live here — do not confuse them:
 - **The harness asks; it doesn't silently block.** Guarded paths trigger confirmation prompts, not hard failures. Agent-initiated destructive actions (deleting scratch, editing the glossary, bypassing the gate) require explicit user confirmation first.
 - **UI is verified by rendering.** Any change to the demo is verified in a real browser (screenshot or interactive check), never by "the server started."
 - **New state must be observable and exportable — mandatory design consideration.** Every feature that creates or holds state (client or server) must answer, in its design, before it ships: ① does the debug drawer / session log see it? ② does the client-side export (session-log JSON) carry it? ③ does the server-side / admin export carry it — or is it deliberately client-only, with the reason stated? State that exists only inside a widget is a defect, not an omission. (Added 2026-07-21 after 工作台 批注 and card answers initially shipped without export coverage.)
+- **The artifact is the memory, not the conversation.** Conversations are working surfaces; the plan tree and the memory stores are what persists. Anything decided in a turn and not written into state is lost — so every feature that produces a decision must say, in its design, what it writes and where. Context never travels between conversations; each one reads and writes shared state. (Added 2026-07-29, [ADR-0010](docs/adr/0010-conversation-and-workbench-model.md) / [ADR-0011](docs/adr/0011-memory-scopes-and-serialization.md).)
+- **Serialization boundary: TSV for repeated rows, JSON for everything else — and always JSON for model output.** TSV renders row-shaped data into the prompt (plan skeleton, memory blocks, evidence index) and out to analysts as export sidecars. Model output stays JSON because vendor schema enforcement has no TSV equivalent and because a misaligned TSV column parses *successfully* with wrong values — a shifted column reading `hypothesis` as `confirmed` is precisely the failure non-negotiable #1 exists to stop, arriving with no error to catch. Every TSV block we emit: no empty cells (write `-`), no prose, ~8 columns max, a version marker in the header. (Added 2026-07-29, [ADR-0011](docs/adr/0011-memory-scopes-and-serialization.md).)
 - **Style.** Plain language a tired teacher could read. Short sentences. No emoji in documentation prose. Full-width punctuation in Chinese prose. Conventional Commits (`feat|fix|docs|design|harness|test|chore|refactor|ci|build|perf`).
 
 ## Layout
 
 | Path | What | Owner-ish |
 |---|---|---|
-| `source-docs/` | V1.3 spec + 2026-07 调整建议 discussion doc (docx + faithful markdown extractions) | Upstream — read-only |
-| `docs/` | PRD (EN/zh), ARCHITECTURE, MODEL-APIS, glossary, ADRs | Product |
+| `source-docs/` | Live upstream references: V1.3 spec, 锋's Stage-1 V1.0, the 2026-07-28 meeting transcript. Superseded originals and older records live in `source-docs/archive/` | Upstream — read-only |
+| `docs/` | PRD (EN/zh), WORKFLOW (EN/zh), ARCHITECTURE, MODEL-APIS, glossary, ADRs | Product |
 | `harness/` | Dev harness: gate, checks, judges, config | Governance |
 | `demo/` | Web demo: chat UI, runtime harness, model adapter, DESIGN.md | Engineering |
 | `tests/` | Node-native tests for the dev harness line | Governance |
