@@ -23,6 +23,7 @@ import { WF_NODES } from './src/wf-nodes.mjs';
 import { parseTurn, validateTurn, violationFeedback, safeTemplate } from './src/harness.mjs';
 import { applyDelta, absorbBlueprint, applyBlueprintDelta, confirmBlueprintNode, createInitialState, STAGE_NAMES } from './src/engine.mjs';
 import { buildPromptParts, cacheStableHistory, stageModuleName, profileSectionText } from './src/prompt-builder.mjs';
+import { shouldSearch, buildQuery, runWebSearch, searchResultsToContext, supportsWebSearch } from './src/web-search.mjs';
 import { store } from './src/store.mjs';
 import { deriveCourseTitle, TITLE_MAX } from './src/store/json-store.mjs';
 import { shouldRegenTitle, buildTitleMessages, sanitizeTitle, TITLE_INTERVALS, TITLE_INTERVAL_DEFAULT } from './src/title-agent.mjs';
@@ -227,6 +228,36 @@ async function runTurn(req, emit) {
 
   emit('status', { text: '正在阅读你的课程状态…', stage: state.stage, stageName: STAGE_NAMES[state.stage] });
 
+  // 联网搜索 (ADR-0012 §6): retrieval is a step WE run, before the model call,
+  // with a query WE compose — so it stays course-bound and cannot become a
+  // general query channel. Only GLM/Z.AI have a backend; everyone else reports
+  // the capability as unavailable rather than pretending. Placed AFTER the
+  // cached prefix and before the newest teacher message, like the state note,
+  // so an occasional search never busts the conversation's prefix cache.
+  let webSearch = null;
+  const searchProvider = registry[preferred];
+  if (shouldSearch(state, req.caps, searchProvider, req.message)) {
+    const query = buildQuery(req.message, state);
+    emit('status', { text: '正在联网查资料…' });
+    const found = await runWebSearch(searchProvider, keys[preferred] || '', query);
+    const context = found.ok ? searchResultsToContext(found.results, found.query) : '';
+    if (context) messages.splice(messages.length - 1, 0, { role: 'system', content: context });
+    // Observability duty (AGENTS.md): the search rides the turn record whether
+    // it succeeded, found nothing, or failed — a silent search is unauditable
+    // and its cost untraceable.
+    webSearch = {
+      query: found.query,
+      engine: found.engine,
+      provider: preferred,
+      ok: found.ok,
+      count: found.results.length,
+      injected: Boolean(context),
+      ms: found.ms,
+      ...(found.error ? { error: found.error } : {}),
+    };
+    emit('web_search', webSearch);
+  }
+
   let attempt = 1;
   let degraded = false;
   let turn = null;
@@ -376,6 +407,10 @@ async function runTurn(req, emit) {
     // present and only if the teacher's 回合进度显示 toggles allow.
     cache: cacheInfoFromUsage(usage),
     guards,
+    // 联网搜索 report — null when the turn did not search. Rides the turn so
+    // the drawer, the session log and the server exports all see what was
+    // retrieved and what it cost (AGENTS.md observability duty).
+    web_search: webSearch,
     stageName: STAGE_NAMES[applied.state.stage],
   });
 }

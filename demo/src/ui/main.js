@@ -20,6 +20,7 @@ import { confirmBlueprintNode } from '../engine.mjs';
 import { messageIn, cardIn, cardsIn, chipsIn, closureIn, fadeIn } from './motion.js';
 import { runLocalMockTurn } from './local-turn.mjs';
 import { buildSystemPrompt, stageModuleName, profileSectionText, STYLE_DIRECTIVES } from '../prompt-builder.mjs';
+import { supportsWebSearch, unavailableReason } from '../web-search.mjs';
 import { createLogStore, mountLogPanel, redactSecrets } from './session-log.mjs';
 
 // ------------------------------------------------------------ persistence
@@ -322,7 +323,6 @@ const CAP_THINKING = {
   minimax: 'auto', 'minimax-intl': 'auto',
 };
 /** 联网搜索 support. */
-const CAP_WEBSEARCH = new Set(['glm', 'zai', 'zai-coding', 'kimi']);
 
 /** 参考评级·随版本更新 — dot-scale档位 shown on both the 模型与服务 cards and
  * the 接入与服务 drawer rows (cost dots = 越多越省钱, per the pane legend). */
@@ -774,6 +774,10 @@ function chatRequestBody(text) {
   const prof = profileForRequest();
   if (prof) body.profile = prof;
   if (devMode) body.debug = true;
+  // Per-provider capability toggles. 联网搜索 is live for GLM/Z.AI (the server
+  // runs the retrieval itself, ADR-0012 §6); 深度思考 still rides along unread.
+  const caps = providerCaps[provider];
+  if (caps && (caps.webSearch || caps.thinking)) body.caps = { ...caps };
   if (provider === 'custom') {
     body.custom = { baseURL: customCfg.baseURL, model: customCfg.model, label: customCfg.label || undefined };
     if (customCfg.key && !serverKeyMode()) body.keys.custom = customCfg.key;
@@ -1209,9 +1213,10 @@ function syncCapSwitches(pid, kind, on) {
   }
 }
 
-/** One 深度思考/联网搜索 switch row. Persists to cst.providerCaps; consumed
- * by nothing yet (the drawer's 即将生效 note states this honestly). Rendered in
- * BOTH panels — the drawer row and the model card — kept in sync by id. */
+/** One 深度思考/联网搜索 switch row. Persists to cst.providerCaps and rides the
+ * turn as `body.caps`. 联网搜索 is LIVE for the providers in web-search.mjs
+ * (server-side retrieval, ADR-0012 §6); 深度思考 is still consumed by nothing.
+ * Rendered in BOTH panels — the drawer row and the model card — kept in sync. */
 function capRow(pid, kind) {
   const row = el('div', 'cap-row');
   const name = kind === 'thinking' ? '深度思考' : '联网搜索';
@@ -1223,10 +1228,14 @@ function capRow(pid, kind) {
     if (mode === 'auto') { desc = '该服务由模型自动思考'; disabled = true; checked = true; }
     else if (mode === 'enabled') { desc = '让模型多想一步，回答更稳，速度会慢一些'; }
     else { desc = '该模型暂不支持'; disabled = true; checked = false; }
-  } else if (CAP_WEBSEARCH.has(pid)) {
-    desc = '可查证最新资料 · 仅 GLM / Z.AI / Kimi 支持';
+  } else if (supportsWebSearch(pid)) {
+    // LIVE since 2026-07-29 (ADR-0012 §6): the server runs the retrieval itself
+    // before the model call, with a query it composes, and only while the course
+    // is still taking shape — so it reads the resource for you rather than
+    // becoming a general search box.
+    desc = '开始一个新主题时，先帮你查一遍公开资料';
   } else {
-    desc = '该服务暂不支持联网搜索'; disabled = true; checked = false;
+    desc = unavailableReason(pid); disabled = true; checked = false;
   }
   const sw = document.createElement('input');
   sw.type = 'checkbox';
