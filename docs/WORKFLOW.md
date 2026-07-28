@@ -14,6 +14,10 @@ What survives is not a chain but **a tree plus a conversation**. V1.3 stage 2 on
 
 In one sentence: **the teacher says what she wants, the agent grows a whole month of plan in one pass, and after that she taps wherever she wants to talk.**
 
+**Dropping the chain does not mean dropping the harness.** The meeting was explicit about both halves — 「可能我们也不能说放弃，我们弄一个去芜存菁的 harness…只是把一些大方向它要拒绝掉，小的里面它在里面像小沙盒一样，就让他自己去玩。」 What remains guards the shell of the conversation rather than its steps: this tool builds preschool theme-inquiry courses, so asking it for the weather in Changsha is refused before the call is made — 冯浩然 had already done exactly that through web search, and every such turn burns money the team pays. Evidence rules and structural checks are untouched. Stage gates and node prerequisites lapse with the chain. Details in [ADR-0012](adr/0012-runtime-harness-after-the-workflow.md).
+
+The boundary is judged on purpose, not keywords. 「长沙今天天气怎么样」 is out; 「明天下雨的话，周二那个户外龙舟活动怎么办」 is course work and must sail straight through.
+
 ## 2. The whole flow
 
 ```mermaid

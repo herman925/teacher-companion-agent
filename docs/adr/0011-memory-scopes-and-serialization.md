@@ -71,6 +71,8 @@ A gate that checks whether the assembler included memory is checking the assembl
 
 So: an **assertion inside the assembler plus a unit test**, catching the regression where a refactor silently stops appending memory. The enforceable question — did the model respect what it was told — belongs in `validateTurn`, where an activity proposing drums against a no-drums class is detectable, feedable and regeneratable, and testable in both directions.
 
+**Narrowed by [ADR-0012](0012-runtime-harness-after-the-workflow.md) §3.** The reasoning above holds for *this* case and not as a general rule against pre-send checks. The scope shell is a legitimate pre-send gate on the opposite grounds: it tests a real condition in the world (the teacher's incoming message) rather than our own assembler, and running it after the response would already have spent the money that the check exists to save.
+
 ### 6. Where TSV is allowed, and where it is not
 
 ADR-0007 §2 set the direction; this fixes the boundary.
