@@ -24,6 +24,7 @@ import { parseTurn, validateTurn, violationFeedback, safeTemplate } from './src/
 import { applyDelta, absorbBlueprint, applyBlueprintDelta, confirmBlueprintNode, createInitialState, STAGE_NAMES } from './src/engine.mjs';
 import { buildPromptParts, cacheStableHistory, stageModuleName, profileSectionText } from './src/prompt-builder.mjs';
 import { shouldSearch, buildQuery, runWebSearch, searchResultsToContext, supportsWebSearch } from './src/web-search.mjs';
+import { checkScope, refusalTurn } from './src/scope-guard.mjs';
 import { store } from './src/store.mjs';
 import { deriveCourseTitle, TITLE_MAX } from './src/store/json-store.mjs';
 import { shouldRegenTitle, buildTitleMessages, sanitizeTitle, TITLE_INTERVALS, TITLE_INTERVAL_DEFAULT } from './src/title-agent.mjs';
@@ -141,6 +142,10 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.FC_SERVER_PORT) || Number(process.env.PORT) || Number(process.argv[process.argv.indexOf('--port') + 1]) || 8787;
 const HOST = (process.env.FC_SERVER_PORT || process.env.PORT) ? '0.0.0.0' : (process.env.HOST || '127.0.0.1');
 
+// Scope shell enforcement (ADR-0012 §3). OFF by default: ship warn-only, read
+// a week of would-refuse logs, then set SCOPE_ENFORCE=1.
+const SCOPE_ENFORCE = process.env.SCOPE_ENFORCE === '1';
+
 const ENV_KEYS = {
   minimax: process.env.MINIMAX_API_KEY || '',
   'minimax-intl': process.env.MINIMAX_INTL_API_KEY || '',
@@ -227,6 +232,35 @@ async function runTurn(req, emit) {
   ];
 
   emit('status', { text: '正在阅读你的课程状态…', stage: state.stage, stageName: STAGE_NAMES[state.stage] });
+
+  // Scope shell (ADR-0012 §3). Runs BEFORE the search and before the model call
+  // — blocking afterwards would already have spent what the check exists to
+  // save. Default is WARN-ONLY: the verdict is logged, nothing is blocked, so a
+  // week of real logs can prove the rule before it can cost a teacher.
+  // SCOPE_ENFORCE=1 flips it on.
+  const scope = checkScope(req.message, state, { enforce: SCOPE_ENFORCE });
+  if (scope.wouldRefuse) {
+    console.warn(`[scope] ${scope.enforced ? 'refused' : 'would refuse'} (${scope.rule}): ${String(req.message).slice(0, 60)}`);
+    emit('scope', { rule: scope.rule, enforced: scope.enforced, refused: scope.refuse });
+  }
+  if (scope.refuse) {
+    const refusal = refusalTurn(state);
+    emit('turn', {
+      turn: refusal,
+      state,
+      wf_nodes: WF_NODES,
+      gate_report: { ok: true, violations: [], attempt: 0, degraded: false },
+      provider: 'scope-guard',
+      providerLabel: '范围护栏',
+      usage: null,
+      cache: null,
+      guards: [],
+      web_search: null,
+      scope: { rule: scope.rule, refused: true },
+      stageName: STAGE_NAMES[state.stage],
+    });
+    return;
+  }
 
   // 联网搜索 (ADR-0012 §6): retrieval is a step WE run, before the model call,
   // with a query WE compose — so it stays course-bound and cannot become a

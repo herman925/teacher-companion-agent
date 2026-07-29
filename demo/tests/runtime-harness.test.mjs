@@ -184,17 +184,36 @@ test('adult slogan: silent in teacher-backstage question_pool cultural hints', (
 
 // ---------- engine: stage gates ----------
 
-test('stage gate: blocks 0→2 jump and 0→1 without entry card', () => {
+// ADR-0012 §2 (corrected): the ordinal check and the EVIDENCE branches stay;
+// the V1.3 ARTIFACT prerequisites (entry card, fit screening, goals axis, cycle
+// record) retired with the workflow chain. Workflow v2 produces a plan tree, so
+// demanding an entry card would block stage 1 permanently.
+test('stage gate: ordinal sanity survives — 0→2 is still refused', () => {
   const s = createInitialState('c1');
-  assert.ok(stageGateError(s, 2));
-  assert.ok(stageGateError(s, 1));
+  assert.ok(stageGateError(s, 2), '跨阶段跳仍然要拦——这是结构完整性，不是工作流链');
 });
 
-test('stage gate: allows 0→1 once entry card + fit level exist', () => {
+test('stage gate: 0→1 now passes — the artifact prerequisites are retired', () => {
   const s = createInitialState('c1');
+  assert.equal(stageGateError(s, 1), null);
+  // and it does not secretly depend on the retired artifacts existing
   s.resource_entry_card = { original_theme: '龙舟' };
   s.theme_fit_level = 'theme_inquiry';
   assert.equal(stageGateError(s, 1), null);
+});
+
+test('stage gate: the EVIDENCE gate is untouched — non-negotiable #1', () => {
+  const s = createInitialState('c1');
+  s.stage = 1;
+  // No child evidence: entering 目标轴心 stays refused, whatever happened to
+  // the chain. ADR-0008 §3 unforced 回传 for the TEACHER, not for the model.
+  assert.ok(stageGateError(s, 2), '没有儿童证据不能进阶段2');
+  s.children_evidence = [{ id: 'ev-1', kind: 'child_words', content: '为什么鼓这么响？', recorded_at: 'r1' }];
+  assert.equal(stageGateError(s, 2), null);
+  // Course-story export without any evidence stays refused too.
+  const t = createInitialState('c2');
+  t.stage = 4;
+  assert.ok(stageGateError(t, 5), '没有过程证据不能导出课程故事');
 });
 
 test('stage gate 1→2: evidence is mandatory, a driving question is not (stage1-v1.0)', () => {
@@ -301,18 +320,30 @@ test('applyDelta: stage 1→2 legal when evidence + driving question arrive in t
   assert.equal(violations.filter((v) => v.kind === 'illegal_stage_jump').length, 0);
 });
 
-test('applyDelta: stage still stripped when prerequisites are missing from state AND delta', () => {
+test('applyDelta: stage stripped when the EVIDENCE gate is unmet', () => {
   const s = createInitialState('c1');
-  const { state, violations } = applyDelta(s, { stage: 1 });
-  assert.equal(state.stage, 0);
+  s.stage = 1;
+  const { state, violations } = applyDelta(s, { stage: 2 });
+  assert.equal(state.stage, 1, '证据不足时阶段不推进');
   assert.ok(violations.some((v) => v.kind === 'illegal_stage_jump'));
 });
 
+test('applyDelta: 0→1 applies cleanly now the artifact gate is retired', () => {
+  const s = createInitialState('c1');
+  const { state, violations } = applyDelta(s, { stage: 1 });
+  assert.equal(state.stage, 1);
+  assert.equal(violations.filter((v) => v.kind === 'illegal_stage_jump').length, 0);
+});
+
 test('validateTurn: stage advisory is delta-aware both ways', () => {
-  const clean = goodTurn({ state_delta: { resource_entry_card: { original_theme: '龙舟' }, theme_fit_level: 'theme_inquiry', stage: 1 } });
-  assert.equal(validateTurn(clean, createInitialState('c1')).filter((v) => v.kind === 'illegal_stage_jump').length, 0);
-  const bad = goodTurn({ state_delta: { stage: 1 } });
-  assert.ok(validateTurn(bad, createInitialState('c1')).some((v) => v.kind === 'illegal_stage_jump'));
+  // Evidence supplied by the SAME delta counts toward the gate...
+  const s = createInitialState('c1');
+  s.stage = 1;
+  const clean = goodTurn({ state_delta: { children_evidence: [{ id: 'ev-1', kind: 'child_words', content: '鼓好响', recorded_at: 'r1' }], stage: 2 } });
+  assert.equal(validateTurn(clean, s).filter((v) => v.kind === 'illegal_stage_jump').length, 0);
+  // ...and its absence is still caught.
+  const bad = goodTurn({ state_delta: { stage: 2 } });
+  assert.ok(validateTurn(bad, s).some((v) => v.kind === 'illegal_stage_jump'));
 });
 
 // ---------- engine: node prerequisite check (partial order, both directions) ----------

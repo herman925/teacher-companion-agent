@@ -29,7 +29,17 @@ Inside those bounds the model plays freely — Herman's 小沙盒. The harness r
 
 ### 2. Rules that lapse with the chain
 
-`illegal_stage_jump` and `node_prerequisite` presuppose a state machine that gates progress. With progress no longer gated on 回传, they guard nothing and are retired rather than left to fire on flows that are now legal.
+**Correction, 2026-07-29 (same day, before implementation).** This section first read that 「`illegal_stage_jump` and `node_prerequisite` … guard nothing and are retired」. That was wrong about the first one and nearly deleted the most important rule we have. Reading `stageGateError` shows it bundles three separate jobs:
+
+1. **Ordinal sanity** — no advancing more than one stage at a time. A model writing `stage: 4` from stage 0 corrupts state regardless of workflow philosophy. **Retained** under structural integrity.
+2. **Evidence prerequisites for stages 2 and 5** — 「没有儿童证据（原话/作品/照片/观察）不能进入目标轴心」 and 「没有任何过程证据，无法导出课程故事——先列缺口，不虚构」. **Retained, and non-negotiable.** These were never chain rules; they are non-negotiable #1 expressed as a gate, and [ADR-0008](0008-v1-scope-amendment.md) §3 explicitly kept the model-side evidence gate while unforcing 回传 for the teacher. Retiring them would let the agent export a course story with no evidence at all.
+3. **V1.3 artifact prerequisites** — stage 1 requiring `resource_entry_card` + `theme_fit_level`, stage 3 requiring `goals_assessment_axis`, stage 4 requiring `cycle_history`. **Retired.** Workflow v2 produces a plan tree, not these artifacts, so the gates would block stage 1 permanently.
+
+So the rule is **split, not deleted**: `stageGateError` keeps its ordinal check and its evidence branches, and loses the artifact branches.
+
+`node_prerequisite` does lapse in full — it enforces the `NODE_PREREQS` dependency graph, which is the WF chain itself.
+
+The general lesson, recorded because it will recur as v2 lands: a rule named after the chain is not necessarily a chain rule. Read what it enforces before retiring it.
 
 `closure_missing` / `closure_incomplete` weaken from blocking to advisory. [ADR-0008](0008-v1-scope-amendment.md) §3 made 回传 an invitation, so a turn that ends without 「回来请告诉我什么」 is no longer a defect. The closure loop remains good practice and stays measurable; it stops being enforceable.
 

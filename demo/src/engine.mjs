@@ -48,11 +48,17 @@ export function stageGateError(state, toStage) {
   if (toStage - from > 1 && toStage !== 5) {
     return `不允许从${STAGE_NAMES[from]}直接跳到${STAGE_NAMES[toStage]}`;
   }
+  // ADR-0012 §2 (corrected): this gate bundled three jobs. The ordinal check
+  // above and the EVIDENCE branches below are retained — the evidence ones are
+  // non-negotiable #1 expressed as a gate, and ADR-0008 §3 kept the model-side
+  // gate while unforcing 回传 for the teacher. What lapsed with the workflow
+  // chain are the V1.3 ARTIFACT prerequisites: stage 1 demanded a
+  // 资源课程化切口卡 + 主题适配性筛查, stage 3 a goals axis, stage 4 a cycle
+  // record. Workflow v2 produces a plan tree instead, so those gates would
+  // block stage 1 permanently.
   switch (toStage) {
     case 1:
-      if (!state.resource_entry_card) return '进入阶段1需要先生成资源课程化切口卡（WF03b）';
-      if (!state.theme_fit_level) return '进入阶段1需要先完成主题适配性筛查（WF02b）';
-      return null;
+      return null; // artifact prerequisites retired with the chain
     case 2:
       // stage1-workflow-v1.0: evidence stays mandatory (non-negotiable 1), but
       // a driving question is NO LONGER a stage-1 exit requirement — it gets
@@ -60,13 +66,9 @@ export function stageGateError(state, toStage) {
       if (!(state.children_evidence || []).length) return '没有儿童证据（原话/作品/照片/观察）不能进入目标轴心——先补一轮真实体验';
       return null;
     case 3:
-      if (!state.goals_assessment_axis || !state.goals_assessment_axis.core_understanding) {
-        return '进入阶段3需要先确立目标轴心草稿（至少核心理解目标）';
-      }
-      return null;
+      return null; // goals-axis prerequisite retired with the chain
     case 4:
-      if (!(state.cycle_history || []).length) return '进入阶段4需要至少一轮协作行动记录';
-      return null;
+      return null; // cycle-record prerequisite retired with the chain
     case 5:
       if (!(state.children_evidence || []).length) return '没有任何过程证据，无法导出课程故事——先列缺口，不虚构';
       return null;
