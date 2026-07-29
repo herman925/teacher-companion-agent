@@ -872,7 +872,18 @@ const server = http.createServer(async (req, res) => {
     // one, account keys ride along and the per-user quota applies.
     const chatMe = await sessionUser(req);
     if (chatMe) chatBody.keys = { ...(chatBody.keys || {}), ...(await accountKeys(chatMe.id)) };
-    if (chatBody.provider && chatBody.provider !== 'mock') {
+    // Scope shell (ADR-0012 §3) is evaluated BEFORE the quota so a refused turn
+    // costs the teacher nothing: it never reached a model, so it is not a model
+    // turn. In warn-only mode nothing is refused, so quota behaves exactly as
+    // before. Persisted either way — a warn-only log nobody can read is useless.
+    const chatScope = checkScope(chatBody.message, chatBody.state, { enforce: SCOPE_ENFORCE });
+    if (chatScope.wouldRefuse) {
+      await store.logScope({
+        rule: chatScope.rule, enforced: chatScope.enforced, refused: chatScope.refuse,
+        excerpt: String(chatBody.message ?? ''), userId: chatMe?.id ?? null,
+      }).catch(() => {});
+    }
+    if (chatBody.provider && chatBody.provider !== 'mock' && !chatScope.refuse) {
       const refusal = await turnQuota(chatMe?.id ?? null, clientIp(req));
       if (refusal) {
         const accept0 = req.headers.accept || '';
@@ -950,6 +961,12 @@ const server = http.createServer(async (req, res) => {
     try {
       if (seg[0] === 'data' && req.method === 'GET') {
         return json(200, { ok: true, token_required: Boolean(ADMIN_TOKEN), courses: await store.adminListCourses() });
+      }
+      // Scope shell log (ADR-0012 §3). Warn-only is only worth running if the
+      // would-refuse rows get read before enforcement is switched on.
+      if (seg[0] === 'scope' && req.method === 'GET') {
+        const log = await store.listScope({ limit: Number(url.searchParams.get('limit')) || 200 });
+        return json(200, { ok: true, enforcing: SCOPE_ENFORCE, ...log });
       }
       // ---- user management (SECURITY.md §4): every action audited ----
       if (seg[0] === 'users' && seg.length === 1 && req.method === 'GET') {

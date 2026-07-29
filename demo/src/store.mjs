@@ -18,6 +18,7 @@
 // Auth (SECURITY.md): createUser/getUser/listUsers/verifyLogin/changePassword/
 //   resetPassword/setDisplayName/saveUserProfile/updateUser · createSession/
 //   getSessionUser/listSessions/revokeSession/revokeByToken · audit/listAudit
+// Scope shell (ADR-0012 §3): logScope(row) · listScope({limit}) -> {rows,total,byRule}
 
 import { createJsonStore } from './store/json-store.mjs';
 

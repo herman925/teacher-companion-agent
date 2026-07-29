@@ -222,6 +222,7 @@
     <button id="tab-data" class="tab on">数据</button>
     <button id="tab-users" class="tab">用户</button>
     <button id="tab-limits" class="tab">限流</button>
+    <button id="tab-scope" class="tab">范围护栏</button>
   </div>
 
   <div id="banner" class="banner" hidden></div>
@@ -286,6 +287,27 @@
   </div>
 
   <!-- 限流 tab: live rate-limit counters + manual relief (spec 2026-07-22 §6) -->
+  <div id="view-scope" hidden>
+    <div class="bar">
+      <span class="note" id="scope-mode">加载中…</span>
+      <span class="spacer"></span>
+      <button id="scope-refresh">刷新</button>
+    </div>
+    <div class="wrap">
+      <div class="list" style="flex:1 1 100%">
+        <p class="note" style="margin:0 0 10px">
+          观察期先只记录、不拦截。这里是「本来会被拦下」的对话——把误伤挑出来（老师明明在备课却被判为跑题），
+          确认没有误伤之后，再把 <code>SCOPE_ENFORCE=1</code> 打开。只保留 60 字摘要，不存整段对话。
+        </p>
+        <div id="scope-tally" class="note" style="margin:0 0 10px"></div>
+        <table>
+          <thead><tr><th>时间</th><th>命中规则</th><th>是否拦下</th><th>摘要</th><th>账号</th></tr></thead>
+          <tbody id="scope-rows"><tr><td colspan="5" class="empty">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <div id="view-limits" hidden>
     <div class="bar">
       <span class="note">登录失败、改密码、对话配额与密钥保存的实时计数。解除会写入审计记录。</span>
@@ -716,15 +738,51 @@
       $('#data-filters').hidden = which !== 'data';
       $('#view-users').hidden = which !== 'users';
       $('#view-limits').hidden = which !== 'limits';
+      $('#view-scope').hidden = which !== 'scope';
       $('#tab-data').classList.toggle('on', which === 'data');
       $('#tab-users').classList.toggle('on', which === 'users');
       $('#tab-limits').classList.toggle('on', which === 'limits');
+      $('#tab-scope').classList.toggle('on', which === 'scope');
       if (which === 'users') loadUsers();
       if (which === 'limits') loadLimits();
+      if (which === 'scope') loadScope();
     }
     $('#tab-data').addEventListener('click', () => showView('data'));
     $('#tab-users').addEventListener('click', () => showView('users'));
     $('#tab-limits').addEventListener('click', () => showView('limits'));
+    $('#tab-scope').addEventListener('click', () => showView('scope'));
+
+    // ---- 范围护栏 tab (ADR-0012 §3): the would-refuse log. Warn-only is only
+    // worth running if somebody reads these rows before enforcement goes on. ----
+    const SCOPE_RULE = {
+      weather: '天气', markets: '股市/汇率', news: '新闻', sport: '体育',
+      code: '写代码', chitchat: '闲聊', general_help: '通用杂事',
+    };
+    async function loadScope() {
+      const tbody = $('#scope-rows');
+      try {
+        const res = await af('/api/admin/scope');
+        const data = await res.json();
+        $('#scope-mode').textContent = data.enforcing
+          ? '当前：已开启拦截（SCOPE_ENFORCE=1）。下面是真的被拦下的对话。'
+          : '当前：只记录不拦截。下面是「本来会被拦下」的对话，先看有没有误伤。';
+        const tally = Object.entries(data.byRule || {}).sort((a, b) => b[1] - a[1])
+          .map(([k, n]) => `${SCOPE_RULE[k] || k} ${n}`).join(' · ');
+        $('#scope-tally').textContent = data.total ? `共 ${data.total} 条：${tally}` : '';
+        const rows = data.rows || [];
+        if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">还没有记录——没有人问过跑题的问题</td></tr>'; return; }
+        tbody.innerHTML = rows.map((r) => `<tr>
+          <td>${new Date(r.created_at).toLocaleString('zh-CN')}</td>
+          <td>${SCOPE_RULE[r.rule] || r.rule}</td>
+          <td>${r.refused ? '已拦下' : '仅记录'}</td>
+          <td>${String(r.excerpt || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</td>
+          <td>${r.user_id || '—'}</td>
+        </tr>`).join('');
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">读取失败</td></tr>';
+      }
+    }
+    $('#scope-refresh').addEventListener('click', loadScope);
 
     // ---- 限流 tab: view + relieve (audited server-side) ----
     const LIMIT_KIND = {

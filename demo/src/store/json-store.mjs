@@ -26,6 +26,9 @@ const nowISO = () => new Date().toISOString();
 const err = (status, message) => Object.assign(new Error(message), { status });
 
 export const TITLE_MAX = 16; // a rail row, not a sentence (DESIGN.md §4)
+// Scope-log ring size. Enough to judge a week of traffic before enforcing,
+// small enough that the file stays readable and bounded.
+export const SCOPE_LOG_MAX = 2000;
 const DEFAULT_TITLE = '新课程';
 
 /**
@@ -89,6 +92,7 @@ export function createJsonStore(opts = {}) {
   const usersFile = path.join(AUTH_DIR, 'users.json');
   const sessionsFile = path.join(AUTH_DIR, 'sessions.json');
   const auditFile = path.join(AUTH_DIR, 'audit.json');
+  const scopeFile = path.join(AUTH_DIR, 'scope-log.json'); // ADR-0012 §3 would-refuse log
   const keysFile = path.join(AUTH_DIR, 'keys.json');         // { userId: { provider: ciphertext } }
   const rateFile = path.join(AUTH_DIR, 'rate-limits.json');  // rate-gate state blob
   const readUsers = () => readJson(usersFile, []);
@@ -537,6 +541,39 @@ export function createJsonStore(opts = {}) {
 
     async listAudit({ limit = 100 } = {}) {
       return withLock(async () => (await readJson(auditFile, [])).slice(-limit).reverse());
+    },
+
+    // ================= scope shell log (ADR-0012 §3) =================
+    // Warn-only mode is only useful if somebody READS the would-refuse rows, so
+    // they are persisted rather than left in journalctl. Stores the matched
+    // rule and a short excerpt — enough to judge a false block — never the whole
+    // message, which would put teacher content in an ops log.
+
+    /** One scope verdict. Ring-buffered: this is an ops signal, not history. */
+    async logScope(row) {
+      return withLock(async () => {
+        const rows = await readJson(scopeFile, []);
+        rows.push({
+          id: rows.length + 1,
+          rule: String(row?.rule ?? ''),
+          enforced: Boolean(row?.enforced),
+          refused: Boolean(row?.refused),
+          excerpt: String(row?.excerpt ?? '').slice(0, 60),
+          user_id: row?.userId ?? null,
+          created_at: nowISO(),
+        });
+        await writeAtomic(scopeFile, rows.slice(-SCOPE_LOG_MAX));
+      });
+    },
+
+    /** Newest first, plus a per-rule tally — the shape the admin tab wants. */
+    async listScope({ limit = 200 } = {}) {
+      return withLock(async () => {
+        const rows = await readJson(scopeFile, []);
+        const byRule = {};
+        for (const r of rows) byRule[r.rule] = (byRule[r.rule] ?? 0) + 1;
+        return { rows: rows.slice(-limit).reverse(), total: rows.length, byRule };
+      });
     },
 
     // ================= admin console reads (data tab) =================
