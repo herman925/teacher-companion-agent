@@ -31,10 +31,14 @@ The 2026-07-28 transcript does **not** contain this decision, and the team may b
 
 **What Herman argued in the same exchange**: keep one conversation, and let clicking a node insert a reference into the composer — 「例如说我点的，它就会直接在这边显示…3.2.2，然后叉」 — so the node becomes an attachment on the current turn rather than a new room. 「都是保留在同一个对话框里面，是这样就比较像 ChatGPT；如果是朝湃你那种，他有点像 subsession 或者是 subagent 的感觉。」 He also named the cost of the other model out loud: a blueprint with 18 nodes means the agent 「已经会帮我开了…18个对话框，都是空白的」. He then conceded — 「虽然我不懂为什么，但来坐这坐吧」 — without being persuaded.
 
-**What this ADR ratifies** is closer to Herman's position: one log, subject-tagged, so a node that was never discussed has nothing rather than an empty room. Two differences from 林朝湃's model remain live and should be settled with him and 陈栩锋 before build:
+**Resolved 2026-07-29 — Herman's call, build proceeds on it.** One log, subject-tagged. The two positions turned out to address different layers, which is why this is not a compromise: 林朝湃's 「历史对话就没有了」 is a policy about **what reaches the model**, and this ADR decides **what is retained**. The tiered context bands (§ADR-0007) already send a node turn nothing but its ancestor plans and that node's recorded revision reasons — exactly his minimum set. So he gets the context behavior he asked for, and we keep global ordering, one file per course, and no empty dialogues.
 
-- **Whether a node's earlier conversation is carried when she returns.** This ADR keeps it (the messages are tagged and still there); 林朝湃 explicitly wanted it dropped, so that a revision starts clean with only the plan artifacts. His reason is sound — a long creation conversation is exactly the context that 分层 was meant to avoid re-sending. A middle path exists: keep the history in storage and in the export for auditability, but *seed the model* only with the ancestor plans plus that node's recorded revision reasons.
-- **Whether the node becomes a visible attachment on the turn** (Herman's 「3.2.2 ✕」 chip) or the panel switches into node mode. The chip is a smaller change and reads as ChatGPT-familiar; the mode switch gives the node's detail somewhere to live. These are not exclusive — the chip could be how a node enters an ongoing conversation, with the mode switch reserved for opening one deliberately.
+To be walked through with 林朝湃 and 陈栩锋 so nobody is surprised in implementation; the storage decision does not wait on their reply, because the context policy it ships with already matches theirs.
+
+Two sub-decisions follow from it:
+
+- **A node's earlier conversation is retained but not re-sent.** The messages stay tagged, in storage and in the export, so the record and its ordering survive for audit. What seeds the model on a revision is the ancestor plans plus that node's recorded revision reasons — nothing of the long creation conversation. 林朝湃's reason for dropping it was sound and is honoured; only the deletion is declined, because deleting is not required to get the effect.
+- **The node reference and the mode switch are not exclusive**, and both ship. The 「3.2.2 ✕」 chip is how a node enters an ongoing conversation; the panel switching into node mode is how a node is opened deliberately, and is where the node's detail lives.
 
 ### 2. The subject is engine-owned
 

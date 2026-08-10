@@ -30,7 +30,7 @@ npm test           # 护栏链路测试
 
 ## 当前状态
 
-第0期——规范、治理、架构调研，以及规范§7的最小闭环演示。AI绘图、微信小程序封装、真实账号系统均有意延后；见 [PRD §5.2](docs/PRD.zh-CN.md)。
+工作流 v2 —— 计划树取代 V1.3 的节点链；行为规格见 [WORKFLOW.zh-CN.md](docs/WORKFLOW.zh-CN.md)，有意延后的部分见 [PRD·不在本期范围](docs/PRD.zh-CN.md)。
 
 ## 工作约定
 

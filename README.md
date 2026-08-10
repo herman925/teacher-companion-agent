@@ -30,7 +30,7 @@ Demo: `node demo/serve.mjs`, open the printed URL. 演示模式 runs fully offli
 
 ## Status
 
-Phase 0 — spec, governance, architecture exploration, and the §7 minimal-loop demo. AI drawing, WeChat Mini Program packaging, and real accounts are deliberately deferred; see [PRD §5.2](docs/PRD.md).
+Workflow v2 — the plan tree replaces the V1.3 node chain; see [WORKFLOW.md](docs/WORKFLOW.md) for the behavior and [PRD — Out of Scope](docs/PRD.md) for what is deliberately deferred.
 
 ## Working agreements
 
