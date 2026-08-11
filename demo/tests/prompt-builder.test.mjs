@@ -7,7 +7,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { buildSystemPrompt, buildPromptParts, cacheStableHistory, profileSectionText, stageModuleName, STAGE_MODULE, STYLE_DIRECTIVES } from '../src/prompt-builder.mjs';
+import {
+  buildSystemPrompt, buildPromptParts, cacheStableHistory, profileSectionText, stageModuleName,
+  stateNoteText, skeletonBandText, memoryBandText, focusBandText,
+  STAGE_MODULE, STYLE_DIRECTIVES,
+} from '../src/prompt-builder.mjs';
 import { createInitialState, applyDelta } from '../src/engine.mjs';
 import { mockTurn } from '../src/mock.mjs';
 
@@ -167,6 +171,183 @@ test('profile is never model-writable: profile keys in state_delta strip as bad_
   assert.equal(violations.filter((v) => v.kind === 'bad_delta').length, 3);
   assert.ok(!('profile' in state) && !('region' in state) && !('ageBand' in state));
   assert.equal(state.theme_fit_level, 'theme_inquiry', 'whitelisted field still applies');
+});
+
+// ---------------- context bands (ADR-0007 §1, §4) ----------------
+//
+// Every band test comes in both directions, and the MUST-PASS direction is the
+// acceptance test: a caller that passes no plan, no facts and no subject must
+// get byte-for-byte what it got before the bands existed.
+
+/** Verbatim replica of the per-turn note as it stood before the bands. */
+function legacyStateNote(state) {
+  const pacing = state.awaiting_feedback
+    ? '当前 awaiting_feedback 为 true：上一轮已收尾，教师尚未回传现场反馈。若这条消息就是回传，先提取证据；若只是追问或要素材，就地支持，不虚构课堂进展。'
+    : '';
+  return '# 当前 course_state（只读快照）\n\n```json\n' + JSON.stringify(state, null, 1) + '\n```\n\n' + pacing;
+}
+
+/** A plan whose activity is a HYPOTHESIS with a body about children who have
+ * not met yet — the shape that must never reach the model unlabelled. */
+const PLAN = {
+  version: 'v0.3',
+  roots: [{
+    id: 'p1', kind: 'phase', title: '醒狮主题月',
+    summary: '一个月，从看狮到自己做狮头',
+    body: '整月脉络：先看、再拆、再做、再演。',
+    status: 'teacher_preset', work_status: 'settled',
+    children: [{
+      id: 'p1.1', kind: 'week', title: '第一周：去看醒狮',
+      summary: '带孩子实地看一次醒狮排练',
+      body: '周内三次外出，重点在看和问。',
+      status: 'confirmed', work_status: 'settled',
+      children: [{
+        id: 'p1.1.1', kind: 'activity', title: '狮头细看',
+        body: '孩子会数狮头上有几个角（预设，待现场验证）。',
+        status: 'hypothesis', work_status: 'draft', dates: ['2026-09-07'],
+        revisions: [
+          { version: 2, at: '2026-08-01', by: 'teacher', reason: '把鼓换成木棍，班上没有鼓' },
+          { version: 3, at: '2026-08-02', by: 'teacher', reason: '   ' },
+        ],
+      }],
+    }],
+  }],
+};
+
+const FACTS = [
+  { id: 'f-class-1', scope: 'class', text: '我们班没有鼓', quote: '我们班没有鼓', at: '2026-07-30T09:00:00Z', source: 'teacher' },
+  { id: 'f-course-1', scope: 'course', text: '这门课想落在醒狮上', at: '2026-07-30T09:05:00Z', source: 'auto' },
+  { id: 'f-old-1', scope: 'course', text: '原本打算做龙舟', at: '2026-07-01T09:00:00Z', source: 'auto', archived: true, archive_reason: 'superseded' },
+];
+
+test('ACCEPTANCE — no course_plan, no facts, no subject: the note is byte-identical to the pre-band assembly', async () => {
+  for (const [stage, awaiting] of [[0, false], [1, true], [4, false], [5, true]]) {
+    const state = createInitialState('bands-degrade');
+    state.stage = stage;
+    state.awaiting_feedback = awaiting;
+    assert.equal(stateNoteText(state), legacyStateNote(state), `stage ${stage}`);
+    assert.equal(stateNoteText(state, {}), legacyStateNote(state), 'empty opts object');
+    assert.equal(stateNoteText(state, { subject: 'course', facts: null }), legacyStateNote(state), 'course subject + unwired memory');
+    const { stateNote } = await buildPromptParts(state, stub);
+    assert.equal(stateNote, legacyStateNote(state), 'buildPromptParts degrades the same way');
+  }
+  // An empty plan is not a plan: no rows to render, so no band and no snapshot rewrite.
+  const empty = { ...createInitialState('bands-empty'), course_plan: { version: 'v0.1', roots: [] } };
+  assert.equal(stateNoteText(empty), legacyStateNote(empty));
+});
+
+test('bands fire when they are wired: the same note is NOT the legacy one once a plan, facts and a subject arrive', () => {
+  const state = { ...createInitialState('bands-on'), course_plan: PLAN };
+  const note = stateNoteText(state, { subject: 'p1.1.1', facts: FACTS });
+  assert.notEqual(note, legacyStateNote(state), 'a silently dropped band would slip through without this');
+  assert.ok(note.includes('# 课程计划骨架'), 'skeleton band');
+  assert.ok(note.includes('# 记忆（班级与课程'), 'memory band');
+  assert.ok(note.includes('# 焦点节点 p1.1.1'), 'focus band');
+  // Order: focus sits last, nearest the teacher's newest message.
+  assert.ok(note.indexOf('# 课程计划骨架') < note.indexOf('# 记忆（班级与课程'));
+  assert.ok(note.indexOf('# 记忆（班级与课程') < note.indexOf('# 焦点节点 p1.1.1'));
+});
+
+test('skeleton band: rows for every node, titles only — and no plan renders nothing (both directions)', () => {
+  assert.equal(skeletonBandText(null), '');
+  assert.equal(skeletonBandText(undefined), '');
+  assert.equal(skeletonBandText({ roots: [] }), '');
+  const band = skeletonBandText(PLAN);
+  for (const id of ['p1', 'p1.1', 'p1.1.1']) assert.ok(band.includes(id), id);
+  assert.ok(band.includes('# plan-skeleton v1'), 'the version marker rides the table');
+  assert.ok(band.includes('hypothesis') && band.includes('teacher_preset'), 'provenance travels with every row');
+  assert.ok(!band.includes('整月脉络'), 'bodies never enter the skeleton');
+});
+
+test('skeleton band: the plan tree is shipped once, not twice', () => {
+  const state = { ...createInitialState('once'), course_plan: PLAN };
+  const note = stateNoteText(state);
+  assert.equal(note.indexOf('狮头细看'), note.lastIndexOf('狮头细看'), 'titles appear in the skeleton only');
+  assert.ok(note.includes('见下方「课程计划骨架」表'), 'the snapshot points at where the tree went');
+  assert.ok(!note.includes('"roots"'), 'the pretty-printed tree is gone from the snapshot');
+  assert.ok(note.includes('"course_plan"'), 'the key stays, so nothing reads as "this course has no plan"');
+});
+
+test('memory band: whole, unfiltered, every turn — and omitted only when memory is not wired (both directions)', () => {
+  assert.equal(memoryBandText(null), '', 'not wired → no band');
+  assert.equal(memoryBandText(undefined), '', 'not wired → no band');
+
+  // A new class legitimately having no facts must stay distinguishable from a
+  // refactor that silently stopped appending memory: the headers still render.
+  const empty = memoryBandText([]);
+  assert.ok(empty.includes('scope=class') && empty.includes('scope=course'), 'both scope headers survive an empty store');
+
+  const band = memoryBandText(FACTS);
+  assert.ok(band.includes('我们班没有鼓'), 'the class fact rides every turn');
+  assert.ok(band.includes('这门课想落在醒狮上'), 'the course fact too');
+  assert.ok(!band.includes('原本打算做龙舟'), 'archived facts stay out of the prompt');
+  assert.ok(band.indexOf('scope=class') < band.indexOf('scope=course'), 'class first');
+});
+
+test('memory band is NOT retrieved by relevance: a class fact about drums rides a turn about lion heads', () => {
+  const state = { ...createInitialState('no-retrieval'), course_plan: PLAN };
+  const note = stateNoteText(state, { subject: 'p1.1.1', facts: FACTS });
+  assert.ok(note.includes('我们班没有鼓'), 'one retrieval miss here is exactly 「我早就跟你说过」');
+});
+
+test('focus band: subject node body + ancestor summaries + revision reasons; no subject renders nothing (both directions)', () => {
+  assert.equal(focusBandText(PLAN, undefined), '', 'no subject → no band');
+  assert.equal(focusBandText(PLAN, 'course'), '', 'a course turn has no focus node');
+  assert.equal(focusBandText(PLAN, 'p9.9'), '', 'an id that names no node renders nothing');
+  assert.equal(focusBandText(null, 'p1.1.1'), '', 'no plan → no band');
+
+  const band = focusBandText(PLAN, 'p1.1.1');
+  assert.ok(band.includes('孩子会数狮头上有几个角（预设，待现场验证）。'), "the subject node's own body arrives whole");
+  assert.ok(band.includes('p1「醒狮主题月」：一个月，从看狮到自己做狮头'), 'ancestor summary');
+  assert.ok(band.includes('p1.1「第一周：去看醒狮」：带孩子实地看一次醒狮排练'), 'ancestor summary, root-first chain');
+  assert.ok(!band.includes('整月脉络') && !band.includes('周内三次外出'), 'ancestor BODIES are never inlined, clipped or paraphrased');
+  assert.ok(band.includes('把鼓换成木棍，班上没有鼓'), 'the recorded reason travels with the node');
+  assert.ok(band.includes('v2 · 2026-08-01 · teacher'), 'and carries its stamp');
+  assert.equal(band.split('\n').filter((l) => l.startsWith('- v')).length, 1, 'a revision with no reason is not a bullet');
+});
+
+test('focus band: both status axes label the body, so a hypothesis cannot read as confirmed', () => {
+  const band = focusBandText(PLAN, 'p1.1.1');
+  assert.ok(band.includes('来源状态：hypothesis'), 'provenance is on the header line');
+  assert.ok(band.includes('工作状态：draft'), 'work status is a separate axis');
+  // A node that states nothing about itself still gets the weaker claim, never
+  // the stronger one.
+  const bare = { roots: [{ id: 'n1', title: '无状态节点', body: '孩子提到了鼓。' }] };
+  const bareBand = focusBandText(bare, 'n1');
+  assert.ok(bareBand.includes('来源状态：ai_suggestion') && bareBand.includes('工作状态：draft'));
+  assert.ok(!bareBand.includes('confirmed'));
+});
+
+test('focus band: staleness is shown, and an over-long revision log says what it left out', () => {
+  const stale = {
+    roots: [{
+      id: 'n1', title: '被上游改动波及', body: '正文', status: 'confirmed', work_status: 'settled',
+      stale_since: 'v0.4', stale_reason: '上一周的材料改了',
+      revisions: Array.from({ length: 10 }, (_, i) => ({ version: i + 1, at: '2026-08-01', by: 'teacher', reason: `r${i + 1}` })),
+    }],
+  };
+  const band = focusBandText(stale, 'n1');
+  assert.ok(band.includes('待复查（自 v0.4，因 上一周的材料改了）'), 'the reason travels with the badge');
+  assert.ok(band.includes('来源状态：confirmed'), 'staleness never demotes provenance');
+  assert.ok(band.includes('（更早的 2 条未列出'), 'truncation is never silent');
+  const kept = band.split('\n').filter((l) => l.startsWith('- ')).map((l) => l.split('：').at(-1));
+  assert.deepEqual(kept, ['r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10'], 'the newest eight, oldest first');
+});
+
+test('focus band reads the node, never the conversation', () => {
+  const band = focusBandText(PLAN, 'p1.1.1');
+  for (const marker of ['user', 'assistant', 'role', 'reply_markdown']) {
+    assert.ok(!band.includes(marker), `${marker} has no business in a focus band`);
+  }
+});
+
+test('buildPromptParts: bands ride the volatile note, never the cache-stable prefix', async () => {
+  const state = { ...createInitialState('cache-bands'), course_plan: PLAN };
+  const plain = await buildPromptParts(state, stub);
+  const banded = await buildPromptParts(state, stub, { subject: 'p1.1.1', facts: FACTS });
+  assert.equal(plain.system, banded.system, 'the prefix stays byte-stable → vendor cache hit');
+  assert.notEqual(plain.stateNote, banded.stateNote, 'volatility confined to the tail');
+  assert.ok(!banded.system.includes('我们班没有鼓') && !banded.system.includes('# 焦点节点'));
 });
 
 test('mock light touch: 年段 personalizes the blueprint (title + reply), defaults otherwise', () => {

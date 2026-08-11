@@ -29,19 +29,50 @@
  * @typedef {Object} Turn
  * @property {string} reply_markdown
  * @property {TurnQuestion|null} question
+ * @property {TurnQuestion[]} [questions]  Canonical array; `question` is its first entry.
  * @property {TurnArtifact[]} artifacts
  * @property {ClosureLoop|null} closure_loop
  * @property {Object} state_delta        Partial course_state patch (engine validates/applies).
  * @property {string[]} evidence_refs    Ids into course_state.children_evidence.
  * @property {boolean} round_complete
+ * @property {PlanOp[]} [plan_delta]       Node-granularity plan-tree edits (engine.applyPlanDelta).
+ * @property {PlanOp[]} [blueprint_delta]  Node-granularity blueprint edits (engine.applyBlueprintDelta).
  * @property {Object|null} [wf_trace]  Dev-facing workflow trace (passed through unvalidated; 开发者模式 UI).
  */
 
 /**
+ * One node-granularity edit. `confirmed_by_quote` is the teacher's own words
+ * from the SAME turn, and the only thing that may escalate a node to
+ * `confirmed` now that the ✓确认 tick is gone (ADR-0010 §6).
+ * @typedef {Object} PlanOp
+ * @property {"set"|"update"|"remove"} op
+ * @property {string} id
+ * @property {string} [parent_id]
+ * @property {Object} [node]
+ * @property {string} [confirmed_by_quote]
+ * @property {string} [reason]
+ */
+
+/**
+ * A runtime-harness finding. The kind list tracks ADR-0012 §2, which narrowed
+ * the harness to three jobs — scope shell, evidence and provenance, structural
+ * integrity — and rewrote this list rather than shortening it:
+ *
+ * - NEW: `uncited_confirmation` (ADR-0010 §6), `memory_contradiction`
+ *   (ADR-0011 §5).
+ * - WEAKENED to advisory: `closure_missing`, `closure_incomplete` — ADR-0008 §3
+ *   made 回传 an invitation, so their absence is no longer a defect.
+ * - RETIRED: `node_prerequisite`, which enforced the `NODE_PREREQS` graph, i.e.
+ *   the workflow chain itself. `illegal_stage_jump` was NOT retired with it: it
+ *   bundles an ordinal check and the stage-2/5 evidence gates, and those are
+ *   non-negotiable #1 wearing a gate's clothes.
+ *
  * @typedef {Object} Violation
- * @property {"closure_missing"|"closure_incomplete"|"multi_question"|"question_no_examples"|"fabrication"|"adult_slogan"|"illegal_stage_jump"|"node_prerequisite"|"bad_delta"|"contract_parse"} kind
+ * @property {"contract_parse"|"bad_delta"|"illegal_stage_jump"|"blueprint_scope"|"plan_scope"|"fabrication"|"unmarked_hypothesis"|"uncited_confirmation"|"born_confirmed"|"memory_contradiction"|"adult_slogan"|"multi_question"|"question_no_examples"|"closure_missing"|"closure_incomplete"|"many_questions"|"no_forward_handle"|"style_mismatch"|"planning_question_density"|"blueprint_resend"} kind
  * @property {string} detail
- * @property {"block"|"strip"} action  block → regenerate (L4); strip → auto-repair + log.
+ * @property {"block"|"strip"|"warn"} action  block → regenerate (L4);
+ *   strip → engine drops the offending field and logs; warn → recorded and shown
+ *   in the dev drawer only, never retried.
  */
 
 /**

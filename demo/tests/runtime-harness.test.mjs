@@ -58,16 +58,30 @@ test('parseTurn blocks on garbage', () => {
   assert.equal(violations[0].kind, 'contract_parse');
 });
 
-// ---------- L3: closure loop ----------
+// ---------- L3: closure loop (advisory since ADR-0012 §2) ----------
 
-test('closure loop: fires when round_complete lacks closure', () => {
+// ADR-0008 §3 made 回传 an invitation rather than a duty, so these two report
+// and never block. Both directions of the WEAKENING: they must still be
+// recorded (the rate is pilot data), and they must never reach the regenerate
+// path — a turn whose only fault is a missing closure loop is a legal turn.
+test('closure loop: still reported when round_complete lacks closure — as a warn', () => {
   const v = validateTurn(goodTurn({ closure_loop: null }), createInitialState('c1'));
-  assert.ok(v.some((x) => x.kind === 'closure_missing'));
+  const hit = v.find((x) => x.kind === 'closure_missing');
+  assert.ok(hit, '仍然记录');
+  assert.equal(hit.action, 'warn');
 });
 
-test('closure loop: fires when an element is empty', () => {
+test('closure loop: still reported when an element is empty — as a warn', () => {
   const v = validateTurn(goodTurn({ closure_loop: { ...goodClosure, bring_back: ' ' } }), createInitialState('c1'));
-  assert.ok(v.some((x) => x.kind === 'closure_incomplete' && x.detail.includes('bring_back')));
+  const hit = v.find((x) => x.kind === 'closure_incomplete');
+  assert.ok(hit && hit.detail.includes('bring_back'));
+  assert.equal(hit.action, 'warn');
+});
+
+test('closure loop: a missing closure never blocks, so it never triggers regeneration', () => {
+  const v = validateTurn(goodTurn({ closure_loop: null }), createInitialState('c1'));
+  assert.equal(v.filter((x) => x.action === 'block').length, 0, '回传缺失不再是缺陷，不能触发重生成');
+  assert.ok(!violationFeedback(v).includes('closure_missing'), 'advisory 违例不进重生成反馈');
 });
 
 test('closure loop: silent on a complete four-part closure', () => {
@@ -135,6 +149,72 @@ test('fabrication: accepts refs to evidence newly provided in this turn delta', 
   assert.equal(v.filter((x) => x.kind === 'fabrication').length, 0);
 });
 
+// ---------- L3: the artifact is the deliverable, so it is scanned too ----------
+
+/** The 课程故事 shape: bland prose, everything asserted inside the artifact. */
+const storyTurn = (extra = {}) => goodTurn({
+  reply_markdown: '我把这一段整理好了，你看看。',
+  artifacts: [{ type: 'story_fragment', title: '课程故事片段', data: {
+    chapters: [{ text: '孩子们发现龙舟的桨是弯的，全班都爱上了划船，大家已经理解了团队协作的意义。' }],
+  } }],
+  ...extra,
+});
+
+test('fabrication: fires on a story artifact asserting child discoveries with no refs', () => {
+  const v = validateTurn(storyTurn(), createInitialState('c1'));
+  assert.ok(v.some((x) => x.kind === 'fabrication' && x.action === 'block'), '产物才是她留下的东西，正文平淡不代表这一轮没断言');
+});
+
+test('MUST PASS — the same artifact with resolving evidence_refs goes through', () => {
+  const v = validateTurn(storyTurn({ evidence_refs: ['ev1'] }), stateWithEvidence());
+  assert.equal(v.filter((x) => x.kind === 'fabrication').length, 0);
+});
+
+test('MUST PASS — an ordinary planning artifact is not a claim about children', () => {
+  const t = goodTurn({ artifacts: [{ type: 'experience_plan', title: '第2周', data: {
+    activity: '带孩子到河边看一次真实的龙舟训练，回来画自己看到的船',
+    observation: '谁在船边停得最久，孩子会问什么',
+  } }] });
+  assert.equal(validateTurn(t, createInitialState('c1')).filter((x) => x.kind === 'fabrication').length, 0);
+});
+
+// ---------- L3: evidence must come from HER (ADR-0011 §5 / non-negotiable #1) ----------
+
+const mintedEvidenceTurn = (content) => goodTurn({
+  reply_markdown: '孩子们已经发现了桨是弯的，全班都很兴奋。',
+  evidence_refs: ['e1'],
+  state_delta: {
+    stage: 2,
+    children_evidence: [{ id: 'e1', kind: 'child_words', content, recorded_at: 'r1' }],
+  },
+});
+
+/** Stage 1 → 2 is one legal step; the only thing standing in the way is whether
+ * real child evidence exists. */
+const atStageOne = () => ({ ...createInitialState('c1'), stage: 1 });
+
+test('fabrication: evidence the teacher never mentioned does not license the claim', () => {
+  // The turn used to write its own permission slip: mint the row, cite it,
+  // assert on it, and open stage 2 with it — all in one turn.
+  const v = validateTurn(mintedEvidenceTurn('孩子说桨为什么是弯的'), atStageOne(), {
+    teacherText: '这周我们还没开展活动，先给我看看第二周的安排。',
+  });
+  assert.ok(v.some((x) => x.kind === 'fabrication' && x.detail.includes('e1')), '自己写的证据不是证据');
+  assert.ok(v.some((x) => x.kind === 'illegal_stage_jump'), '也不能凭它推进阶段');
+});
+
+test('MUST PASS — evidence quoting her 回传 message is accepted and opens stage 2', () => {
+  const said = '今天带孩子去看了龙舟，男孩A说「桨为什么是弯的」，好几个孩子围着看了很久。';
+  const v = validateTurn(mintedEvidenceTurn('桨为什么是弯的'), atStageOne(), { teacherText: said });
+  assert.equal(v.filter((x) => x.kind === 'fabrication').length, 0, '她说过的话就是证据');
+  assert.equal(v.filter((x) => x.kind === 'illegal_stage_jump').length, 0, '有证据就能进阶段2');
+});
+
+test('evidence grounding is dormant when the caller supplies no teacher text', () => {
+  const v = validateTurn(mintedEvidenceTurn('孩子说桨为什么是弯的'), atStageOne());
+  assert.equal(v.filter((x) => x.kind === 'fabrication').length, 0);
+});
+
 // ---------- L3: culture stays backstage ----------
 
 test('adult slogan: fires inside a child-facing artifact', () => {
@@ -180,6 +260,167 @@ test('adult slogan: silent in teacher-backstage question_pool cultural hints', (
   const t = goodTurn({ artifacts: [{ type: 'question_pool', title: '问题池', data: { hint: '教师后台可关注：这背后有代际传承的生活经验（不讲给孩子）' } }] });
   const v = validateTurn(t, createInitialState('c1'));
   assert.equal(v.filter((x) => x.kind === 'adult_slogan').length, 0);
+});
+
+// ---------- L3: the marking rule watches the DELTAS, not only artifacts ----------
+//
+// Since ADR-0010 §6 the deltas are the primary write channel into both trees,
+// so a walk that only ever looked at `turn.artifacts` left the main road
+// unwatched: an un-hedged, un-marked assertion about what children learned went
+// straight into the living plan.
+
+test('unmarked_hypothesis: fires on a blueprint_delta node body asserting child learning', () => {
+  const t = goodTurn({ blueprint_delta: [{ op: 'set', id: 'm9', parent_id: 'm1', node: {
+    title: '龙舟周', body: '孩子们都理解了龙舟的结构，全班已经学会了划桨的动作。', status: 'ai_suggestion',
+  } }] });
+  const v = validateTurn(t, createInitialState('c1'));
+  assert.ok(v.some((x) => x.kind === 'unmarked_hypothesis' && x.action === 'block'));
+  assert.ok(v.find((x) => x.kind === 'unmarked_hypothesis').detail.includes('m9'), '要说清是哪一个节点');
+});
+
+test('unmarked_hypothesis: fires on a plan_delta node body too', () => {
+  const t = goodTurn({ plan_delta: [{ op: 'set', id: 'a9', parent_id: 'w1', node: {
+    title: '划桨练习', body: '孩子们已经掌握了划桨的节奏。', status: 'ai_suggestion',
+  } }] });
+  assert.ok(validateTurn(t, createInitialState('c1')).some((x) => x.kind === 'unmarked_hypothesis'));
+});
+
+test('MUST PASS — the same delta body marked hypothesis, or hedged, sails through', () => {
+  const marked = goodTurn({ blueprint_delta: [{ op: 'set', id: 'm9', parent_id: 'm1', node: {
+    title: '龙舟周', body: '孩子们都理解了龙舟的结构，全班已经学会了划桨的动作。', status: 'hypothesis',
+  } }] });
+  assert.equal(validateTurn(marked, createInitialState('c1')).filter((x) => x.kind === 'unmarked_hypothesis').length, 0,
+    '预设可以写孩子，只要看得出是预设');
+  const hedged = goodTurn({ blueprint_delta: [{ op: 'set', id: 'm9', parent_id: 'm1', node: {
+    title: '龙舟周', body: '预计孩子们会理解龙舟的结构。', status: 'ai_suggestion',
+  } }] });
+  assert.equal(validateTurn(hedged, createInitialState('c1')).filter((x) => x.kind === 'unmarked_hypothesis').length, 0);
+});
+
+test('MUST PASS — an ordinary delta edit is not a claim about children', () => {
+  const t = goodTurn({ blueprint_delta: [{ op: 'update', id: 'network_map', node: {
+    body: '按你的批注收拢到孩子问过的方向', status: 'teacher_preset',
+  } }] });
+  assert.equal(validateTurn(t, createInitialState('c1')).length, 0, '普通改动一条违例都不该有');
+});
+
+test('adult slogan: reaches a delta node body as well as a blueprint artifact', () => {
+  const t = goodTurn({ blueprint_delta: [{ op: 'update', id: 'm1', node: { body: '带孩子理解传承精神' } }] });
+  assert.ok(validateTurn(t, createInitialState('c1')).some((x) => x.kind === 'adult_slogan'));
+});
+
+// ---------- L3: confirmation needs the teacher's own words (ADR-0010 §6) ----------
+
+/** One node-granularity op escalating an existing node to confirmed. */
+function confirmOp(extra = {}) {
+  return { op: 'update', id: 'a3.2.1', node: { title: '端午前一周：走访龙舟队', status: 'confirmed' }, ...extra };
+}
+
+test('uncited confirmation: fires when a node is escalated with no quote at all', () => {
+  const v = validateTurn(goodTurn({ plan_delta: [confirmOp()] }), createInitialState('c1'));
+  const hit = v.find((x) => x.kind === 'uncited_confirmation');
+  assert.ok(hit && hit.detail.includes('a3.2.1'));
+  assert.equal(hit.action, 'strip');
+});
+
+test('uncited confirmation: fires when the quote is not in what she actually said', () => {
+  const t = goodTurn({ plan_delta: [confirmOp({ confirmed_by_quote: '就这样，确认' })] });
+  const v = validateTurn(t, createInitialState('c1'), { teacherText: '你先给我看看第二周有什么。' });
+  assert.ok(v.some((x) => x.kind === 'uncited_confirmation'), '编出来的引用不是引用');
+});
+
+// THE FIXTURE THAT MATTERS MOST: a real confirmation must pass byte-unchanged.
+// A rule that also strips honest confirmations would push the model back to
+// never confirming anything, and the teacher's own decisions would stop landing
+// in the tree at all.
+test('uncited confirmation: silent when the quote really is in this turn', () => {
+  const t = goodTurn({ plan_delta: [confirmOp({ confirmed_by_quote: '就这样，确认' })] });
+  const v = validateTurn(t, createInitialState('c1'), { teacherText: '好的，就这样，确认吧。' });
+  assert.equal(v.filter((x) => x.kind === 'uncited_confirmation').length, 0);
+});
+
+test('uncited confirmation: silent when the caller supplies no teacher text — a present quote is trusted', () => {
+  const t = goodTurn({ plan_delta: [confirmOp({ confirmed_by_quote: '就这样，确认' })] });
+  assert.equal(validateTurn(t, createInitialState('c1')).filter((x) => x.kind === 'uncited_confirmation').length, 0);
+});
+
+test('uncited confirmation: one quote confirms one node — nested children do not ride along', () => {
+  const t = goodTurn({ plan_delta: [confirmOp({
+    confirmed_by_quote: '这周就这样',
+    node: {
+      title: '第2周', status: 'confirmed',
+      children: [{ id: 'a3.2.1.1', title: '做小龙舟', status: 'confirmed' }],
+    },
+  })] });
+  const v = validateTurn(t, createInitialState('c1'), { teacherText: '这周就这样，别的先不动。' });
+  const hit = v.find((x) => x.kind === 'uncited_confirmation');
+  assert.ok(hit, '搭便车的子节点必须被抓到');
+  assert.ok(hit.detail.includes('把 a3.2.1.1 升为 confirmed'), `只点名子节点，被引用的父节点不在名单里：${hit.detail}`);
+});
+
+test('uncited confirmation: the older blueprint_delta channel is watched too', () => {
+  const t = goodTurn({ blueprint_delta: [{ op: 'update', id: 'network_map', node: { status: 'confirmed' } }] });
+  assert.ok(validateTurn(t, createInitialState('c1')).some((x) => x.kind === 'uncited_confirmation'));
+});
+
+test('uncited confirmation: silent on an ordinary edit that claims no confirmation', () => {
+  const t = goodTurn({ blueprint_delta: [{ op: 'update', id: 'network_map', node: { body: '已按你的批注调整', status: 'teacher_preset' } }] });
+  assert.equal(validateTurn(t, createInitialState('c1')).filter((x) => x.kind === 'uncited_confirmation').length, 0);
+});
+
+// ---------- L3: memory contradiction (ADR-0011 §5) ----------
+
+/** The canonical class fact: 「我们班没有鼓」 — stated once, binding on every
+ * activity in every week of every course she plans with this class. */
+const NO_DRUMS = [{ scope: 'class', text: '班上没有鼓', quote: '我们班没有鼓', at: '2026-07-01T00:00:00Z', source: 'teacher' }];
+
+/** A turn proposing an activity, as an artifact rather than prose. */
+function activityTurn(activity) {
+  return goodTurn({ artifacts: [{ type: 'experience_plan', title: '第2周', data: { activity } }] });
+}
+
+test('memory contradiction: fires when the proposed activity needs what the class does not have', () => {
+  const v = validateTurn(activityTurn('准备两面小鼓，请孩子轮流敲出龙舟的节奏'), createInitialState('c1'), { facts: NO_DRUMS });
+  const hit = v.find((x) => x.kind === 'memory_contradiction');
+  assert.ok(hit, '班上没有鼓，却提了敲鼓活动');
+  assert.ok(hit.detail.includes('班上没有鼓'), '反馈必须点名是哪条记忆');
+  assert.equal(hit.action, 'strip');
+});
+
+// THE FIXTURE THAT MATTERS MOST: an activity that needs no drum must sail
+// through. A memory rule that fires on activities it has no quarrel with would
+// make every remembered constraint a tax on planning.
+test('memory contradiction: silent on an activity that does not need the missing thing', () => {
+  const v = validateTurn(activityTurn('准备一箱纸盒和木棒，请孩子敲出自己的节奏'), createInitialState('c1'), { facts: NO_DRUMS });
+  assert.equal(v.filter((x) => x.kind === 'memory_contradiction').length, 0);
+});
+
+test('memory contradiction: silent when the turn is respecting the fact out loud', () => {
+  const t = goodTurn({ reply_markdown: '你们班没有鼓，所以这一周改用木棒敲纸箱，孩子照样听得见节奏。' });
+  const v = validateTurn(t, createInitialState('c1'), { facts: NO_DRUMS });
+  assert.equal(v.filter((x) => x.kind === 'memory_contradiction').length, 0, '谈论约束不等于违反约束');
+});
+
+test('memory contradiction: dormant when the caller supplies no facts', () => {
+  const v = validateTurn(activityTurn('准备两面小鼓，请孩子轮流敲出龙舟的节奏'), createInitialState('c1'));
+  assert.equal(v.filter((x) => x.kind === 'memory_contradiction').length, 0);
+});
+
+test('memory contradiction: a fact that excludes nothing bans nothing', () => {
+  const facts = [{ scope: 'class', text: '有几个孩子很怕大声', quote: '有几个孩子很怕大声', source: 'teacher' }];
+  const v = validateTurn(activityTurn('准备两面小鼓，请孩子轮流敲出龙舟的节奏'), createInitialState('c1'), { facts });
+  assert.equal(v.filter((x) => x.kind === 'memory_contradiction').length, 0);
+});
+
+test('memory contradiction: 「没有见过X」 is a verb phrase, not a banned material', () => {
+  const facts = [{ scope: 'class', text: '孩子们没有见过龙舟', source: 'auto' }];
+  const v = validateTurn(activityTurn('准备一条龙舟模型，请孩子摸一摸船桨'), createInitialState('c1'), { facts });
+  assert.equal(v.filter((x) => x.kind === 'memory_contradiction').length, 0, '没见过正是要去看，不是禁止出现');
+});
+
+test('memory contradiction: reads the plan delta, not only artifacts', () => {
+  const t = goodTurn({ plan_delta: [{ op: 'set', id: 'a4.1', parent_id: 'w4', node: { title: '敲鼓感受节奏', body: '每人一面小鼓，跟着节拍敲' } }] });
+  assert.ok(validateTurn(t, createInitialState('c1'), { facts: NO_DRUMS }).some((x) => x.kind === 'memory_contradiction'));
 });
 
 // ---------- engine: stage gates ----------
@@ -346,31 +587,33 @@ test('validateTurn: stage advisory is delta-aware both ways', () => {
   assert.ok(validateTurn(bad, s).some((v) => v.kind === 'illegal_stage_jump'));
 });
 
-// ---------- engine: node prerequisite check (partial order, both directions) ----------
+// ---------- engine: completed_nodes, after the chain (ADR-0012 §2) ----------
 
-test('node prereq: fires when WF07 is marked without WF06 in state or delta', () => {
-  const s = createInitialState('c1');
-  const { state, violations } = applyDelta(s, { completed_nodes: ['WF07'], theme_fit_level: 'short_activity' });
-  assert.ok(!state.completed_nodes.includes('WF07'), 'WF07 stripped');
-  assert.equal(state.theme_fit_level, 'short_activity', 'rest of the delta still applies');
-  assert.ok(violations.some((v) => v.kind === 'node_prerequisite' && v.action === 'strip' && v.detail.includes('WF06')));
-});
+// `node_prerequisite` is RETIRED: it enforced the NODE_PREREQS dependency graph,
+// which is the workflow chain itself, and the chain is gone. The direction that
+// asserted it FIRES went with it — a retired rule has no violating fixture. What
+// remains is the must-pass direction, which has to hold both before and after
+// the graph is removed from engine.mjs: marking work done never gets stripped.
+//
+// Note the contrast with `illegal_stage_jump`, which shares the chain's
+// vocabulary and was NOT retired: its ordinal check and its stage-2/5 evidence
+// branches are structural integrity and non-negotiable #1, not chain order.
 
-test('node prereq: silent when the prerequisite arrives in the SAME delta (set semantics, any array order)', () => {
+test('completed_nodes: applies when the earlier node is in the SAME delta (set semantics, any array order)', () => {
   const s = createInitialState('c1');
   const { state, violations } = applyDelta(s, { completed_nodes: ['WF07', 'WF06'] });
   assert.ok(state.completed_nodes.includes('WF06') && state.completed_nodes.includes('WF07'));
   assert.equal(violations.filter((v) => v.kind === 'node_prerequisite').length, 0);
 });
 
-test('node prereq: WF08 环境与计划 needs no question pool anymore (stage1-v1.0 re-bind)', () => {
+test('completed_nodes: WF08 环境与计划 applies on its own', () => {
   const s = createInitialState('c1');
   const { state, violations } = applyDelta(s, { completed_nodes: ['WF08'] });
   assert.ok(state.completed_nodes.includes('WF08'), 'environment/plan work is not gated on WF07');
   assert.equal(violations.filter((v) => v.kind === 'node_prerequisite').length, 0);
 });
 
-test('node prereq: satisfied by completed_nodes recorded in earlier turns', () => {
+test('completed_nodes: later nodes apply alongside ones recorded in earlier turns', () => {
   const s = createInitialState('c1');
   s.completed_nodes = ['WF28'];
   const { state, violations } = applyDelta(s, { completed_nodes: ['WF29', 'WF31'] });

@@ -258,6 +258,34 @@
         }
       }
     },
+    "course_plan": {
+      "type": "object",
+      "description": "课程计划树 — the time projection 月计划 → 周计划 → 活动 (ADR-0007/0010; CONTEXT.md). ENGINE-written only (engine.applyPlanDelta); the model proposes ops via plan_delta and never writes this field through state_delta. A day is a DATE on an activity, never a level.",
+      "additionalProperties": false,
+      "required": ["roots"],
+      "properties": {
+        "version": {
+          "description": "Engine-owned monotonic version. Integer once the engine has bumped it; a string is a model-written display label that the engine reads a trailing number out of.",
+          "type": ["integer", "string"]
+        },
+        "roots": { "type": "array", "items": { "$ref": "#/$defs/planNode" } },
+        "revision_log": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["v", "op"],
+            "properties": {
+              "v": { "type": "integer" },
+              "root_id": { "type": "string" },
+              "op": { "type": "string", "enum": ["set", "update", "remove"] },
+              "node_id": { "type": "string" },
+              "parent_id": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
     "story_materials": {
       "type": "object",
       "description": "阶段5 课程故事 materials + gap check.",
@@ -342,6 +370,27 @@
         },
         "evidence_refs": { "type": "array", "items": { "type": "string" } },
         "children": { "type": "array", "items": { "$ref": "#/$defs/blueprintNode" } }
+      }
+    },
+    "planNode": {
+      "type": "object",
+      "description": "One 课程计划树 node (plan-tsv.mjs normalizePlan). TWO STATUS AXES, never merged: status is provenance (how sure are we this is true), work_status is where she is in her process. Merging them lets 「she is mid-edit」 read as 「not verified against children」. kind is inferred from depth when absent.",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "enum": ["phase", "week", "activity"], "description": "月计划（2–5 周的阶段）/ 周计划 / 活动" },
+        "title": { "type": "string" },
+        "body": { "type": "string", "description": "Node text. Reaches the model through the focus band, never through the skeleton table." },
+        "summary": { "type": "string", "description": "One line an ancestor contributes to a descendant's focus band. Never derived by clipping the body — a clipped 「（预设，待现场验证）」 arrives as a flat statement." },
+        "status": { "type": "string", "enum": ["confirmed", "teacher_preset", "ai_suggestion", "hypothesis", "pending_validation"], "description": "出处：她确认过 / 她的预设 / 模型建议 / 假设 / 待现场验证" },
+        "work_status": { "type": "string", "enum": ["draft", "adjusting", "needs_review", "settled"], "description": "工作状态：草稿 / 调整中 / 待复看 / 定稿" },
+        "dates": { "type": "array", "items": { "type": "string" }, "description": "Activity dates. A range is legal — an activity may run over two days without becoming two nodes." },
+        "org_type": { "type": "string" },
+        "blueprint_refs": { "type": "array", "items": { "type": "string" }, "description": "Nodes this one rests on. Sideways edges of the blast radius." },
+        "stale_since": { "type": "string", "description": "待复查 stamp: the plan version whose edit MAY have invalidated this node. ENGINE-OWNED — a model that could clear it could hide an invalidation from the teacher." },
+        "stale_reason": { "type": "string", "description": "Why it is flagged, in her words, travelling with the node — the turn that caused it will be out of the context window by the time she reopens it." },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/planNode" } }
       }
     }
   }

@@ -2,10 +2,13 @@
 // Constrains the MODEL, never the teacher (AGENTS.md non-negotiable 2).
 // Every rule here must have both-directions fixtures in demo/tests/.
 
-import { evidenceIds, stageGateError } from './engine.mjs';
+import { evidenceIds, evidenceIsGrounded, stageGateError } from './engine.mjs';
 
-/** Child-claim patterns: assertions that children HAVE discovered/felt/understood. */
-const CHILD_CLAIM_RE = /(孩子们?|幼儿|儿童|全班|大家)(都|均|已经?|很)*(发现|理解|感受到|爱上|喜欢上?|学会|明白|掌握|着迷|兴奋)/;
+/** Child-claim patterns: assertions that children HAVE discovered/felt/understood.
+ * Exported because the same sentence is the same claim wherever it is written:
+ * memory-scopes screens incoming facts with it, so a fabricated child reaction
+ * cannot be filed as a class constraint and ride every future prompt. */
+export const CHILD_CLAIM_RE = /(孩子们?|幼儿|儿童|全班|大家)(都|均|已经?|很)*(发现|理解|感受到|爱上|喜欢上?|学会|明白|掌握|着迷|兴奋)/;
 /** Hedges that make a child-claim sentence legitimate without evidence. */
 const HEDGE_RE = /(可能|或许|也许|如果|假如|待现场确认|建议.{0,6}观察|预计|设想|想象一下)/;
 
@@ -16,6 +19,121 @@ const ADULT_SLOGANS = ['传承精神', '弘扬传统文化', '弘扬文化', '�
 const CHILD_FACING_ARTIFACTS = new Set(['entry_card', 'experience_plan', 'interview_card', 'cycle_task']);
 
 const CLOSURE_KEYS = ['do_now', 'materials', 'bring_back', 'i_will'];
+
+/** The delta channels a turn can move provenance through. `plan_delta` is the
+ * canonical one (ADR-0010 §6); `blueprint_delta` predates it and carries node
+ * status the same way, so the citation rule has to watch both or the older
+ * channel becomes the way around it. */
+const DELTA_KEYS = ['plan_delta', 'blueprint_delta'];
+
+/** Whitespace is not a citation difference: she typed 「就这样，确认」 and the
+ * model may echo it spaced differently. Deliberately the same pair of squashes
+ * as engine.citedNodeOf — if the two disagreed, the harness would report ops
+ * the engine applies, or stay silent on ops it strips. */
+const squashQuote = (s) => String(s ?? '').replace(/\s+/g, '');
+/** Punctuation is the model's to normalize, not hers. */
+const citationKey = (s) => String(s ?? '').replace(/[\s\p{P}\p{S}]/gu, '');
+/** Does this quote occur in what she actually typed? */
+const quoted = (said, quote) => squashQuote(said).includes(squashQuote(quote))
+  || (Boolean(citationKey(quote)) && citationKey(said).includes(citationKey(quote)));
+
+/** Sentences of prose, fenced code removed. */
+function splitSentences(text) {
+  return String(text ?? '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .split(/(?<=[。！？!?\n])/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Sentences of a serialized artifact, where JSON punctuation is also a break:
+ * a claim must not be assembled out of two fields that merely sit next to each
+ * other in the blob. */
+const jsonSentences = (text) => splitSentences(String(text ?? '').replace(/["{}[\],]/g, '。'));
+
+/** The node text one delta op carries, per op, so a violation can name it. */
+function deltaNodeEntries(turn) {
+  const out = [];
+  for (const key of DELTA_KEYS) {
+    for (const op of Array.isArray(turn[key]) ? turn[key] : []) {
+      if (!op || typeof op !== 'object' || !op.node) continue;
+      const walk = (node, path) => {
+        if (!node || typeof node !== 'object') return;
+        out.push({ key, id: node.id || path, node, text: `${node.title ?? ''}。${node.body ?? ''}` });
+        for (const c of Array.isArray(node.children) ? node.children : []) walk(c, c.id || path);
+      };
+      walk({ ...op.node, id: op.node.id || op.id }, op.id);
+    }
+  }
+  return out;
+}
+
+/** Every id in one incoming op subtree whose status claims `confirmed`. */
+function confirmedIdsIn(node, out = []) {
+  if (!node || typeof node !== 'object') return out;
+  if (node.status === 'confirmed') out.push(node.id || '(未命名节点)');
+  for (const c of Array.isArray(node.children) ? node.children : []) confirmedIdsIn(c, out);
+  return out;
+}
+
+/** Class and course facts state a constraint as an absence — 「班上没有鼓」,
+ * 「下雨就用不了户外场地」. This lifts the excluded THING out of that phrasing.
+ *
+ * Deliberately narrow, and it fails toward missing rather than inventing. The
+ * item must end its clause, and a capture that starts with a verb is a phrase
+ * rather than a thing (「孩子们没有见过龙舟」 must not turn 龙舟 into a banned
+ * material). A missed exclusion costs one wrong suggestion she corrects once; a
+ * false one refuses activities she could have run, which is the failure that
+ * makes teachers stop trusting the memory at all.
+ *
+ * UNKNOWN, and not guessed here: there is no negation or paraphrase model in
+ * this file, so 「园里的鼓坏了」 is not read as an exclusion. Widening belongs with
+ * the extractor that writes the facts, where a model can read meaning — ADR-0011
+ * §4 already puts canonicalization there. */
+const EXCLUSION_RE = /(?:没有|用不了|不能用|缺)([^\s，。；、,.;：:!！?？]{1,6})(?=$|[\s，。；、,.;：:!！?？])/g;
+/** Capture heads that mean the match is a verb phrase, not an item. */
+const VERB_HEAD_RE = /^[见去做听说看来带玩学上下开试想到吃买找过发问答教读写走跑]/;
+/** The activity NEEDS the item, as opposed to merely naming it. */
+const NEED_RE = /(用|使用|准备|带|拿|敲|打|发给|每人|每组|摆|布置|需要|借)/;
+/** The turn is talking ABOUT the constraint rather than walking into it —
+ * 「班上没有鼓，我们改用木棒敲」 respects the fact and must stay silent. */
+const CONSTRAINT_ACK_RE = /(没有|不用|改用|替代|代替|换成|用不了|不需要|无需|缺|避免|不必|如果有)/;
+
+/** Items a fact excludes. Empty for facts that state no absence. */
+function excludedItems(text) {
+  const out = [];
+  for (const m of String(text ?? '').matchAll(EXCLUSION_RE)) {
+    if (!VERB_HEAD_RE.test(m[1])) out.push(m[1]);
+  }
+  return out;
+}
+
+/**
+ * The turn's proposal surfaces, cut into short chunks.
+ *
+ * JSON punctuation counts as a chunk break: a need marker in an artifact's
+ * `materials` must not attach to an item named three fields away in `notes`,
+ * which is exactly how a whole-blob scan invents contradictions.
+ *
+ * KNOWN GAP, recorded rather than papered over: matching is substring, so a
+ * one-character item like 鼓 also matches inside 鼓点 — 「准备一段鼓点录音」 needs no
+ * drum but would fire. Fixing it by requiring a word boundary breaks the
+ * canonical case this rule exists for (ADR-0011's 敲鼓感受节奏), so the gap
+ * stands until facts carry a normalized item field.
+ */
+function proposalChunks(turn, blueprintNodeText) {
+  const parts = [turn.reply_markdown, ...blueprintNodeText];
+  for (const a of turn.artifacts) {
+    if (!a || a.type === 'blueprint') continue; // blueprint nodes already arrive via blueprintNodeText
+    parts.push(JSON.stringify(a.data ?? {}));
+  }
+  for (const key of DELTA_KEYS) {
+    for (const op of Array.isArray(turn[key]) ? turn[key] : []) {
+      if (op?.node) parts.push(`${op.node.title ?? ''}。${op.node.body ?? ''}`);
+    }
+  }
+  return jsonSentences(parts.join('\n'));
+}
 
 /**
  * L2: parse + structurally normalize the model's raw turn object.
@@ -52,6 +170,11 @@ export function parseTurn(raw) {
     // Node-granularity blueprint edits (optional; engine applies with the
     // same born-confirmed guard as artifact absorption).
     blueprint_delta: Array.isArray(obj.blueprint_delta) ? obj.blueprint_delta : [],
+    // Node-granularity plan-tree edits — the model's only write path into the
+    // plan tree (engine.applyPlanDelta). Carried through here because rule 6
+    // below reads `confirmed_by_quote` off these ops: a channel the parser
+    // dropped would be a channel the citation check could never see.
+    plan_delta: Array.isArray(obj.plan_delta) ? obj.plan_delta : [],
     // Dev-facing workflow trace — passed through unvalidated (developer mode UI).
     wf_trace: obj.wf_trace && typeof obj.wf_trace === 'object' ? obj.wf_trace : null,
   };
@@ -82,7 +205,12 @@ const QUESTIONS_WARN_ABOVE = 5;
  * warn (recorded + shown in dev drawer only — never retries, style checks live here).
  * @param {import('./types.mjs').Turn} turn
  * @param {Object} state current course_state
- * @param {{ stylePref?: string }} opts teacher profile bits that tune warn-level checks
+ * @param {{ stylePref?: string, teacherText?: string, facts?: Array<Object> }} opts
+ *   `stylePref` tunes warn-level style checks. `teacherText` is this turn's
+ *   teacher message, so a quoted confirmation can be checked against words she
+ *   actually said (rule 6); omitted, a present quote is trusted. `facts` are the
+ *   memory rows already in front of the model (memory-scopes shape) — rule 7 is
+ *   dormant without them.
  * @returns {import('./types.mjs').Violation[]}
  */
 /** Canonical shape for blueprint-module comparison (rule 3c): id/title/body/
@@ -101,14 +229,20 @@ export function validateTurn(turn, state, opts = {}) {
     ? turn.questions
     : (turn.question ? [turn.question] : []);
 
-  // 1. Closure loop: required and four-part when a round completes.
+  // 1. Closure loop — ADVISORY since ADR-0012 §2. ADR-0008 §3 turned 回传 into an
+  // invitation rather than a duty, so a round that ends without 「回来请告诉我
+  // 什么」 is a turn that did not invite, not a defect: blocking it would force
+  // the model to demand classroom feedback the teacher was never obliged to
+  // give. Still reported, because the closure loop is what turns a plan into a
+  // next step and the rate belongs in the session log where pilot data can
+  // settle whether it needs re-tightening.
   if (turn.round_complete) {
     if (!turn.closure_loop) {
-      violations.push({ kind: 'closure_missing', detail: 'round_complete 为 true 但缺少输出闭环', action: 'block' });
+      violations.push({ kind: 'closure_missing', detail: 'round_complete 为 true 但缺少输出闭环——回传是邀请不是义务（ADR-0008 §3），仅记录，不拦截', action: 'warn' });
     } else {
       const missing = CLOSURE_KEYS.filter((k) => !String(turn.closure_loop[k] || '').trim());
       if (missing.length) {
-        violations.push({ kind: 'closure_incomplete', detail: `输出闭环缺少要素：${missing.join('、')}`, action: 'block' });
+        violations.push({ kind: 'closure_incomplete', detail: `输出闭环缺少要素：${missing.join('、')}——仅记录，不拦截`, action: 'warn' });
       }
     }
   }
@@ -147,18 +281,44 @@ export function validateTurn(turn, state, opts = {}) {
     violations.push({ kind: 'style_mismatch', detail: '教师选了提问引导，但本轮没有提出任何问题——仅记录，不拦截', action: 'warn' });
   }
 
-  // 3. Evidence-first: child-claims require refs into EXISTING or NEWLY-PROVIDED evidence.
+  // 3. Evidence-first: child-claims require refs into EXISTING or NEWLY-PROVIDED
+  // evidence. Newly-provided counts only if the entry traces back to the
+  // teacher's own message (engine.evidenceIsGrounded) — otherwise one turn
+  // mints an entry, cites it, and licenses its own claim. Without
+  // `opts.teacherText` there is nothing to trace against and every id counts,
+  // the same dormancy the citation and memory rules keep.
+  const teacherSaid = typeof opts.teacherText === 'string' ? opts.teacherText : null;
   const known = evidenceIds(state);
-  for (const e of turn.state_delta?.children_evidence || []) if (e && e.id) known.add(e.id);
+  for (const e of turn.state_delta?.children_evidence || []) {
+    if (!e || !e.id) continue;
+    if (teacherSaid !== null && !evidenceIsGrounded(e, teacherSaid)) {
+      violations.push({
+        kind: 'fabrication',
+        detail: `本轮新增的证据 ${e.id} 在教师这条消息里找不到出处——证据要来自她说的话或她上传的东西，不能自己写一条再引用它`,
+        action: 'strip',
+      });
+      continue;
+    }
+    known.add(e.id);
+  }
   const badRefs = turn.evidence_refs.filter((id) => !known.has(id));
   if (badRefs.length) {
     violations.push({ kind: 'fabrication', detail: `evidence_refs 引用了不存在的证据条目：${badRefs.join('、')}`, action: 'block' });
   }
-  const claims = findClaimSentences(turn.reply_markdown);
+  // The scan covers the ARTIFACTS as well as the prose, because the artifact is
+  // what she keeps: a bland reply carrying a 课程故事 that asserts what children
+  // discovered is exactly the Stage-5 export CONTEXT.md defines as assembled
+  // from recorded evidence, never from invention. Blueprint/plan node text is
+  // excluded here and answered by the marking rule below instead — a 预设 may
+  // say anything about children as long as it is visibly a 预设.
+  const artifactClaims = turn.artifacts
+    .filter((a) => a && a.type !== 'blueprint')
+    .flatMap((a) => claimsIn(JSON.stringify(a.data ?? {})));
+  const claims = [...findClaimSentences(turn.reply_markdown), ...artifactClaims];
   if (claims.length && turn.evidence_refs.length === 0) {
     violations.push({
       kind: 'fabrication',
-      detail: `正文断言儿童已有的反应/理解但未引用任何证据（evidence_refs 为空）。断言句：「${claims[0].slice(0, 40)}…」`,
+      detail: `本轮断言儿童已有的反应/理解但未引用任何证据（evidence_refs 为空）。断言句：「${claims[0].slice(0, 40)}…」`,
       action: 'block',
     });
   }
@@ -176,26 +336,35 @@ export function validateTurn(turn, state, opts = {}) {
   // hiding in a node body would otherwise sail past non-negotiable #3. Collected
   // here during the walk we already do; consumed below.
   const blueprintNodeText = [];
+  // The marking walk runs over EVERY node this turn writes, not just the ones
+  // riding in an artifact: since ADR-0010 §6 the deltas are the primary write
+  // channel into both trees, so an artifact-only walk leaves the main road
+  // unwatched. Same rule, same wording, one helper.
+  const unmarked = [];
+  const markCheck = (node, label) => {
+    const text = `${node.title ?? ''}。${node.body ?? ''}`;
+    const tentative = node.status === 'hypothesis' || node.status === 'pending_validation';
+    if (!tentative && CHILD_CLAIM_RE.test(text) && !HEDGE_RE.test(text)) unmarked.push(label);
+    return text;
+  };
+  const deltaNodes = deltaNodeEntries(turn);
+  const deltaNodeText = deltaNodes.map((e) => markCheck(e.node, `${e.key} ${e.id}`));
   if (blueprints.length) {
-    const offenders = [];
     const walk = (node, path) => {
       if (!node || typeof node !== 'object') return;
-      const text = `${node.title ?? ''}。${node.body ?? ''}`;
-      blueprintNodeText.push(text);
-      const tentative = node.status === 'hypothesis' || node.status === 'pending_validation';
-      if (!tentative && CHILD_CLAIM_RE.test(text) && !HEDGE_RE.test(text)) {
-        offenders.push(path || node.id || '(未命名节点)');
-      }
+      blueprintNodeText.push(markCheck(node, path || node.id || '(未命名节点)'));
       for (const c of Array.isArray(node.children) ? node.children : []) walk(c, c.id || path);
     };
     for (const bp of blueprints) for (const m of (bp.data?.modules ?? [])) walk(m, m.id);
-    if (offenders.length) {
-      violations.push({
-        kind: 'unmarked_hypothesis',
-        detail: `蓝图节点把未发生的儿童反应写成事实且未标注（status 需为 hypothesis/pending_validation 或加「可能/预计」）：${offenders.slice(0, 3).join('、')}`,
-        action: 'block',
-      });
-    }
+  }
+  if (unmarked.length) {
+    violations.push({
+      kind: 'unmarked_hypothesis',
+      detail: `节点把未发生的儿童反应写成事实且未标注（status 需为 hypothesis/pending_validation 或加「可能/预计」）：${unmarked.slice(0, 3).join('、')}`,
+      action: 'block',
+    });
+  }
+  if (blueprints.length) {
     if (questions.length > 3) {
       violations.push({
         kind: 'planning_question_density',
@@ -237,6 +406,7 @@ export function validateTurn(turn, state, opts = {}) {
         return JSON.stringify(rest);
       }),
     ...blueprintNodeText, // blueprint nodes are child-facing script (ADR-0003)
+    ...deltaNodeText, // and so is a node written straight through a delta
     turn.closure_loop ? CLOSURE_KEYS.map((k) => turn.closure_loop[k]).join(' ') : '',
   ].join(' ');
   for (const slogan of ADULT_SLOGANS) {
@@ -252,22 +422,94 @@ export function validateTurn(turn, state, opts = {}) {
     const preview = { ...state };
     for (const [key, value] of Object.entries(turn.state_delta)) {
       if (key === 'stage') continue;
-      preview[key] = Array.isArray(value) && Array.isArray(preview[key]) ? [...preview[key], ...value] : value;
+      // Evidence the engine will refuse to count must not open the gate here
+      // either, or the harness reports legal what the apply step then strips.
+      const merged = key === 'children_evidence' && teacherSaid !== null
+        ? value.filter((e) => evidenceIsGrounded(e, teacherSaid))
+        : value;
+      preview[key] = Array.isArray(merged) && Array.isArray(preview[key]) ? [...preview[key], ...merged] : merged;
     }
     const err = stageGateError(preview, turn.state_delta.stage);
     if (err) violations.push({ kind: 'illegal_stage_jump', detail: err, action: 'strip' });
   }
 
+  // 6. Confirmation needs the teacher's own words FROM THIS TURN (ADR-0010 §6).
+  // The ✓确认 tick is gone, so the citation is the entire difference between
+  // 「she approved this」 and 「the model decided she did」 — a node reading
+  // `confirmed` is a claim about her, one rung below a claim about the children.
+  // 「好的，我先看看」 must fail the citation test rather than quietly become a
+  // record she never made. One quote confirms the ONE node its op addresses: it
+  // does not travel to nested nodes riding along in the same op (the rule
+  // engine.applyPlanDelta enforces on apply; this reports it before that).
+  for (const key of DELTA_KEYS) {
+    for (const op of Array.isArray(turn[key]) ? turn[key] : []) {
+      if (!op || typeof op !== 'object' || !op.node) continue;
+      const claimed = confirmedIdsIn({ ...op.node, id: op.node.id || op.id });
+      if (!claimed.length) continue;
+      const quote = typeof op.confirmed_by_quote === 'string' ? squashQuote(op.confirmed_by_quote) : '';
+      // With no teacher text to check against we trust a present quote — the
+      // same position the engine takes. A citation nobody can check is weak,
+      // but refusing every confirmation when the caller omitted the message
+      // would strip legitimate work for a reason that is our own plumbing.
+      // Every production caller supplies it now (serve.mjs, ui/local-turn.mjs),
+      // so in production this branch is dead and the check is the real one.
+      const verified = Boolean(quote) && (teacherSaid === null || quoted(teacherSaid, op.confirmed_by_quote));
+      const uncited = claimed.filter((id) => !(verified && id === op.id));
+      if (!uncited.length) continue;
+      const why = !quote
+        ? '没有带上教师本轮的原话（confirmed_by_quote 缺失）'
+        : (!verified
+          ? `confirmed_by_quote「${op.confirmed_by_quote}」不在教师本轮的话里`
+          : '一条原话只确认它指向的那一个节点，同一个 op 里的子节点不跟着升级');
+      violations.push({
+        kind: 'uncited_confirmation',
+        detail: `${key} 把 ${uncited.join('、')} 升为 confirmed，但${why}——确认要引用教师原话，不能代她确认`,
+        action: 'strip',
+      });
+    }
+  }
+
+  // 7. Memory contradiction (ADR-0011 §5). The assembler can put 「班上没有鼓」 in
+  // front of the model on every turn, but only a check here can tell whether the
+  // model then proposed 敲鼓感受节奏 anyway — the 「我早就跟你说过」 failure that
+  // scoped memory exists to prevent. Dormant unless the caller supplies facts:
+  // no facts, nothing to contradict, and a course with no memory yet is normal.
+  const facts = (Array.isArray(opts.facts) ? opts.facts : []).filter((f) => f && !f.archived && f.text);
+  if (facts.length) {
+    const chunks = proposalChunks(turn, blueprintNodeText);
+    for (const fact of facts) {
+      let hit = null;
+      for (const item of excludedItems(fact.text)) {
+        const chunk = chunks.find((c) => c.includes(item) && NEED_RE.test(c) && !CONSTRAINT_ACK_RE.test(c));
+        if (chunk) { hit = { item, chunk }; break; }
+      }
+      if (!hit) continue;
+      // The fact is named in full, because feedback reading 「和记忆冲突」 leaves
+      // the model guessing which of forty lines it broke.
+      const said = fact.quote ? `，她的原话是「${fact.quote}」` : '';
+      violations.push({
+        kind: 'memory_contradiction',
+        detail: `本轮的活动要用到「${hit.item}」，但${fact.scope ?? 'course'}记忆里记着「${fact.text}」${said}——换成班上真有的材料，或者先问她。冲突处：「${hit.chunk.slice(0, 40)}」`,
+        action: 'strip',
+      });
+    }
+  }
+
   return violations;
 }
 
-/** Sentences in reply prose that assert realized child reactions, minus hedged ones. */
+/** The assertions in a serialized artifact: same test as the prose scan, run on
+ * JSON-aware chunks. Text shape differs; a claim is the same claim either way. */
+function claimsIn(text) {
+  return jsonSentences(text).filter((s) => CHILD_CLAIM_RE.test(s) && !HEDGE_RE.test(s));
+}
+
+/** Sentences in reply prose that assert realized child reactions, minus hedged
+ * ones. Inline code is stripped first — the docs discuss forbidden phrasings by
+ * quoting them, and a quoted example is not an assertion. */
 export function findClaimSentences(markdown) {
-  const prose = markdown.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
-  return prose
-    .split(/(?<=[。！？!?\n])/)
-    .map((s) => s.trim())
-    .filter((s) => s && CHILD_CLAIM_RE.test(s) && !HEDGE_RE.test(s));
+  return splitSentences(String(markdown ?? '').replace(/`[^`]*`/g, ''))
+    .filter((s) => CHILD_CLAIM_RE.test(s) && !HEDGE_RE.test(s));
 }
 
 /** Count interrogative sentences aimed at the teacher in reply prose.

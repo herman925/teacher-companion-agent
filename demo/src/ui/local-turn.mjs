@@ -5,7 +5,7 @@
 
 import { mockTurn } from '../mock.mjs';
 import { parseTurn, validateTurn, safeTemplate } from '../harness.mjs';
-import { applyDelta, absorbBlueprint, applyBlueprintDelta, createInitialState, STAGE_NAMES } from '../engine.mjs';
+import { applyDelta, absorbBlueprint, applyBlueprintDelta, applyPlanDelta, createInitialState, STAGE_NAMES } from '../engine.mjs';
 
 /**
  * @param {Object} state current course_state
@@ -17,13 +17,23 @@ export function runLocalMockTurn(state, history, message, opts = {}) {
   const cur = state && state.course_id ? state : createInitialState(`course-${Date.now()}`);
   const payload = mockTurn(cur, history || [], message, opts);
   const parsed = parseTurn(payload);
-  const violations = parsed.turn ? validateTurn(parsed.turn, cur, { stylePref: opts.profile?.stylePref }) : parsed.violations;
+  // The teacher's message travels with the turn on this path too. 演示模式 runs
+  // the same guards as the server — a demo whose citation check is inert would
+  // be demonstrating something we do not ship.
+  const teacherText = String(message ?? '');
+  const violations = parsed.turn
+    ? validateTurn(parsed.turn, cur, { stylePref: opts.profile?.stylePref, teacherText })
+    : parsed.violations;
   const blocking = violations.filter((v) => v.action === 'block');
   const ok = Boolean(parsed.turn) && blocking.length === 0;
   const turn = ok ? parsed.turn : safeTemplate(cur);
-  const applied = applyDelta(cur, turn.state_delta, { roundComplete: turn.round_complete, teacherTurn: true });
+  const applied = applyDelta(cur, turn.state_delta, { roundComplete: turn.round_complete, teacherTurn: true, teacherText });
   applied.state = absorbBlueprint(applied.state, turn, { teacherTurn: true }).state;
-  applied.state = applyBlueprintDelta(applied.state, turn.blueprint_delta, { teacherTurn: true }).state;
+  const bpd = applyBlueprintDelta(applied.state, turn.blueprint_delta, { teacherText });
+  applied.state = bpd.state;
+  const pd = applyPlanDelta(applied.state, turn.plan_delta, { teacherText });
+  applied.state = pd.state;
+  applied.violations = [...applied.violations, ...bpd.violations, ...pd.violations];
   // Transparency parity with the server path: one "attempt" whose response is the
   // scripted mock payload (no network). The system prompt rides in prompt_debug.
   const api_debug = {
@@ -52,7 +62,7 @@ export function runLocalMockTurn(state, history, message, opts = {}) {
   return {
     turn,
     state: applied.state,
-    gate_report: { ok, violations: [...violations, ...applied.violations], attempt: 1, degraded: !ok },
+    gate_report: { ok, violations: [...violations, ...applied.violations], attempt: 1, degraded: !ok, citation_checked: true },
     provider: 'mock',
     providerLabel: '演示模式',
     usage: null,

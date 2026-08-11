@@ -1,8 +1,9 @@
 // plan-tsv.mjs — the 课程计划树 (course_plan) and its skeleton serialization.
 //
-// Two jobs, deliberately in one module (ADR-0006/0007, seam review 2026-07-29):
+// Three jobs, deliberately in one module (ADR-0006/0007, seam review 2026-07-29):
 //   1. the plan tree itself — normalize, number, walk, flatten
 //   2. the skeleton wire format sent to the model every turn
+//   3. change propagation — blast radius, staleness marking and clearing
 // Keeping them together means the rows and the tree can never disagree about
 // what a node is, and keeps engine.mjs from growing a second tree model.
 //
@@ -228,4 +229,223 @@ export function parseSkeletonTSV(text) {
     else roots.push(node);
   }
   return { version: 'v0.1', roots };
+}
+
+// ---------- change propagation (ADR-0007 §5, ADR-0011 §8) ----------
+//
+// MARK, DO NOT RECOMPUTE. A teacher who edits 周2 has just invalidated 周3, and
+// tiered context is precisely the architecture that will not notice. So the
+// engine stamps a flag and the teacher decides. Regenerating descendants would
+// silently overwrite work she confirmed against real children — the rejected
+// alternative in ADR-0007 §5, and a direct hit on non-negotiable #1.
+//
+// NOTHING HERE TOUCHES PROVENANCE. Staleness says "this MAY need revisiting";
+// it never says "this is less true". Only teacher confirmation or recorded
+// evidence moves `status`, unchanged since ADR-0003. `needs_review` is a
+// work_status for the same reason: merging the axes would let "she is mid-edit"
+// read as "not verified against children".
+
+/** The three deliberate acts that clear a 待复查 badge: 跟着改 (accept the
+ * 连动调整), 我自己改, 这样就行. Opening the node is not one of them —
+ * reading is not deciding (ADR-0011 §8). */
+export const CLEARING_ACTS = Object.freeze(['followed', 'edited', 'accepted']);
+
+/** Dates are compared as strings, so only this shape is comparable. A date we
+ * cannot read is not a date we can call past. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Accept a raw tree the same way toSkeletonTSV does. These helpers take the
+ * plan the engine already holds and change ONLY what they touch, so fields this
+ * module knows nothing about — a node's revision history (ADR-0007 §5) — survive
+ * a marking pass instead of being normalized away. The cost is the same as
+ * toSkeletonTSV's: a rooted tree whose nodes have no ids has nothing to
+ * propagate along, exactly as it has nothing to render. */
+const asPlan = (plan) => (plan?.roots ? plan : normalizePlan(plan));
+
+/**
+ * Rebuild a plan with `fn` applied to every node, returning fresh objects the
+ * whole way down. Every propagation helper goes through here, which is what
+ * makes "input untouched" a property of the module rather than a promise each
+ * function has to keep on its own. `fn` may return the node unchanged; the copy
+ * happens regardless.
+ */
+const remap = (plan, fn) => {
+  const rebuild = (node) => ({ ...(fn(node) ?? node), children: (node.children ?? []).map(rebuild) });
+  const p = asPlan(plan);
+  return { ...p, roots: (p.roots ?? []).map(rebuild) };
+};
+
+/** Drop the staleness stamp, leaving both status axes alone. */
+const withoutStale = (node) => {
+  const next = { ...node };
+  delete next.stale_since;
+  delete next.stale_reason;
+  return next;
+};
+
+/** Latest date anywhere in a node's subtree, or '' when that is unknowable.
+ * A 周计划 carries no date of its own — its activities do — so the subtree is
+ * the only honest answer to "has this been taught yet". One unreadable date
+ * makes the whole answer unknown rather than optimistic. */
+const subtreeEnd = (node) => {
+  const dates = [];
+  const collect = (n) => {
+    for (const d of n.dates ?? []) dates.push(d);
+    for (const c of n.children ?? []) collect(c);
+  };
+  collect(node);
+  if (!dates.length || dates.some((d) => !ISO_DATE.test(d))) return '';
+  return dates.reduce((a, b) => (b > a ? b : a));
+};
+
+/**
+ * Every node an edit to `nodeId` may have invalidated: its descendants, plus
+ * any node whose `blueprint_refs` point into that subtree.
+ *
+ * The edited node itself is never in the radius — she just edited it, she knows.
+ *
+ * Reference hits close transitively: a node that rests on changed ground is
+ * itself changed ground, so its own descendants follow. Stopping at the first
+ * reference boundary would leave a referrer's activities quietly claiming to
+ * still derive from something that moved.
+ *
+ * UNKNOWN, deliberately not guessed: `blueprint_refs` are matched by id against
+ * the changed subtree's node ids. Whether a ref names a blueprint node or a plan
+ * node is the caller's namespace decision and is not settled at this layer.
+ *
+ * @param {{version?: string, roots?: Array}} plan normalized or raw
+ * @param {string} nodeId the node that was edited
+ * @returns {string[]} affected node ids, in skeleton (document) order
+ */
+export function blastRadius(plan, nodeId) {
+  const p = asPlan(plan);
+  const nodes = [...walkPlan(p)].map(({ node }) => node);
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  if (!byId.has(nodeId)) return [];
+
+  const ground = new Set([nodeId]);   // what counts as changed
+  const radius = new Set();           // what that change reaches
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const id of [...ground]) {
+      for (const { node } of walkPlan({ roots: byId.get(id)?.children ?? [] })) {
+        if (ground.has(node.id)) continue;
+        ground.add(node.id);
+        radius.add(node.id);
+        grew = true;
+      }
+    }
+    for (const n of nodes) {
+      if (ground.has(n.id)) continue;
+      if (!(n.blueprint_refs ?? []).some((ref) => ground.has(ref))) continue;
+      ground.add(n.id);
+      radius.add(n.id);
+      grew = true;
+    }
+  }
+  return nodes.filter((n) => radius.has(n.id)).map((n) => n.id);
+}
+
+/**
+ * Stamp `stale_since` and `stale_reason` across the blast radius of an edit to
+ * `nodeId`. Provenance and work status are untouched — a `confirmed` node stays
+ * `confirmed` while it waits to be looked at again.
+ *
+ * The reason travels with the node on purpose (ADR-0007 §5): a node reopened two
+ * weeks later still carries why it is flagged, instead of pointing at a chat turn
+ * that fell out of the context window. A badge saying only 待复查 is a puzzle she
+ * has to solve before she can judge it.
+ *
+ * Re-marking an already-stale node overwrites the older stamp: one badge, one
+ * reason, and the newest upstream change is the one she has not seen yet.
+ *
+ * @param {{version?: string, roots?: Array}} plan normalized or raw
+ * @param {string} nodeId the node that was edited
+ * @param {{version?: string, reason?: string}} [opts] version defaults to the plan's own
+ * @returns {{version: string, roots: Array}} a new plan; the input is untouched
+ */
+export function markStale(plan, nodeId, opts = {}) {
+  const p = asPlan(plan);
+  const affected = new Set(blastRadius(p, nodeId));
+  const since = flatten(opts.version) || flatten(p.version) || 'v0.1';
+  const reason = flatten(opts.reason);
+  return remap(p, (node) => {
+    if (!affected.has(node.id)) return node;
+    const next = { ...node, stale_since: since };
+    if (reason) next.stale_reason = reason;
+    else delete next.stale_reason;   // a new cause with no recorded reason must not inherit the old one
+    return next;
+  });
+}
+
+/**
+ * Walk upward from `nodeId` and set `work_status: 'needs_review'` on its
+ * ancestors, so a 月计划 cannot keep claiming an outcome its weeks no longer
+ * produce. Never a provenance change.
+ *
+ * The caller decides that the edit contradicts a stated goal — that judgement is
+ * not available here. Given that judgement, every ancestor is marked rather than
+ * a guessed one: the chain is at most two nodes deep in this tree model, so
+ * over-marking upward is cheap, while an unmarked ancestor goes on asserting
+ * something the plan below it stopped supporting.
+ *
+ * @param {{version?: string, roots?: Array}} plan normalized or raw
+ * @param {string} nodeId the node that was edited
+ * @returns {{version: string, roots: Array}} a new plan; the input is untouched
+ */
+export function markNeedsReview(plan, nodeId) {
+  const p = asPlan(plan);
+  const chain = new Set(ancestorsOf(p, nodeId).map((n) => n.id));
+  return remap(p, (node) => (chain.has(node.id) ? { ...node, work_status: 'needs_review' } : node));
+}
+
+/**
+ * Clear the 待复查 badge on one node after a deliberate act: 'followed'
+ * (跟着改), 'edited' (我自己改) or 'accepted' (这样就行).
+ *
+ * Anything else — opening the node, reading it, an act name we do not know — is
+ * a no-op rather than a throw. Refusing to clear is the recoverable direction: a
+ * badge that stays can still be cleared, while a badge cleared by a distracted
+ * glance leaves the system believing she decided something she did not.
+ *
+ * Only the named node clears. Each stale node is judged on its own, because
+ * clearing a subtree from one node's decision is the same silent overwrite
+ * ADR-0007 §5 refused.
+ *
+ * @param {{version?: string, roots?: Array}} plan normalized or raw
+ * @param {string} nodeId the node she just decided about
+ * @param {string} how one of CLEARING_ACTS
+ * @returns {{version: string, roots: Array}} a new plan; the input is untouched
+ */
+export function clearStale(plan, nodeId, how) {
+  const p = asPlan(plan);
+  if (!CLEARING_ACTS.includes(how)) return remap(p, (node) => node);
+  return remap(p, (node) => ((node.id === nodeId && node.stale_since != null) ? withoutStale(node) : node));
+}
+
+/**
+ * Retire staleness on nodes whose dates have all passed. A warning about
+ * teaching that already happened is noise, and badges nobody reads are worse
+ * than no badges because we will believe we warned her (ADR-0011 §8).
+ *
+ * A node dated today is still teachable today, so it keeps its badge. A node
+ * with no readable date in its subtree never retires — we do not know it has
+ * passed, and inventing that is how a live warning disappears.
+ *
+ * `today` is a parameter because this module has no clock: a pure function that
+ * read the system date would make its own tests depend on when they ran.
+ *
+ * @param {{version?: string, roots?: Array}} plan normalized or raw
+ * @param {string} today YYYY-MM-DD; anything else retires nothing
+ * @returns {{version: string, roots: Array}} a new plan; the input is untouched
+ */
+export function retireStale(plan, today) {
+  const p = asPlan(plan);
+  if (!ISO_DATE.test(String(today ?? ''))) return remap(p, (node) => node);
+  return remap(p, (node) => {
+    if (node.stale_since == null) return node;
+    const end = subtreeEnd(node);
+    return (end && end < today) ? withoutStale(node) : node;
+  });
 }

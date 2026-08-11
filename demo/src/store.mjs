@@ -8,8 +8,14 @@
 //   createCourse(userId, title)                -> course brief   (enforces 30-course quota)
 //   getCourse(userId, courseId)                -> { id, title, course_state, state_version, ... } | null
 //   deleteCourse(userId, courseId)             -> boolean          (whole-course erasure)
-//   appendMessage(courseId, msg)               -> message row    (append-only)
-//   getMessages(courseId, { before, limit })   -> message rows   (chronological)
+//   appendMessage(courseId, msg)               -> message row    (append-only;
+//                                                 msg.subject tags it, default 'course')
+//   getMessages(courseId, { before, limit, subject })
+//                                              -> message rows   (chronological)
+// Subjects (ADR-0010 §1/§2): ONE ordered message log per course, every row
+// tagged 'course' or a node id. `subject` filters that one log — it never
+// partitions storage, because global ordering is what proves what was asked
+// when. The tag is engine-owned: it comes from the request, never the model.
 //   saveState(courseId, delta, newState, ver)  -> { state_version } (optimistic lock + checkpoints)
 //   adminListCourses()                         -> all courses (all users) + message/snapshot counts
 //   adminGetCourse(courseId)                   -> full raw record | null
@@ -19,6 +25,11 @@
 //   resetPassword/setDisplayName/saveUserProfile/updateUser · createSession/
 //   getSessionUser/listSessions/revokeSession/revokeByToken · audit/listAudit
 // Scope shell (ADR-0012 §3): logScope(row) · listScope({limit}) -> {rows,total,byRule}
+//   logScope stores { rule, enforced, refused, excerpt, userId }. THE EXCERPT IS
+//   CAPPED AT 60 CHARACTERS, and that cap is part of THIS interface, not of one
+//   implementation: this is an ops log, and a whole teacher message at rest in
+//   it is teacher content in the wrong place. Callers truncate too, so a future
+//   pg-store cannot inherit the guarantee by accident and lose it by accident.
 
 import { createJsonStore } from './store/json-store.mjs';
 

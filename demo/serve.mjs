@@ -21,12 +21,12 @@ import { PROVIDERS, callWithFailover, listModels, cacheInfoFromUsage } from './s
 import { mockTurn } from './src/mock.mjs';
 import { WF_NODES } from './src/wf-nodes.mjs';
 import { parseTurn, validateTurn, violationFeedback, safeTemplate } from './src/harness.mjs';
-import { applyDelta, absorbBlueprint, applyBlueprintDelta, confirmBlueprintNode, createInitialState, STAGE_NAMES } from './src/engine.mjs';
+import { applyDelta, absorbBlueprint, applyBlueprintDelta, applyPlanDelta, confirmBlueprintNode, createInitialState, STAGE_NAMES } from './src/engine.mjs';
 import { buildPromptParts, cacheStableHistory, stageModuleName, profileSectionText } from './src/prompt-builder.mjs';
 import { shouldSearch, buildQuery, runWebSearch, searchResultsToContext, supportsWebSearch } from './src/web-search.mjs';
 import { checkScope, refusalTurn } from './src/scope-guard.mjs';
 import { store } from './src/store.mjs';
-import { deriveCourseTitle, TITLE_MAX } from './src/store/json-store.mjs';
+import { deriveCourseTitle, normalizeSubject, TITLE_MAX } from './src/store/json-store.mjs';
 import { shouldRegenTitle, buildTitleMessages, sanitizeTitle, TITLE_INTERVALS, TITLE_INTERVAL_DEFAULT } from './src/title-agent.mjs';
 import { parseCookies, sessionCookie, clearSessionCookie, SESSION_COOKIE, displayNameError } from './src/auth-util.mjs';
 import { vaultReady, encryptKey, decryptKey } from './src/key-vault.mjs';
@@ -222,7 +222,16 @@ async function runTurn(req, emit) {
   // message just before the newest teacher message — so vendors' automatic
   // prefix caches survive across turns instead of being busted by the
   // snapshot changing inside messages[0].
-  const { system: systemPrompt, stateNote } = await buildPromptParts(state, loadPrompt, { profile: req.profile });
+  // `subject` is the engine-resolved turn subject (ADR-0010 §1) — 'course' or a
+  // plan node id. It selects the focus band, whose header is what labels a
+  // hypothesis body AS a hypothesis; without it a node body arrives as a flat
+  // statement. UNWIRED, and said out loud rather than faked: `facts` (the memory
+  // band) has no store yet — no field in course_state, nothing writing it — so
+  // the band is correctly absent rather than empty. See HANDOFF.md.
+  const { system: systemPrompt, stateNote } = await buildPromptParts(state, loadPrompt, {
+    profile: req.profile,
+    subject: req.subject,
+  });
   const keptHistory = cacheStableHistory(req.history || []);
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -242,6 +251,19 @@ async function runTurn(req, emit) {
   if (scope.wouldRefuse) {
     console.warn(`[scope] ${scope.enforced ? 'refused' : 'would refuse'} (${scope.rule}): ${String(req.message).slice(0, 60)}`);
     emit('scope', { rule: scope.rule, enforced: scope.enforced, refused: scope.refuse });
+    // Persisted HERE, not at one endpoint: every logged-in teacher goes through
+    // /api/courses/:id/chat, so a log written only on the anonymous /api/chat
+    // branch reads the wrong population — and the 范围护栏 tab is what the
+    // SCOPE_ENFORCE=1 decision is made from (HANDOFF.md).
+    await store.logScope({
+      rule: scope.rule,
+      enforced: scope.enforced,
+      refused: scope.refuse,
+      // Truncated at the caller too: the 60-char cap is an interface promise
+      // (store.mjs), not an implementation detail of the JSON store.
+      excerpt: String(req.message ?? '').slice(0, 60),
+      userId: req.userId ?? null,
+    }).catch(() => {});
   }
   if (scope.refuse) {
     const refusal = refusalTurn(state);
@@ -249,7 +271,8 @@ async function runTurn(req, emit) {
       turn: refusal,
       state,
       wf_nodes: WF_NODES,
-      gate_report: { ok: true, violations: [], attempt: 0, degraded: false },
+      // A refused turn never reached a model, so there was no citation to check.
+      gate_report: { ok: true, violations: [], attempt: 0, degraded: false, citation_checked: false },
       provider: 'scope-guard',
       providerLabel: '范围护栏',
       usage: null,
@@ -291,6 +314,8 @@ async function runTurn(req, emit) {
     };
     emit('web_search', webSearch);
   }
+
+  const teacherText = String(req.message ?? '');
 
   let attempt = 1;
   let degraded = false;
@@ -338,7 +363,13 @@ async function runTurn(req, emit) {
     if (result.errors?.length) chainErrors = result.errors;
 
     const parsed = parseTurn(result.payload);
-    const violations = parsed.turn ? validateTurn(parsed.turn, state, { stylePref: req.profile?.stylePref }) : parsed.violations;
+    // `teacherText` is what makes the citation rule real: without it a present
+    // `confirmed_by_quote` is trusted, and the model can mint the teacher's own
+    // words. Coerced rather than passed through, so an absent message reads as
+    // an empty one (nothing can be quoted from it) instead of as "unchecked".
+    const violations = parsed.turn
+      ? validateTurn(parsed.turn, state, { stylePref: req.profile?.stylePref, teacherText })
+      : parsed.violations;
     const blocking = violations.filter((v) => v.action === 'block');
     allViolations.push(...violations.map((v) => ({ ...v, attempt })));
 
@@ -384,14 +415,29 @@ async function runTurn(req, emit) {
   const applied = applyDelta(state, turn.state_delta, {
     roundComplete: turn.round_complete,
     teacherTurn: true,
+    // Evidence must trace back to what she just wrote; a row the model minted
+    // is kept but marked, and stops counting toward the stage gates.
+    teacherText,
   });
   allViolations.push(...applied.violations.map((v) => ({ ...v, attempt: 'apply' })));
   // Blueprint artifacts merge into the living mother plan (module-granularity
   // delta; engine owns versioning + escalation rules — ADR-0003 Phase 3).
+  // KNOWN GAP, recorded rather than papered over: this whole-artifact channel
+  // still escalates an existing module on any teacher turn (`teacherTurn`),
+  // where the two delta appliers below now require her quoted words. Closing it
+  // means teaching the scripted walkthrough (demo/src/mock.mjs) to emit
+  // `confirmed_by_quote`, which is a change to a file this pass does not own.
   applied.state = absorbBlueprint(applied.state, turn, { teacherTurn: true }).state;
-  const bpd = applyBlueprintDelta(applied.state, turn.blueprint_delta, { teacherTurn: true });
+  const bpd = applyBlueprintDelta(applied.state, turn.blueprint_delta, { teacherText });
   applied.state = bpd.state;
   allViolations.push(...bpd.violations.map((v) => ({ ...v, attempt: 'apply' })));
+  // The plan tree's write path. It used to be emitted, parsed, counted by the
+  // harness — and then dropped on the floor here, which meant the born-confirmed
+  // and uncited-confirmation guards inside applyPlanDelta never ran in
+  // production, and no log line said the ops had been discarded.
+  const pd = applyPlanDelta(applied.state, turn.plan_delta, { teacherText });
+  applied.state = pd.state;
+  allViolations.push(...pd.violations.map((v) => ({ ...v, attempt: 'apply' })));
 
   // Dev-mode wf_trace: if the model didn't emit its own trace, synthesize one
   // from the nodes it declared this turn (state_delta.completed_nodes). Makes the
@@ -432,7 +478,11 @@ async function runTurn(req, emit) {
         attempts: apiAttempts,
       },
     } : {}),
-    gate_report: { ok: !degraded, violations: allViolations, attempt, degraded },
+    // `citation_checked` says whether the confirmations in this turn were
+    // checked against the teacher's actual words or merely trusted. Without it
+    // a `gate_report` reading ok is identical either way, and nobody
+    // downstream — session log, admin export — can tell them apart.
+    gate_report: { ok: !degraded, violations: allViolations, attempt, degraded, citation_checked: true },
     provider,
     providerLabel: provider === 'mock' ? '演示模式' : `${registry[provider]?.label ?? provider} · ${registry[provider]?.model ?? ''}`,
     usage,
@@ -459,7 +509,17 @@ async function runCourseTurn(userId, courseId, body, emit) {
   const course = await store.getCourse(userId, courseId);
   if (!course) { emit('error', { kind: 'not_found', message: '课程不存在' }); return; }
 
+  // What this turn is about (ADR-0010 §1): 'course', or the node the teacher
+  // opened. Taken from the request — the UI selection — and resolved BEFORE the
+  // model runs, so nothing the model returns can reach it (§2: a model that
+  // chooses its own subject chooses its own blast radius).
+  const subject = normalizeSubject(body.subject);
+
   // Store roles are teacher/agent/system; the model pipeline speaks user/assistant.
+  // The recent band stays the course's last 10 messages regardless of subject:
+  // retention and context are separate decisions (ADR-0010 §1a), and what a node
+  // turn should be seeded with — ancestor plans plus that node's recorded
+  // revision reasons (ADR-0007) — is a context-builder change, not this one.
   const recent = await store.getMessages(courseId, { limit: 10 });
   const history = recent.map((m) => ({
     role: m.role === 'agent' ? 'assistant' : 'user',
@@ -468,14 +528,22 @@ async function runCourseTurn(userId, courseId, body, emit) {
 
   let captured = null;
   const wrap = (event, data) => { if (event === 'turn') captured = data; emit(event, data); };
-  await runTurn({ ...body, state: course.course_state, history, message: body.message }, wrap);
+  // `subject` and `userId` ride the same request object the pipeline already
+  // takes: the subject selects the focus band, the user id puts this teacher's
+  // scope verdicts in the 范围护栏 log next to the anonymous ones.
+  await runTurn({ ...body, subject, userId, state: course.course_state, history, message: body.message }, wrap);
 
   // Persist only a real, accepted turn. append-only messages + gated state save.
   if (captured && captured.turn) {
-    await store.appendMessage(courseId, { role: 'teacher', content: body.message });
+    // Both rows carry the SAME request-owned subject. The reply is tagged with
+    // it even if captured.turn carries a subject of its own — that stays inside
+    // turn_contract as a faithful record of what the model said, and is read by
+    // nobody.
+    await store.appendMessage(courseId, { role: 'teacher', content: body.message, subject });
     await store.appendMessage(courseId, {
       role: 'agent',
       content: captured.turn.reply_markdown ?? '',
+      subject,
       turn_contract: captured.turn, // full turn for faithful history re-render
       provider: captured.provider ?? null,
       provider_label: captured.providerLabel ?? null,
@@ -782,13 +850,18 @@ const server = http.createServer(async (req, res) => {
           return json(e.status ?? 500, { ok: false, message: e.message });
         }
       }
-      // GET /api/courses/:id/messages?before=&limit= — paged history
+      // GET /api/courses/:id/messages?before=&limit=&subject= — paged history.
+      // No subject = the whole course log, so every existing caller is unchanged;
+      // subject=<node id> is the node view (ADR-0010 §1), a filter over that one
+      // log with the global ids intact.
       if (seg.length === 2 && seg[1] === 'messages' && req.method === 'GET') {
         const before = url.searchParams.get('before');
         const limit = url.searchParams.get('limit');
+        const subject = url.searchParams.get('subject');
         const messages = await store.getMessages(courseId, {
           before: before != null ? Number(before) : undefined,
           limit: limit != null ? Number(limit) : undefined,
+          subject: subject || undefined,
         });
         return json(200, { ok: true, messages });
       }
@@ -872,17 +945,14 @@ const server = http.createServer(async (req, res) => {
     // one, account keys ride along and the per-user quota applies.
     const chatMe = await sessionUser(req);
     if (chatMe) chatBody.keys = { ...(chatBody.keys || {}), ...(await accountKeys(chatMe.id)) };
+    chatBody.userId = chatMe?.id ?? null; // so runTurn's scope row names her
     // Scope shell (ADR-0012 §3) is evaluated BEFORE the quota so a refused turn
     // costs the teacher nothing: it never reached a model, so it is not a model
     // turn. In warn-only mode nothing is refused, so quota behaves exactly as
-    // before. Persisted either way — a warn-only log nobody can read is useless.
+    // before. The verdict is PERSISTED inside runTurn — one writer for both
+    // endpoints, because a log fed by one of them describes the wrong
+    // population.
     const chatScope = checkScope(chatBody.message, chatBody.state, { enforce: SCOPE_ENFORCE });
-    if (chatScope.wouldRefuse) {
-      await store.logScope({
-        rule: chatScope.rule, enforced: chatScope.enforced, refused: chatScope.refuse,
-        excerpt: String(chatBody.message ?? ''), userId: chatMe?.id ?? null,
-      }).catch(() => {});
-    }
     if (chatBody.provider && chatBody.provider !== 'mock' && !chatScope.refuse) {
       const refusal = await turnQuota(chatMe?.id ?? null, clientIp(req));
       if (refusal) {

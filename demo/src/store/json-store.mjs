@@ -31,6 +31,26 @@ export const TITLE_MAX = 16; // a rail row, not a sentence (DESIGN.md §4)
 export const SCOPE_LOG_MAX = 2000;
 const DEFAULT_TITLE = '新课程';
 
+// Message subjects (ADR-0010 §1). One log per course; the subject is a tag,
+// never a container — see normalizeSubject below for why the default matters.
+export const COURSE_SUBJECT = 'course';
+const SUBJECT_MAX = 120; // a node id, not prose; same cap as a workbench row id
+
+/**
+ * Normalize a message subject: the string 'course', or a node id.
+ * Anything absent, blank or not a string becomes 'course', and that default is
+ * the whole reason the tag is additive — every message written before subjects
+ * existed reads back as course-level, so there is no migration (ADR-0010 §1).
+ * The value stays opaque: the store does not know the node-id grammar and must
+ * not invent one.
+ * @param {unknown} subject
+ * @returns {string}
+ */
+export function normalizeSubject(subject) {
+  if (typeof subject !== 'string') return COURSE_SUBJECT;
+  return subject.replace(/\s+/g, ' ').trim().slice(0, SUBJECT_MAX) || COURSE_SUBJECT;
+}
+
 /**
  * Short course-name-like title from state (pure; DATABASE.md §4 auto-titling).
  * Prefers the theme the model extracted (醒狮, 龙舟…); falls back to the first
@@ -43,6 +63,42 @@ export function deriveCourseTitle(state, fallbackText) {
   const fb = String(fallbackText ?? '').replace(/\s+/g, ' ').trim();
   if (fb) return fb.slice(0, TITLE_MAX);
   return null;
+}
+
+/**
+ * Count plan-tree nodes, optionally only those matching a predicate. Iterative
+ * so a hand-edited course file with a deep tree cannot blow the stack inside an
+ * admin read — the console must never be the thing that goes down.
+ * @param {{roots?: Array<Object>}|null|undefined} plan `course_state.course_plan`
+ * @param {(node: Object) => boolean} [match] counted when it returns true
+ * @returns {number}
+ */
+export function countPlanNodes(plan, match) {
+  const stack = Array.isArray(plan?.roots) ? [...plan.roots] : [];
+  let n = 0;
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || typeof node !== 'object') continue;
+    if (!match || match(node)) n += 1;
+    for (const c of Array.isArray(node.children) ? node.children : []) stack.push(c);
+  }
+  return n;
+}
+
+/**
+ * Tally rows by a key function. `{}` for an empty log rather than null, so a
+ * console column can render 「no messages yet」 apart from 「field missing」.
+ * @param {Array<Object>|null|undefined} rows
+ * @param {(row: Object) => string} keyOf
+ * @returns {Record<string, number>}
+ */
+export function tallyBy(rows, keyOf) {
+  const out = {};
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const k = keyOf(row);
+    out[k] = (out[k] ?? 0) + 1;
+  }
+  return out;
 }
 
 /** @param {{ baseDir?: string }} [opts] baseDir override is for tests. */
@@ -225,7 +281,7 @@ export function createJsonStore(opts = {}) {
       });
     },
 
-    /** Append one message (append-only). */
+    /** Append one message (append-only). `msg.subject` tags it (ADR-0010 §1). */
     async appendMessage(courseId, msg) {
       return withLock(async () => {
         const c = await readCourse(courseId);
@@ -233,6 +289,10 @@ export function createJsonStore(opts = {}) {
         const row = {
           id: c.next_message_id,
           role: msg.role, content: msg.content ?? '',
+          // Read from the caller's own field and nowhere else: the subject is
+          // engine-owned (ADR-0010 §2), so a `subject` the model happened to
+          // put in its turn_contract rides along as record and is never used.
+          subject: normalizeSubject(msg.subject),
           turn_contract: msg.turn_contract ?? null,
           provider: msg.provider ?? null, provider_label: msg.provider_label ?? null,
           usage: msg.usage ?? null, stage_name: msg.stage_name ?? null,
@@ -249,11 +309,19 @@ export function createJsonStore(opts = {}) {
       });
     },
 
-    async getMessages(courseId, { before, limit } = {}) {
+    async getMessages(courseId, { before, limit, subject } = {}) {
       return withLock(async () => {
         const c = await readCourse(courseId);
         if (!c) return [];
         let rows = c.messages.slice().sort((a, b) => a.id - b.id);
+        // The subject filter is a view over the one ordered log, never a
+        // partition: ids stay global, so 「she asked about 3.2.1 BEFORE she
+        // edited 周2」 is still provable from a filtered read (ADR-0010 §1).
+        // Rows stored before subjects existed carry none and read as 'course'.
+        if (subject != null) {
+          const want = normalizeSubject(subject);
+          rows = rows.filter((r) => normalizeSubject(r.subject) === want);
+        }
         if (before != null) rows = rows.filter((r) => r.id < before);
         if (limit != null) rows = rows.slice(-limit);
         return rows;
@@ -593,6 +661,17 @@ export function createJsonStore(opts = {}) {
           // living-plan visibility (ADR-0003): version + how much is still unconfirmed
           blueprint_version: c.course_state?.course_plan_blueprint?.version ?? null,
           blueprint_modules: c.course_state?.course_plan_blueprint?.modules?.length ?? 0,
+          // Same treatment for the plan tree, because the list tab is where an
+          // analyst scans and the detail JSON is opened one course at a time:
+          // 「which courses have a plan at all」 and 「how much of it is flagged
+          // 待复查」 are exactly the questions the staleness stamp exists to
+          // answer, and they were invisible at scanning level.
+          plan_version: c.course_state?.course_plan?.version ?? null,
+          plan_nodes: countPlanNodes(c.course_state?.course_plan),
+          plan_stale_nodes: countPlanNodes(c.course_state?.course_plan, (n) => Boolean(n.stale_since)),
+          // Per-subject message tally (ADR-0010 §1): one ordered log, tagged
+          // rows — so node-level activity is visible without reading the file.
+          messages_by_subject: tallyBy(c.messages, (m) => m.subject || 'course'),
         }));
         out.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
         return out;

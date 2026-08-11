@@ -3,6 +3,9 @@
 // loader) and in the browser (fetch loader, 开发者模式 prompt visibility).
 // The prompt files in demo/src/prompts/ are read as-is and never modified.
 
+import { toSkeletonTSV, ancestorsOf, walkPlan } from './plan-tsv.mjs';
+import { factsToTSV } from './memory-scopes.mjs';
+
 /** Stage → prompt module name (stage 4 reuses the stage3 module by design). */
 export const STAGE_MODULE = { 0: 'stage0', 1: 'stage1', 2: 'stage2', 3: 'stage3', 4: 'stage3', 5: 'stage5' };
 
@@ -60,16 +63,21 @@ export function profileSectionText(profile) {
   return `教师档案（只读参考）：${parts.join('；')}。据此调整举例与语气，不要向教师复述档案内容。`;
 }
 
+/** Section separator, shared by the system prompt and the per-turn note. */
+const SECTION_SEP = '\n\n---\n\n';
+
 /**
  * Assemble the full system prompt: base + contract + stage module + live
  * state snapshot (+ optional 教师档案 section). Byte-identical to the legacy
  * serve.mjs assembly when opts.profile is empty.
  * Kept for the debug drawer's mock reconstruction and prompt visibility;
  * real vendor requests use buildPromptParts so the volatile state snapshot
- * stops busting the vendors' automatic prefix caches.
+ * stops busting the vendors' automatic prefix caches. It takes the same opts
+ * so the drawer shows the bands that were actually sent — a prompt-visibility
+ * surface that shows less than the request did is worse than none.
  * @param {Object} state current course_state
  * @param {(name: string) => string|Promise<string>} loadPrompt injected loader
- * @param {{profile?: Object}} [opts]
+ * @param {{profile?: Object, subject?: string, facts?: Array<Object>}} [opts]
  * @returns {Promise<string>}
  */
 export async function buildSystemPrompt(state, loadPrompt, opts = {}) {
@@ -80,20 +88,210 @@ export async function buildSystemPrompt(state, loadPrompt, opts = {}) {
     base,
     contract,
     stageDoc,
-    stateNoteText(state),
+    stateNoteText(state, opts),
   ];
   const profileText = profileSectionText(opts.profile);
   if (profileText) sections.push(profileText);
-  return sections.join('\n\n---\n\n');
+  return sections.join(SECTION_SEP);
 }
 
-/** The volatile per-turn section: live state snapshot + pacing note. */
-export function stateNoteText(state) {
-  const snapshot = JSON.stringify(state, null, 1);
+// ---------------- context bands (ADR-0007 §1, §4) ----------------
+//
+// A turn used to ship the whole world: `JSON.stringify(state, null, 1)`, every
+// key on its own line, every node body inlined, no matter what the turn was
+// about. The bands replace that with what this turn needs — and the tiering,
+// not the format, is the larger half of the saving (ADR-0007 §4): TSV removes
+// braces and quotes, addressing bodies instead of inlining them removes whole
+// paragraphs of Chinese prose that tokenize the same in any format.
+//
+// THE MODEL NEVER PICKS ITS OWN BAND. The engine computes them from the turn
+// subject. A node turn that needs something outside its bands asks for it in
+// the reply; there is no silent full-state fallback, because a silent fallback
+// makes the whole measurement meaningless.
+
+/** Collapse to a single display line. Titles and summaries are display
+ * strings; bodies are NOT run through this — see `ancestorSummary`. */
+const line = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
+
+/** What the snapshot says where the plan tree used to be. Shipping the tree as
+ * pretty JSON *and* as a skeleton table would cost more than today, not less. */
+const PLAN_IN_SKELETON = '见下方「课程计划骨架」表；节点正文经焦点带送达，不在快照里';
+
+/** Newest revision reasons kept in the focus band. A node reopened weekly for a
+ * term would otherwise grow its own band without bound. */
+const REVISIONS_SHOWN = 8;
+
+/**
+ * The skeleton band: one row per plan node, titles and statuses only.
+ * Always present once a plan exists — the model can address any part of the
+ * month from it, and asks for the bodies it actually needs.
+ * @param {{version?: string, roots?: Array}|null|undefined} plan `state.course_plan`
+ * @returns {string} '' when there is no plan to render
+ */
+export function skeletonBandText(plan) {
+  if (!plan || !Array.isArray(plan.roots) || !plan.roots.length) return '';
+  return `# 课程计划骨架（只读；本表只有标题与状态，需要哪个节点的正文就在回复里说）\n\n${FENCE}tsv\n${toSkeletonTSV(plan)}\n${FENCE}`;
+}
+
+/**
+ * The memory band: class facts then course facts, EVERY TURN, whole.
+ *
+ * NOT RETRIEVED BY RELEVANCE, and that is the entire design. 「我们班没有鼓」
+ * constrains every activity in every week; one retrieval miss two days later
+ * offers her 敲鼓感受节奏 and reproduces 「我早就跟你说过」 — the exact failure the
+ * class scope was created to prevent. A band that is always whole cannot miss.
+ * Growth is bounded upstream by curation (`capFacts`, which says so out loud),
+ * never by quietly dropping rows here.
+ *
+ * Class first, because it is the wider claim and the one whose loss she
+ * notices; if anything ever gets cut at a tail, it must not be that.
+ *
+ * `null`/`undefined` means memory is not wired on this path and the band is
+ * omitted. An EMPTY ARRAY still renders both headers — that is how a new class
+ * legitimately having no facts stays distinguishable from a refactor that
+ * silently stopped appending memory (ADR-0011 §5).
+ *
+ * @param {Array<Object>|null|undefined} facts live and archived facts; archived
+ *   ones are excluded by `factsToTSV`
+ * @returns {string} '' only when facts were not supplied at all
+ */
+export function memoryBandText(facts) {
+  if (facts == null) return '';
+  const blocks = [factsToTSV(facts, 'class'), factsToTSV(facts, 'course')];
+  return `# 记忆（班级与课程；每轮完整给出，不做筛选）\n\n${FENCE}tsv\n${blocks.join('\n\n')}\n${FENCE}`;
+}
+
+/**
+ * Find one node in a RAW (un-normalized) plan tree.
+ *
+ * Raw on purpose: `normalizePlan` rebuilds every node from a fixed field list,
+ * so a node's summary and its revision history — the two things this band
+ * exists to carry — would be normalized away before we could read them.
+ * @returns {Object|null}
+ */
+function findPlanNode(plan, id) {
+  if (!plan || !id) return null;
+  for (const { node } of walkPlan(plan)) if (node?.id === id) return node;
+  return null;
+}
+
+/**
+ * An ancestor's contribution to the focus band: its summary, or its title alone.
+ *
+ * WE DO NOT CLIP A BODY INTO A SUMMARY. A body ending 「（预设，待现场验证）」 loses
+ * exactly that qualifier at the clip, and a hypothesis that arrives in context
+ * as a flat statement is non-negotiable #1 violated by formatting. A missing
+ * summary says so instead.
+ */
+function ancestorSummary(node) {
+  return line(node.summary) || '（尚无摘要）';
+}
+
+/**
+ * The recorded reasons a node looks the way it does.
+ *
+ * FIELD NAME UNKNOWN at the plan layer: nothing writes it yet. ADR-0007 §5
+ * fixes the ENTRY shape (`{version, at, by, reason, subject_node}`) but not the
+ * property, and engine.mjs's `revision_log` belongs to the blueprint, not to a
+ * plan node. Both names are read so whichever the engine settles on lands here.
+ * Entries carrying no reason are dropped — an empty bullet teaches nothing and
+ * still costs tokens.
+ */
+function revisionReasons(node) {
+  const raw = Array.isArray(node.revisions) ? node.revisions
+    : (Array.isArray(node.revision_log) ? node.revision_log : []);
+  return raw
+    .filter((r) => r && typeof r === 'object' && line(r.reason))
+    .map((r) => ({ version: line(r.version ?? r.v), at: line(r.at), by: line(r.by), reason: line(r.reason) }));
+}
+
+/**
+ * The focus band: the subject node's own body, its ancestors' summaries, and
+ * its recorded revision reasons.
+ *
+ * NOT THE CONVERSATION THAT PRODUCED THEM (ADR-0007 §5). The artifact is the
+ * memory: a node reopened two weeks later carries why it looks like this on
+ * itself, instead of pointing at a chat turn that fell out of the window.
+ *
+ * Both status axes ride the header line. The band hands the model a body that
+ * may describe children who have not met yet, so it must arrive labelled: a
+ * `hypothesis` body read as a `confirmed` one is the failure this repository is
+ * built around.
+ *
+ * @param {{version?: string, roots?: Array}|null|undefined} plan `state.course_plan`
+ * @param {string|null|undefined} subject the turn's subject — a node id, or
+ *   `'course'` for a course-level turn, which has no focus node
+ * @returns {string} '' when the subject names no node in this plan
+ */
+export function focusBandText(plan, subject) {
+  const node = findPlanNode(plan, typeof subject === 'string' ? subject.trim() : '');
+  if (!node) return '';
+
+  // Defaults mirror normalizePlan's, so the focus header and the skeleton row
+  // for the same node can never disagree — and both default to the weaker claim.
+  const status = line(node.status) || 'ai_suggestion';
+  const work = line(node.work_status) || 'draft';
+  const stale = node.stale_since ? `；待复查（自 ${line(node.stale_since)}${node.stale_reason ? `，因 ${line(node.stale_reason)}` : ''}）` : '';
+  const out = [`# 焦点节点 ${node.id}「${line(node.title) || '未命名'}」（来源状态：${status}；工作状态：${work}${stale}）`];
+
+  const chain = ancestorsOf(plan, node.id);
+  if (chain.length) {
+    out.push('', '## 上级脉络（只给摘要，不给正文）');
+    for (const a of chain) out.push(`- ${a.id}「${line(a.title) || '未命名'}」：${ancestorSummary(a)}`);
+  }
+
+  out.push('', '## 本节点正文', String(node.body ?? '').trim() || '（尚无正文）');
+
+  const revs = revisionReasons(node);
+  if (revs.length) {
+    const shown = revs.slice(-REVISIONS_SHOWN);
+    const hidden = revs.length - shown.length;
+    out.push('', '## 已记录的修订原因（旧到新）');
+    // Say what was left out. Silent truncation is barred (AGENTS.md), and here
+    // the omission is exactly the kind she would have wanted to see.
+    if (hidden > 0) out.push(`（更早的 ${hidden} 条未列出，完整记录在节点上）`);
+    for (const r of shown) {
+      const stamp = [r.version && `v${r.version}`, r.at, r.by].filter(Boolean).join(' · ');
+      out.push(`- ${stamp ? `${stamp}：` : ''}${r.reason}`);
+    }
+  }
+
+  return out.join('\n');
+}
+
+/**
+ * The volatile per-turn note: live state snapshot + pacing, then the skeleton,
+ * memory and focus bands.
+ *
+ * BAND ORDER IS DELIBERATE. Focus sits last, nearest the teacher's newest
+ * message, for the same recency reason this whole note is a trailing system
+ * message rather than part of the prefix.
+ *
+ * DEGRADES TO THE BYTE. No `course_plan`, no `facts`, no `subject` → the output
+ * is exactly what it was before the bands existed. That is not politeness to
+ * old fixtures: every caller that has not been taught about bands yet keeps
+ * getting a whole, correct prompt rather than a quietly emptied one.
+ *
+ * @param {Object} state current course_state
+ * @param {{subject?: string, facts?: Array<Object>}} [opts]
+ * @returns {string}
+ */
+export function stateNoteText(state, opts = {}) {
+  const skeleton = skeletonBandText(state?.course_plan);
+  // The tree is in the skeleton now; leaving it in the snapshot too would ship
+  // it twice. The key stays, pointing at where it went, so nothing reads as
+  // "this course has no plan".
+  const snapshot = JSON.stringify(skeleton ? { ...state, course_plan: PLAN_IN_SKELETON } : state, null, 1);
   const pacing = state.awaiting_feedback
     ? '当前 awaiting_feedback 为 true：上一轮已收尾，教师尚未回传现场反馈。若这条消息就是回传，先提取证据；若只是追问或要素材，就地支持，不虚构课堂进展。'
     : '';
-  return `# 当前 course_state（只读快照）\n\n${FENCE}json\n${snapshot}\n${FENCE}\n\n${pacing}`;
+  const sections = [`# 当前 course_state（只读快照）\n\n${FENCE}json\n${snapshot}\n${FENCE}\n\n${pacing}`];
+  if (skeleton) sections.push(skeleton);
+  const memory = memoryBandText(opts.facts);
+  if (memory) sections.push(memory);
+  const focus = focusBandText(state?.course_plan, opts.subject);
+  if (focus) sections.push(focus);
+  return sections.join(SECTION_SEP);
 }
 
 /**
@@ -110,6 +308,16 @@ export function stateNoteText(state) {
  *     just before the newest teacher message, where it can change freely
  *     without touching the prefix (and where recency helps adherence).
  * Same sections, same wording — only the placement differs.
+ *
+ * The split is also what makes the bands affordable (ADR-0007 §1): `system` is
+ * the Rules band and must stay byte-stable, so the skeleton, memory and focus
+ * bands all ride the note, where changing every turn costs nothing.
+ *
+ * @param {Object} state current course_state
+ * @param {(name: string) => string|Promise<string>} loadPrompt injected loader
+ * @param {{profile?: Object, subject?: string, facts?: Array<Object>}} [opts]
+ *   `subject` is the engine-owned turn subject — a plan node id, or `'course'`;
+ *   the model never chooses it. `facts` are the course/class memory facts.
  * @returns {Promise<{system: string, stateNote: string}>}
  */
 export async function buildPromptParts(state, loadPrompt, opts = {}) {
@@ -119,7 +327,7 @@ export async function buildPromptParts(state, loadPrompt, opts = {}) {
   const sections = [base, contract, stageDoc];
   const profileText = profileSectionText(opts.profile);
   if (profileText) sections.push(profileText);
-  return { system: sections.join('\n\n---\n\n'), stateNote: stateNoteText(state) };
+  return { system: sections.join(SECTION_SEP), stateNote: stateNoteText(state, opts) };
 }
 
 /**

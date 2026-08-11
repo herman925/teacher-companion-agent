@@ -188,6 +188,102 @@ test('applyBlueprintDelta: node-level update/set/remove with the born-confirmed 
   assert.ok(modGuard.violations.some((v) => v.detail.includes('模块不可整体删除')));
 });
 
+// ---------- blueprint_delta obeys the plan tree's confirmation rules ----------
+//
+// This channel predates plan_delta and moves node status exactly the same way.
+// While `ctx.teacherTurn` was its escape hatch — and serve.mjs hardcoded it true
+// on every single turn — a delta could write `status: confirmed` onto any
+// existing node with no citation at all, which is the whole guarantee ADR-0010
+// §6 moved onto the quote. The must-pass halves matter more: a rule that also
+// strips honest confirmations pushes the model back to never confirming.
+
+const withNodes = () => absorbBlueprint(
+  createInitialState('t-bpd'),
+  bpTurn([{ id: 'm1', title: '第一周', status: 'ai_suggestion', body: '看一次真龙舟', children: [{ id: 'n1', title: '看龙舟', status: 'ai_suggestion', body: '到河边看训练' }] }]),
+).state;
+const nodeIn = (state, id) => {
+  const walk = (n) => (n.id === id ? n : (n.children || []).map(walk).find(Boolean));
+  return state.course_plan_blueprint.modules.map(walk).find(Boolean);
+};
+
+test('blueprint_delta: escalating an existing node with no quote is stripped', async () => {
+  const { applyBlueprintDelta } = await import('../src/engine.mjs');
+  const r = applyBlueprintDelta(withNodes(), [
+    { op: 'update', id: 'n1', node: { title: '孩子们已经看过龙舟并说出了桨的作用', status: 'confirmed' } },
+  ], { teacherText: '你先给我看看第二周有什么。' });
+  assert.equal(nodeIn(r.state, 'n1').status, 'ai_suggestion', '「我先看看」不是确认');
+  assert.deepEqual(r.violations.map((v) => v.kind), ['uncited_confirmation']);
+  assert.equal(nodeIn(r.state, 'n1').title, '孩子们已经看过龙舟并说出了桨的作用', '只剥升级，不丢这次改动');
+});
+
+test('MUST PASS — blueprint_delta escalation carrying her words goes through', async () => {
+  const { applyBlueprintDelta } = await import('../src/engine.mjs');
+  const r = applyBlueprintDelta(withNodes(), [
+    { op: 'update', id: 'n1', node: { status: 'confirmed' }, confirmed_by_quote: '就这样定了' },
+  ], { teacherText: '第一周就这样定了，不用再改。' });
+  assert.deepEqual(r.violations, [], '有原话的确认必须原样通过');
+  assert.equal(nodeIn(r.state, 'n1').status, 'confirmed');
+});
+
+test('blueprint_delta: a set reusing an existing id is refused, not appended', async () => {
+  const { applyBlueprintDelta } = await import('../src/engine.mjs');
+  const base = applyBlueprintDelta(withNodes(), [
+    { op: 'update', id: 'n1', node: { status: 'confirmed' }, confirmed_by_quote: '就这样定了' },
+  ], { teacherText: '就这样定了' }).state;
+  const r = applyBlueprintDelta(base, [{
+    op: 'set', id: 'n1', parent_id: 'm1',
+    node: { title: '孩子们都爱上了划龙舟', body: '全班孩子都说明白了龙舟精神', status: 'confirmed' },
+  }], { teacherText: '再加一个活动' });
+  assert.deepEqual(r.violations.map((v) => v.kind), ['blueprint_scope']);
+  assert.equal(nodeIn(r.state, 'm1').children.length, 1, '同一个 id 不能出现两次');
+  assert.equal(nodeIn(r.state, 'n1').title, '看龙舟', '冒名顶替的内容一个字都没写进去');
+});
+
+test('MUST PASS — a genuinely new node under the same parent still lands', async () => {
+  const { applyBlueprintDelta } = await import('../src/engine.mjs');
+  const r = applyBlueprintDelta(withNodes(), [
+    { op: 'set', id: 'n2', parent_id: 'm1', node: { title: '画一条自己的龙舟', status: 'hypothesis' } },
+  ], { teacherText: '再加一个画画的活动' });
+  assert.deepEqual(r.violations, []);
+  assert.equal(nodeIn(r.state, 'n2').status, 'hypothesis', '假设就是假设');
+  assert.equal(nodeIn(r.state, 'm1').children.length, 2);
+});
+
+test('blueprint_delta: remove-then-set in ONE delta cannot launder a confirmation', async () => {
+  const { applyBlueprintDelta } = await import('../src/engine.mjs');
+  const base = applyBlueprintDelta(withNodes(), [
+    { op: 'update', id: 'n1', node: { status: 'confirmed' }, confirmed_by_quote: '就这样定了' },
+  ], { teacherText: '就这样定了' }).state;
+  const r = applyBlueprintDelta(base, [
+    { op: 'remove', id: 'n1' },
+    { op: 'set', id: 'n1', parent_id: 'm1', node: { title: '孩子们都爱上了划龙舟', status: 'confirmed' } },
+  ], { teacherText: '换一个活动' });
+  assert.equal(nodeIn(r.state, 'n1').status, 'ai_suggestion', '删掉再写回来的节点是新节点');
+  assert.ok(r.violations.some((v) => v.kind === 'born_confirmed'));
+});
+
+test('blueprint_delta: rewriting a confirmed body demotes it to pending_validation', async () => {
+  const { applyBlueprintDelta } = await import('../src/engine.mjs');
+  const base = applyBlueprintDelta(withNodes(), [
+    { op: 'update', id: 'n1', node: { status: 'confirmed' }, confirmed_by_quote: '就这样定了' },
+  ], { teacherText: '就这样定了' }).state;
+  const r = applyBlueprintDelta(base, [
+    { op: 'update', id: 'n1', node: { body: '全班孩子都说出了龙骨、桨、鼓的作用' } },
+  ], { teacherText: '第一周再写细一点' });
+  assert.equal(nodeIn(r.state, 'n1').status, 'pending_validation', '她确认的是她读过的那段话');
+  assert.ok(r.violations.some((v) => v.kind === 'uncited_confirmation'));
+});
+
+test('MUST PASS — a title touch-up leaves a confirmed node confirmed and silent', async () => {
+  const { applyBlueprintDelta } = await import('../src/engine.mjs');
+  const base = applyBlueprintDelta(withNodes(), [
+    { op: 'update', id: 'n1', node: { status: 'confirmed' }, confirmed_by_quote: '就这样定了' },
+  ], { teacherText: '就这样定了' }).state;
+  const r = applyBlueprintDelta(base, [{ op: 'update', id: 'n1', node: { title: '看龙舟（改到周二）' } }], { teacherText: '改到周二' });
+  assert.deepEqual(r.violations, [], '改个标题是日常编辑，不该惊动出处');
+  assert.equal(nodeIn(r.state, 'n1').status, 'confirmed');
+});
+
 // ---------- pedagogy-panel findings, fixed and pinned ----------
 
 test('merge preserves children when an update carries none (panel finding: map wipe)', () => {
