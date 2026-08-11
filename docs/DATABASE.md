@@ -2,9 +2,11 @@
 
 | | |
 |---|---|
-| **Status** | Design v0.1 — 2026-07-14. PostgreSQL is provisioned on the pilot VM (ADR-0002); the persistence layer described here is **not yet implemented** — today `demo/serve.mjs` is stateless and course state lives in browser localStorage. A **demo persistence tier** (JSON store, §4) is designed as the runnable bridge for demonstrating real server-side chat history on localhost or the Tencent VM, ahead of the full Postgres build. |
+| **Status** | Design **v0.2 — 2026-07-29, rewritten for Workflow v2** (plan tree, four memory scopes, subject-tagged messages, uploads, row-level security). Superseded v0.1 dated 2026-07-14. PostgreSQL is provisioned on the pilot VM (ADR-0002); the persistence layer described here is **not yet implemented** — today `demo/serve.mjs` is stateless and course state lives in browser localStorage. A **demo persistence tier** (JSON store, §4) is designed as the runnable bridge for demonstrating real server-side chat history on localhost or the Tencent VM, ahead of the full Postgres build. |
 | **Engine** | PostgreSQL 16, localhost-only on the pilot VM, database `teacher_platform` |
 | **Upstream design** | [ARCHITECTURE.md](ARCHITECTURE.md) §4–§5 (state engine, DB modeling rules) |
+| **Security posture** | [ADR-0013](adr/0013-security-and-data-custody-for-launch.md) — RLS from the first table, LighthouseCOS for files, three account states. **Read it before creating any table.** |
+| **Reality check** | 2026-07-29: the database exists and holds **zero tables**. Data is still JSON files on disk. Nothing here is built. |
 | **State schema** | [harness/schema/course-state.schema.json](../harness/schema/course-state.schema.json) — single source of truth for the course state document |
 
 ## 1. Modeling principles
@@ -12,8 +14,10 @@
 1. **Hybrid relational + JSONB.** Row-shaped data (users, messages, violations) gets columns and indexes; the course state document stays one JSONB value validated against the JSON Schema above. The schema file is law — the DB never invents its own shape for course state.
 2. **Append-only where auditability matters.** Messages, snapshots, and violations are never updated or deleted by application code. This is the fabrication-resistance promise made queryable: every child-evidence claim must trace to stored rows.
 3. **The engine writes state; the LLM never touches the DB.** Only the deterministic engine (after L3 validation) applies a state delta and writes the new snapshot, inside one transaction.
-4. **Owner scoping everywhere.** Every query filters by the authenticated teacher's `user_id`. No cross-teacher reads; no admin backdoor without an audit trail.
-5. **No binary child data in the DB.** Photos and materials live in object storage (Tencent COS, private bucket, signed URLs); the DB stores references and consent/retention metadata only.
+4. **Owner scoping is enforced by the database, not by discipline.** Every query still filters by the authenticated teacher's `user_id`, but row-level security makes that a guarantee rather than a habit: a query that forgets its filter returns nothing instead of everything (§2c). Admin reads are a deliberate, separately-roled bypass with an access log, never an accident.
+5. **No binary child data in the DB.** Photos and materials live in object storage (LighthouseCOS, private bucket, short-lived presigned URLs); the DB stores references and retention metadata only. On this hardware that is not a preference — the 70GB **system** disk holds Postgres, so files filling it would stop the database and take the service down (ADR-0013 §6).
+6. **Memory accepts a closed set of fact kinds.** Facts are typed, not free text (§2e). A child observation has no kind to be filed under, so it cannot enter memory and bypass the evidence rules — the guard is structural rather than a keyword filter.
+7. **Tree-shaped data stays in JSONB.** The blueprint (§2b) and the plan tree (§2f) both live inside `course_state`. Neither is ever queried across courses by node, both are read and written whole-or-by-delta, and both get version history free from the existing checkpoint machinery.
 
 ## 2. Tables
 
@@ -25,10 +29,32 @@ CREATE TABLE users (
   display_name  text NOT NULL,
   password_hash text,                        -- argon2id; NULL when SMS-only
   invite_code   text,                        -- pilot onboarding path
-  settings      jsonb NOT NULL DEFAULT '{}', -- UI prefs, preferred provider — never secrets
+  role          text NOT NULL DEFAULT 'teacher' CHECK (role IN ('teacher','admin','leader')),
+  -- Three states, not a scale (ADR-0013 §11). `revoked` = the teacher left the
+  -- school or was banned: login refused, DATA KEPT. `erased` = gone. Revocation
+  -- is not deletion, and conflating them was the mistake this CHECK prevents.
+  status        text NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked','erased')),
+  revoked_at    timestamptz,                 -- starts the retention clock (§5)
+  settings      jsonb NOT NULL DEFAULT '{}', -- UI prefs, 教师档案, interaction-axis vector — never secrets
   created_at    timestamptz NOT NULL DEFAULT now(),
   last_login_at timestamptz
 );
+
+-- Named classes (ADR-0011 §3). A class OUTLIVES a course: 「班上没有鼓」 must
+-- still apply when the same children start a different theme in September.
+-- This is an identity (中三班), not the age band already in 教师档案.
+CREATE TABLE classes (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name          text NOT NULL,               -- 中三班
+  age_band      text,                        -- 小班 | 中班 | 大班
+  class_size    integer,
+  is_default    boolean NOT NULL DEFAULT false,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+-- At most one default per teacher, enforced by the database rather than by the
+-- endpoint that happens to write it.
+CREATE UNIQUE INDEX idx_classes_one_default ON classes (user_id) WHERE is_default;
 
 -- One row per theme-inquiry course a teacher runs.
 -- A course IS the conversation thread: companion coaching runs one long
@@ -39,8 +65,9 @@ CREATE TABLE users (
 CREATE TABLE courses (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id       uuid NOT NULL REFERENCES users(id),
+  class_id      uuid REFERENCES classes(id), -- which class this course is for; NULL until asked
   title         text NOT NULL,               -- e.g. 「醒狮」
-  course_state  jsonb NOT NULL,              -- current document, validates against course-state.schema.json
+  course_state  jsonb NOT NULL,              -- current document; holds course_plan (§2f) and the blueprint (§2b)
   state_version integer NOT NULL DEFAULT 0,  -- bumps on every applied delta
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now()
@@ -74,6 +101,12 @@ CREATE TABLE messages (
   course_id     uuid NOT NULL REFERENCES courses(id),
   user_id       uuid NOT NULL REFERENCES users(id),
   role          text NOT NULL CHECK (role IN ('teacher','agent','system')),
+  -- ONE log per course; the subject is a TAG, never a container (ADR-0010 §1).
+  -- 'course' or a node id. Defaulting to 'course' is what makes this additive:
+  -- every message written before subjects existed reads back as course-level,
+  -- so there is no migration. Ordering stays global — we must be able to prove
+  -- she asked about 3.2.1 BEFORE she edited 周2, which per-node logs cannot.
+  subject       text NOT NULL DEFAULT 'course',
   content       text NOT NULL,               -- teacher text or validated reply_markdown
   turn_contract jsonb,                       -- parsed turn for agent rows: closure_loop, evidence_refs, asks. state_delta is NOT duplicated here — it lives in course_snapshots (single home)
   provider      text,                        -- minimax | glm | kimi | qwen | mock …
@@ -81,6 +114,8 @@ CREATE TABLE messages (
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_messages_course ON messages (course_id, id);
+-- Rendering one node's conversation is an index scan, not a filter over the course.
+CREATE INDEX idx_messages_subject ON messages (course_id, subject, id);
 
 -- Runtime-harness violations (L3 failures, L4 outcomes) — product telemetry
 CREATE TABLE violations (
@@ -99,14 +134,157 @@ CREATE TABLE materials (
   course_id     uuid NOT NULL REFERENCES courses(id),
   user_id       uuid NOT NULL REFERENCES users(id),
   kind          text NOT NULL CHECK (kind IN ('photo','observation','document','generated')),
-  cos_key       text NOT NULL,               -- object key in the private COS bucket
-  mime_type     text NOT NULL,
+  -- RANDOM key, never the uploaded filename: courses/<uuid>/<uuid>.<ext>.
+  -- Filenames leak information and collide.
+  cos_key       text NOT NULL,               -- object key in the PRIVATE LighthouseCOS bucket
+  mime_type     text NOT NULL CHECK (mime_type IN ('application/pdf','image/jpeg','image/png',
+                  'application/vnd.openxmlformats-officedocument.wordprocessingml.document')),
+  size_bytes    bigint NOT NULL,
+  -- A phone JPEG carries GPS coordinates. A picture of children plus the exact
+  -- location of the kindergarten in one file is not something to store and hope
+  -- about, so metadata is stripped at ingest and the fact is recorded.
+  exif_stripped boolean NOT NULL DEFAULT false,
   contains_children boolean NOT NULL DEFAULT false,  -- drives retention + access rules
   retention_until   date,                    -- minimal-retention policy, set on upload
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_materials_course ON materials (course_id, created_at DESC);
+
+-- Teacher memory (ADR-0011). ONE table with a scope column, not four tables:
+-- scope is data, not structure. NODE memory is absent on purpose — it is
+-- GENERATED (rationale + revision log inside the tree), never extracted.
+CREATE TABLE facts (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  scope         text NOT NULL CHECK (scope IN ('course','class','teacher')),
+  course_id     uuid REFERENCES courses(id) ON DELETE CASCADE,
+  class_id      uuid REFERENCES classes(id) ON DELETE CASCADE,
+  -- The closed taxonomy (ADR-0013 §9). 「班上没有鼓」 is equipment; 「孩子们对
+  -- 鼓声特别有反应」 fits no kind and is refused — which is how a child
+  -- observation is stopped from entering memory and bypassing the evidence
+  -- rules, without guessing at the text.
+  kind          text NOT NULL CHECK (kind IN ('equipment','space','schedule',
+                  'class_composition','teacher_preference')),
+  body          text NOT NULL,
+  quote         text,                        -- the teacher's own words that produced it
+  source        text NOT NULL CHECK (source IN ('extracted','teacher','widened')),
+  widened_from  text,                        -- the scope it was promoted from
+  used_at       timestamptz,                 -- stamped when injected; drives oldest-UNUSED capping
+  -- Contradicted facts are ARCHIVED with a pointer, never deleted: the record
+  -- of what was believed when has to survive.
+  archived_at   timestamptz,
+  archive_reason text,
+  superseded_by uuid REFERENCES facts(id),
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  CHECK ((scope = 'course' AND course_id IS NOT NULL)
+      OR (scope = 'class'  AND class_id  IS NOT NULL)
+      OR (scope = 'teacher'))
+);
+-- Class and course facts ride EVERY prompt, so this is a hot read path.
+CREATE INDEX idx_facts_live ON facts (user_id, scope, class_id, course_id) WHERE archived_at IS NULL;
+
+-- Observations that move the interaction axes (ADR-0009 §3). Row-shaped and
+-- append-only; the vector itself is a singleton and lives in users.settings.
+CREATE TABLE interaction_signals (
+  id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id       uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  axis          text NOT NULL,
+  signal        text NOT NULL,               -- what was observed
+  delta         numeric NOT NULL,            -- at most one step (ADR-0009 §2)
+  course_id     uuid REFERENCES courses(id) ON DELETE SET NULL,
+  message_id    bigint REFERENCES messages(id) ON DELETE SET NULL,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- Scope-shell verdicts (ADR-0012 §3). Warn-only is only worth running if these
+-- rows get read before enforcement is switched on. EXCERPT ONLY — 60 chars is
+-- enough to judge a false block and not enough to turn an ops log into a store
+-- of teacher conversation.
+CREATE TABLE scope_log (
+  id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id       uuid REFERENCES users(id) ON DELETE SET NULL,
+  rule          text NOT NULL,               -- weather | markets | code | …
+  enforced      boolean NOT NULL,
+  refused       boolean NOT NULL,
+  excerpt       text NOT NULL CHECK (length(excerpt) <= 60),
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
 ```
+
+The **admin access log deliberately stays out of Postgres**: daily-rotated files at `.data/auth/access-log/YYYY-MM-DD.jsonl`, 90-day retention (ADR-0013 §7). Daily files are easy to archive and prune, and an audit trail living outside the database it audits is harder to quietly edit.
+
+### 2c. Row-level security (ADR-0013 §5)
+
+Enabled at table creation, while there are zero tables — this is the cheapest it will ever be. Three parts, and **all three are required or the whole thing silently does nothing**:
+
+```sql
+-- 1. The application must NOT own the tables. Postgres exempts table owners
+--    from policies, so an app connecting as the owner gets RLS that appears
+--    enabled and enforces nothing. This is the most common way to ship RLS
+--    that does not work.
+CREATE ROLE app_owner  NOLOGIN;                    -- owns the schema, runs migrations
+CREATE ROLE app_rw     LOGIN PASSWORD :app_pw;     -- the application
+CREATE ROLE app_admin  LOGIN PASSWORD :adm_pw;     -- admin console: bypasses, deliberately
+CREATE ROLE app_leader LOGIN PASSWORD :ldr_pw;     -- reads the aggregate view ONLY
+
+-- 2. FORCE, not just ENABLE — ENABLE alone still exempts the owner.
+ALTER TABLE courses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE courses FORCE  ROW LEVEL SECURITY;
+
+CREATE POLICY courses_owner ON courses
+  USING (user_id = current_setting('app.user_id', true)::uuid);
+GRANT SELECT, INSERT, UPDATE, DELETE ON courses TO app_rw;
+```
+
+The same pattern applies to `classes`, `messages`, `course_snapshots`, `materials`, `facts` and `interaction_signals` — every table carrying or reachable from a `user_id`.
+
+```sql
+-- 3. Each request names its user INSIDE the transaction.
+BEGIN;
+  SET LOCAL app.user_id = '5b7c…';   -- LOCAL: dies with the transaction, safe on a pooled connection
+  SELECT * FROM courses;             -- her rows only, filter or no filter
+COMMIT;
+```
+
+`current_setting('app.user_id', true)` returns NULL when unset rather than raising, and `user_id = NULL` matches nothing — so a code path that forgets to set the user **sees no rows** instead of every row. Fail-closed by construction.
+
+**Proof obligation.** This section is a wish until a test connects as teacher A, asks for teacher B's course by id, and gets nothing. Write that test with the first table, not after the last one.
+
+### 2d. The leader view (ADR-0013 §10)
+
+A 园长 or 教研员 answers 「区里面的难点在哪里」 from aggregates, never from a named teacher's plan. Mechanically they are granted **the view and nothing else** — no base table — so a mistake in a leader query cannot reach a course row.
+
+```sql
+CREATE VIEW leader_dashboard AS
+  SELECT c.course_state->>'stage'                    AS stage,
+         c.course_state->'theme_resource'->>'name'   AS theme,
+         f.kind                                      AS constraint_kind,
+         count(*)                                    AS n
+    FROM courses c
+    LEFT JOIN facts f ON f.course_id = c.id AND f.archived_at IS NULL
+   GROUP BY 1, 2, 3
+  HAVING count(*) >= 5;   -- small cells re-identify; suppress them
+
+GRANT SELECT ON leader_dashboard TO app_leader;
+-- and deliberately NOT: GRANT ... ON courses, messages, materials TO app_leader;
+```
+
+The `HAVING count(*) >= 5` matters: in a district with three kindergartens, 「1 个课程卡在第二周」 identifies a person.
+
+### 2e. Where each kind of memory lives
+
+| Scope | Storage | Written by |
+|---|---|---|
+| Node | inside `course_state` — `rationale` + `revision_log` on the node | generated on every change |
+| Course | `facts` where `scope='course'` | auto-extracted |
+| Class | `facts` where `scope='class'` | widened by the teacher, or extracted with an explicit class |
+| Teacher | `users.settings` (axis vector) + `interaction_signals` (the observations behind it) | inferred + explicit |
+
+### 2f. The plan tree (ADR-0006/0010)
+
+`course_plan` lives **inside `course_state`**, for exactly the reasons §2b gives for the blueprint: never queried across courses by node, always read and written whole-or-by-delta, schema-checked by `course-state.schema.json`, and versioned free by the checkpoint machinery — `plan_delta`s ride `state_delta` in `course_snapshots`.
+
+Shape: 月计划 (a **phase** of 2–5 weeks, not a calendar month) → 周计划 → 活动, where an activity carries its own `dates[]`. **A day is a field, not a level**, so 「今天要做什么」 is a filter and rescheduling is one field rather than a re-parent. Each node carries two independent status axes — provenance (`confirmed`…`hypothesis`) and `work_status` (`draft`…`settled`) — plus `blueprint_refs` into the blueprint, and `stale_since` / `stale_reason` when an upstream edit may have invalidated it. Staleness never changes provenance.
 
 Evidence referencing: a turn's `evidence_refs[]` point at `messages.id` and `materials.id` rows. The L3 fabrication heuristic (child-claims require evidence) resolves against these tables — that is why they are append-only.
 
@@ -298,11 +476,27 @@ The teacher profile moves server-side into `users.settings.profile` so it follow
 
 Everything under `/api/` except `login` and `healthz` requires the session and is scoped to the session's `user_id`. No admin API in v1 — operational queries go through `psql` with an audit note in HANDOFF.md.
 
-## 5. Backups and retention
+## 5. Backups, retention and erasure
 
-- Nightly `pg_dump` to the private COS bucket (cron on the VM); 30-day rolling window.
-- `materials` rows with `contains_children = true` get `retention_until` enforced by a scheduled cleanup job: COS object deleted first, row tombstoned (kind preserved, `cos_key` nulled) so evidence references stay resolvable without retaining the image.
-- Restore drill is part of go-live checklist — a backup that has never been restored does not count.
+- Nightly `pg_dump` to the private LighthouseCOS bucket (cron on the VM); 30-day rolling window.
+- `materials` rows with `contains_children = true` get `retention_until` enforced by a scheduled cleanup job: the COS object is deleted **first**, then the row is tombstoned (kind preserved, `cos_key` nulled) so evidence references stay resolvable without retaining the image. Deleting the row first would orphan the object.
+- Restore drill is part of the go-live checklist — a backup that has never been restored does not count.
+
+### 5b. The three account states (ADR-0013 §11)
+
+`revoked` and `erased` are different operations for different situations, not two points on a scale. Conflating them is why the distinction is a `CHECK` constraint rather than a convention.
+
+**Revoke** — the teacher left the school, or was banned. Login is refused and sessions stop resolving; **the data stays**, because the kindergarten may still need last year's curriculum. Sets `status='revoked'` and stamps `revoked_at`, which starts the retention clock.
+
+**Erase** — everything goes. Used for alpha cleanup and for any deletion request. In one transaction, ordered so nothing can be orphaned:
+
+1. delete the COS objects for the user's `materials` (**objects before rows** — a deleted row is a lost key, and a lost key is a child photo nobody can find to delete);
+2. delete `facts`, `interaction_signals`, `materials`, `messages`, `course_snapshots`, `courses`, `classes`, vault key entries;
+3. keep `scope_log` rows with `user_id` nulled, and access-log lines with the subject dropped — operational history survives, the person does not.
+
+Two tests, because "it deleted" is not observable without them: **no orphaned object remains in the bucket**, and **no row references the missing user**.
+
+**Revoked data auto-erases after a configurable window, default 12 months.** A scheduled job erases accounts where `revoked_at < now() - retention_window`. The window is configuration, not a constant, so the pilot's compliance answer can set it — 12 months is a defensible placeholder, not a legal opinion. Without the job, `revoked` quietly becomes "keep child observations forever", which is the outcome minimal retention exists to prevent.
 
 ## 6. Open questions
 
@@ -310,5 +504,8 @@ Everything under `/api/` except `login` and `healthz` requires the session and i
 2. Does stage-5 export need server-side rendering (docx/pdf) or is client-side enough? Affects whether an export worker joins the VM.
 3. Violations table growth policy — keep forever (research value) or aggregate after N months?
 4. Real-name obligations for the 小程序 user base (see §4 auth design) — verify against WeChat platform rules and the education-service category during 备案/登记; do not guess.
+4b. **The retention window's real value.** 12 months (§5b) was chosen to be defensible, not because anyone checked. Someone who knows mainland requirements for child-related records should set it before launch.
+4c. **Does the leader view need a per-kindergarten dimension?** §2d aggregates across everything a 教研员 can see. A 园长 plausibly wants their own kindergarten only, which means a kindergarten entity that does not exist yet. Decide when a 园长 actually asks, not before.
+4d. **Migration ordering.** The 24 JSON course files on the public instance predate subjects, the plan tree and typed facts. The importer must decide what an imported message's `subject` is (`course`, safely) and that pre-v2 courses simply have no `course_plan` — not an empty one, which would render as a plan that exists and is blank.
 5. **Longitudinal teacher profile.** Post-pilot: demographics + preference signals + possibly vectorized memory of intentions/style across courses, feeding prompt context beyond today's static 教师档案. Needs its own schema and a PIPL profiling assessment before any embedding of teacher-derived text; explicitly out of v1.
 6. **官方服务 vs BYOK (planned end-state for model access).** The provider zoo in the settings modal is a dev-phase tool. Production collapses to two modes: **官方服务** — the platform provides model access as SaaS: keys live server-side in the proxy env (already the production key-custody design, §2 "what we do NOT store"), the platform pays vendors, per-teacher consumption is metered from `messages.usage` for quota/billing; **自备密钥 BYOK** — a teacher/org pastes their own vendor key, which stays per-request/localStorage exactly as today. Decision needed later: quota model (per-seat allowance vs pay-per-use) and whether BYOK survives past the pilot.
