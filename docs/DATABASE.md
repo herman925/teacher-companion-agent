@@ -248,14 +248,26 @@ COMMIT;
 
 `current_setting('app.user_id', true)` returns NULL when unset rather than raising, and `user_id = NULL` matches nothing — so a code path that forgets to set the user **sees no rows** instead of every row. Fail-closed by construction.
 
-**Proof obligation.** This section is a wish until a test connects as teacher A, asks for teacher B's course by id, and gets nothing. Write that test with the first table, not after the last one.
+**Proof obligation.** This section is a wish until a test connects as teacher A, asks for teacher B's course by id, and gets nothing. Write that test with the first table, not after the last one. It exists: `demo/tests/store-contract-pg.test.mjs`, in three blocks — A asks for B's course by id with no user predicate at all (expect 0), A asks for her own (expect 1, otherwise the test also passes against a database that returns nothing to anybody), and a transaction with no `SET LOCAL` (expect 0, not everything). It goes **around** the store on a raw connection, because every query in `pg-store.mjs` also carries `WHERE user_id = $1` and would return the right answer from the wrong reason.
+
+**The application refuses to start if any of this is missing.** `createPgStore` asserts once, on its first connection: the connected role is not a superuser, does not hold `BYPASSRLS`, does not own (and is not a member of the role that owns) any table, is not `app_admin`, and every table in `public` carries both `relrowsecurity` and `relforcerowsecurity`. A mis-pointed `DATABASE_URL` is a boot failure rather than silent full access — which is the only way this fails loudly, since a disabled policy changes no query result.
+
+#### The auth plane runs as `app_admin` — option (b), recorded here as `003_rls.sql` required
+
+Login cannot run under `users_self`. Resolving a teacher by username happens **before** `app.user_id` can be set — you cannot name the user you are still identifying — so as `app_rw` that lookup returns zero rows and login fails closed. `003_rls.sql` listed two candidate resolutions and said whichever was chosen had to be written into this document before it was coded. It is chosen and it is **(b)**: `users`, `sessions`, `admin_audit`, `user_keys` and `app_state` are reached only through the separate `app_admin` connection (`DATABASE_URL_ADMIN`), and `005_auth_plane.sql` grants those tables to `app_admin` and to nobody else.
+
+The rejected alternative, (a), was a `SECURITY DEFINER` function owned by `app_owner` returning only the columns password verification needs. It is a smaller bypass, and it remains the better shape if the auth plane ever grows beyond one server process; it was not taken now because it puts a second, invisible privilege boundary inside the database, where `pg_policies` cannot list it.
+
+What was **not** chosen, and must never be: a policy like `USING (current_setting('app.user_id', true) IS NULL)`, which would make the whole `users` table readable to any code path that forgot to set the user — the exact inversion of the guarantee above.
+
+`app_rw` holds `SELECT` on `users` and `UPDATE` on **one column**, `settings`. Row-level security is row-level, not column-level: `users_self` lets `app_rw` write any column of its own row, so a table-wide `UPDATE` grant made `UPDATE users SET role = 'admin' WHERE id = <self>` succeed — self-promotion, and live privilege escalation the moment ADR-0013 §8's `role === 'admin'` check lands.
 
 ### 2d. The leader view (ADR-0013 §10)
 
 A 园长 or 教研员 answers 「区里面的难点在哪里」 from aggregates, never from a named teacher's plan. Mechanically they are granted **the view and nothing else** — no base table — so a mistake in a leader query cannot reach a course row.
 
 ```sql
-CREATE VIEW leader_dashboard AS
+CREATE VIEW leader_dashboard WITH (security_invoker = false, security_barrier = true) AS
   SELECT c.course_state->>'stage'                    AS stage,
          c.course_state->'theme_resource'->>'name'   AS theme,
          f.kind                                      AS constraint_kind,
@@ -263,13 +275,16 @@ CREATE VIEW leader_dashboard AS
     FROM courses c
     LEFT JOIN facts f ON f.course_id = c.id AND f.archived_at IS NULL
    GROUP BY 1, 2, 3
-  HAVING count(*) >= 5;   -- small cells re-identify; suppress them
+  HAVING count(*) >= 5 AND count(DISTINCT c.id) >= 5;  -- small cells re-identify
 
 GRANT SELECT ON leader_dashboard TO app_leader;
 -- and deliberately NOT: GRANT ... ON courses, messages, materials TO app_leader;
 ```
 
-The `HAVING count(*) >= 5` matters: in a district with three kindergartens, 「1 个课程卡在第二周」 identifies a person.
+The suppression matters: in a district with three kindergartens, 「1 个课程卡在第二周」 identifies a person. Two corrections to the original form, both already in `004_views.sql`:
+
+- **`count(DISTINCT c.id) >= 5` as well as `count(*) >= 5`.** `count(*)` counts JOINED rows, so one course carrying five equipment facts produces a group of five and passes the threshold on its own — publishing exactly the single-course row the threshold exists to suppress. Counting courses is what 「5」 always meant. Strictly more suppressive: it can only remove rows.
+- **`security_barrier = true`.** Without it PostgreSQL may push a leader-supplied qualifier that mentions only grouping columns below the aggregate into the base scan, where it is evaluated against rows the `HAVING` would have removed. A non-leakproof built-in in that qualifier turns into an error or a timing difference that reveals the shape of suppressed groups. Bounded — `REVOKE ALL ON DATABASE … FROM PUBLIC` removes TEMP, so a leader cannot define a leaky function of their own — but bounded is not closed.
 
 ### 2e. Where each kind of memory lives
 
@@ -299,7 +314,7 @@ Chat history is not a storage problem — photos are, which is why they live in 
 ### What we deliberately do NOT store
 
 - **Teachers' own model API keys.** Production model: platform-seeded keys in server env, platform pays for tokens, per-teacher spend tracked via `messages.usage`. A teacher-supplied key is stored in the **per-account encrypted vault** (AES-256-GCM under `KEYS_SECRET`; write-only, flags-only reads) — the "never server-side" position was reversed by [ADR-0005](adr/0005-per-account-key-vault-and-rate-limits.md) after the shared-browser cross-account leak proved worse than the encryption-at-rest liability. Only the no-backend static tier still keeps keys in localStorage.
-- **Secrets of any kind in `users.settings`** — prefs only; the API layer must reject writes containing key-shaped values (same redaction lexicon as the session-log panel).
+- **Secrets of any kind in `users.settings`** — prefs only; the API layer must reject writes containing key-shaped values (same redaction lexicon as the session-log panel). Enforced at `PATCH /api/me`: the profile object is screened with `containsCredential` (`demo/src/redact.mjs`, the one lexicon the server and the session log share) and **refused with 400**, not masked — she needs to know her key did not save. The serialized profile is also capped at a few KB, because a field with no retention story of its own must not become storage.
 
 ### 2b. Blueprint persistence (Phase-3 design; ADR-0003)
 
