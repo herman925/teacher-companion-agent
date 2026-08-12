@@ -2,6 +2,89 @@
 
 Latest session first. Keep entries short and factual; link instead of restating.
 
+## Workflow v2 — standing scoreboard
+
+**Read this before starting work, and update it when something ships.** It exists because on 2026-08-12 the harness, the data model and the persistence layer were all built while the prompts and the entire teacher-facing surface were not — so from a teacher's seat nothing had changed, and that only surfaced when Herman asked why the app was still a plain chat box. Per-run reports hid it; a standing list cannot.
+
+The design is **four layers** (UI + workflow + prompts + harness). Two are done.
+
+### Harness — done
+
+- [x] Scope shell, warn-only and live on the pilot ([ADR-0012](docs/adr/0012-runtime-harness-after-the-workflow.md) §3)
+- [x] Stage gate SPLIT not retired — ordinal + evidence branches kept (§2)
+- [x] Citation-backed confirmation ([ADR-0010](docs/adr/0010-conversation-and-workbench-model.md) §6), verified both directions
+- [x] `uncited_confirmation` and `memory_contradiction` violation kinds
+- [x] Two fabrication channels closed: `demo_sample`, `upload_ref`
+- [x] Chain rules retired: `node_prerequisite`, V1.3 artifact gates
+- [ ] Flip `SCOPE_ENFORCE=1` — waits on a week of would-refuse rows
+
+### Engine and data — mostly done
+
+- [x] `course_plan` tree, TSV skeleton, round-trip tested ([ADR-0006](docs/adr/0006-workbench-first-plan-tree.md)/[0007](docs/adr/0007-tiered-context-and-change-propagation.md))
+- [x] Staleness: `blastRadius` / `markStale` / `clearStale` / `retireStale`
+- [x] `plan_delta` application in the engine
+- [x] Subject-tagged message log ([ADR-0010](docs/adr/0010-conversation-and-workbench-model.md) §1)
+- [x] Context bands + memory facts into `buildPromptParts`
+- [x] `memory-scopes.mjs`, `interaction-axes.mjs` modules
+- [x] PostgreSQL + RLS + store contract, **verified against 16.14 on the VM**
+- [x] Access log wired to admin content reads
+- [x] Three account states in the JSON tier
+- [ ] **Axes are NOT wired to the prompt** — module exists, no call site
+- [ ] `revokeUser` NOT wired: the console still writes `status:'disabled'`, so `revoked_at` is never stamped and the retention window never starts
+- [ ] Fact extractor — the closed taxonomy is enforced by a DB CHECK, but nothing writes facts
+- [ ] Class object — no persistence, no selection at course start
+- [ ] Uploads / LighthouseCOS — nothing exists; only comments marking where it goes
+- [ ] Importer has never run against real course files
+
+### Prompts — NOT STARTED
+
+All seven files in `demo/src/prompts/` still describe the V1.3 chain. **This is why the agent still behaves like v1**: behaviour is prompt-driven, and nothing tells it Workflow v2 exists.
+
+- [ ] `base` / `contract` / `stage*` rewritten for v2
+- [ ] Two openings, converging by turn three ([ADR-0010](docs/adr/0010-conversation-and-workbench-model.md) §10)
+- [ ] Threshold-gated intake, not fixed rounds
+- [ ] One-pass generation of `course_plan`
+- [ ] Node-scoped turn behaviour
+
+### UI — NOT STARTED
+
+Nothing in `demo/src/ui/` renders `course_plan`. The workbench is still blueprint-only.
+
+- [ ] Entry fork 「帮我想想做什么 / 我已经有想法了」
+- [ ] Step-zero panel: headline + live checklist + collapsed sample
+- [ ] `course_plan` rendered in the workbench, with the 课程资料 branch
+- [ ] Right panel READ-ONLY; all input on the left
+- [ ] Tap a node → left swaps to node mode
+- [ ] Node detail + rationale + static randomised greeting (never sent to the model)
+- [ ] Receipts: toast with undo, plus one compact line per turn
+- [ ] Tree badges + 最近处理 strip
+- [ ] Class selection when she has more than one
+- [ ] Memory viewer across the four scopes
+- [ ] Interaction-axis handles in the profile
+- [ ] Mobile landing by course state
+
+### Still present, and ADR-0010 says to remove
+
+Keeping both interaction models is worse than either. Remove in the same change that adds the new one.
+
+- [ ] 批注 staging — absorbed into node conversations (§3)
+- [ ] 问题卡 workbench tab — cards move into the conversation with a pending strip
+- [ ] ✓确认 button on the panel — replaced by citation-backed confirmation (§6)
+
+### Blocked on other people
+
+| Blocker | Owner | Blocks |
+|---|---|---|
+| Activity content schema | 林朝湃 | node detail contents |
+| The complete six-fact list | 陈栩锋 | intake prompts |
+| Is 月计划 submitted paperwork? | a teacher | the phase-root decision ([ADR-0010](docs/adr/0010-conversation-and-workbench-model.md) §9) |
+| Token / cost measurement | 冯浩然 | freezing the context format |
+| 备案 filing | Herman | TLS, and therefore any real teacher |
+
+### Suggested order
+
+**Prompts first.** A correct screen over V1.3 behaviour is still the old product; correct behaviour in the old screen is at least the new product wearing the wrong clothes. Then the UI shell, removing the three superseded surfaces in the same change. Uploads and `revokeUser` are independent and can slot anywhere.
+
 ## 2026-08-11 (latest) — the guards were built, but not called: wiring, and three ways round them
 
 Review-fix session on the runtime line. Every item below already had passing unit fixtures **while being dead on the path a logged-in teacher uses** — that is the shape of this whole session, and the lesson worth carrying: a green suite is coverage of a module, not proof that anything calls it.
