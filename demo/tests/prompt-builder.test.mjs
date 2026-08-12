@@ -9,9 +9,13 @@ import { readFileSync } from 'node:fs';
 
 import {
   buildSystemPrompt, buildPromptParts, cacheStableHistory, profileSectionText, stageModuleName,
-  stateNoteText, skeletonBandText, memoryBandText, focusBandText,
+  stateNoteText, skeletonBandText, memoryBandText, focusBandText, assertMemoryBand,
+  interactionSectionText, turnStyleNoteText,
   STAGE_MODULE, STYLE_DIRECTIVES,
 } from '../src/prompt-builder.mjs';
+import {
+  AXES, EVIDENCE_INVARIANT, defaultVector, pinAxis, turnOverride, vectorFromPreset,
+} from '../src/interaction-axes.mjs';
 import { createInitialState, applyDelta } from '../src/engine.mjs';
 import { mockTurn } from '../src/mock.mjs';
 
@@ -98,6 +102,134 @@ test('回应风格: known styles inject their exact directive; free text falls b
   const free = profileSectionText({ stylePref: '喜欢户外和动手类活动' });
   assert.ok(free.includes('偏好：喜欢户外和动手类活动') && !free.includes('回应风格：'));
   assert.equal(profileSectionText({ stylePref: ' ' }), '');
+});
+
+// ---------------- interaction axes in the prompt (ADR-0009 §1/§2) ----------------
+//
+// Every test here comes in both directions, and the MUST-PASS direction is the
+// migration promise: a profile with no vector — which today is every profile
+// that exists — must keep getting the legacy 回应风格 sentence, unchanged.
+
+const VECTOR_PROFILE = (v) => ({ ageBand: '中班', stylePref: '极简速览（电报体、越短越好）', interaction_vector: v });
+
+test('axes: a profile WITHOUT a vector keeps the legacy 回应风格 line, to the byte', () => {
+  const legacyOnly = { ageBand: '中班', stylePref: '极简速览（电报体、越短越好）' };
+  assert.equal(interactionSectionText(legacyOnly), '', 'no vector → no axis block');
+  assert.equal(interactionSectionText(null), '');
+  assert.equal(interactionSectionText({}), '');
+  const text = profileSectionText(legacyOnly);
+  assert.ok(text.includes(`回应风格：${STYLE_DIRECTIVES['极简速览（电报体、越短越好）']}`), 'nobody is stranded');
+});
+
+test('axes: a profile WITH a vector renders six directives and drops the preset sentence', () => {
+  const profile = VECTOR_PROFILE(vectorFromPreset('极简速览（电报体、越短越好）'));
+  const block = interactionSectionText(profile);
+  assert.ok(block.startsWith('回应风格（按这位教师的互动偏好调整表达方式）：'));
+  for (const axis of AXES) assert.ok(block.includes(`${axis.zh}：`), axis.zh);
+  assert.equal(block.split('\n').filter((l) => AXES.some((a) => l.startsWith(`${a.zh}：`))).length, 6);
+  // ONE style instruction, never two.
+  const profileText = profileSectionText(profile);
+  assert.ok(!profileText.includes('回应风格：'), 'the preset sentence steps aside for the axes');
+  assert.ok(profileText.includes('年段：中班'), 'the rest of the profile is untouched');
+});
+
+test('axes: the evidence invariant closes the block, and style never loosens it', () => {
+  const openEverything = { ...defaultVector() };
+  for (const axis of AXES) openEverything.axes[axis.id] = { value: 5, confidence: 1, source: 'explicit', pinned: true };
+  const block = interactionSectionText(VECTOR_PROFILE(openEverything));
+  assert.ok(block.endsWith(EVIDENCE_INVARIANT), 'nothing above it may read as an exception');
+  assert.ok(block.includes('主动指出被忽略的问题'), 'the permissive directive really is in there');
+});
+
+test('axes: a free-text 偏好 survives the vector; a known preset does not (both directions)', () => {
+  // 「喜欢户外和动手类活动」 is a CONTENT preference the six axes cannot express.
+  const free = profileSectionText({ stylePref: '喜欢户外和动手类活动', interaction_vector: defaultVector() });
+  assert.ok(free.includes('偏好：喜欢户外和动手类活动'));
+  const preset = profileSectionText({ stylePref: '详细讲解（讲清为什么）', interaction_vector: defaultVector() });
+  assert.equal(preset, '', 'the preset is fully expressed by the axes, so the profile section empties out');
+});
+
+test('axes: an UNREADABLE vector falls back to the legacy line rather than to the default vector', () => {
+  // VECTOR_VERSION exists so a stored profile from an older build fails loudly
+  // instead of being read one axis short. Rendering the default block here would
+  // steer her by 蓝图共创 while her pane showed something else.
+  const stale = { version: 'v0', axes: { guidance: { value: 5 } } };
+  const halfWritten = { version: 'v1', axes: {} };
+  for (const bad of [stale, halfWritten, { version: 'v1' }, 'nonsense', 42]) {
+    const profile = VECTOR_PROFILE(bad);
+    assert.equal(interactionSectionText(profile), '', `unreadable: ${JSON.stringify(bad)}`);
+    assert.ok(profileSectionText(profile).includes('回应风格：'), 'the legacy line comes back');
+  }
+  // MUST PASS: a current, whole vector is read.
+  assert.notEqual(interactionSectionText(VECTOR_PROFILE(defaultVector())), '');
+});
+
+test('axes: moving one handle changes exactly one directive', () => {
+  const before = interactionSectionText(VECTOR_PROFILE(defaultVector()));
+  const after = interactionSectionText(VECTOR_PROFILE(pinAxis(defaultVector(), '解释深度', 5)));
+  assert.notEqual(before, after);
+  const diff = after.split('\n').filter((l, i) => l !== before.split('\n')[i]);
+  assert.deepEqual(diff, [`解释深度：${AXES[3].directives.high}`], 'one handle, one sentence');
+});
+
+test('one-turn override: rides the VOLATILE note, never the cache-stable prefix (both directions)', async () => {
+  const stored = pinAxis(defaultVector(), '输出节奏', 5);   // 逐步确认推进
+  const profile = VECTOR_PROFILE(stored);
+  const once = turnOverride(stored, '输出节奏', 1);          // 「这次直接给我一版就好」
+  const state = createInitialState('override');
+
+  const plain = await buildPromptParts(state, stub, { profile });
+  const flexed = await buildPromptParts(state, stub, { profile, turnVector: once });
+  assert.equal(plain.system, flexed.system, 'the prefix is byte-identical → the cache survives the override');
+  assert.notEqual(plain.stateNote, flexed.stateNote, 'volatility confined to the tail');
+
+  assert.ok(flexed.system.includes(AXES[2].directives.high), 'the prefix still states the STORED preference');
+  assert.ok(flexed.stateNote.includes('# 本轮临时表达调整'), 'the override is in the note');
+  assert.ok(flexed.stateNote.includes(AXES[2].directives.low), 'with this turn’s directive');
+  // The invariant must sit downstream of the LAST directive, not only the first:
+  // 主动性「主动提醒与挑战」 reads like licence to fill gaps, and this block is
+  // later in the assembled prompt than the prefix's copy of the clause.
+  assert.ok(flexed.stateNote.lastIndexOf(EVIDENCE_INVARIANT) > flexed.stateNote.lastIndexOf(AXES[2].directives.low));
+  assert.ok(!plain.stateNote.includes('# 本轮临时表达调整'), 'no override → no band');
+});
+
+test('band order in the note: snapshot → 骨架 → 记忆 → 本轮临时 → 焦点', () => {
+  const stored = pinAxis(defaultVector(), '输出节奏', 5);
+  const state = { ...createInitialState('band-order'), course_plan: PLAN };
+  const note = stateNoteText(state, {
+    subject: 'p1.1.1', facts: FACTS,
+    profile: VECTOR_PROFILE(stored), turnVector: turnOverride(stored, '输出节奏', 1),
+  });
+  const at = (h) => {
+    const i = note.indexOf(h);
+    assert.ok(i >= 0, `${h} is in the note`);
+    return i;
+  };
+  const order = ['# 当前 course_state', '# 课程计划骨架', '# 记忆（教师、班级与课程', '# 本轮临时表达调整', '# 焦点节点 p1.1.1'];
+  const positions = order.map(at);
+  assert.deepEqual(positions, [...positions].sort((a, b) => a - b), order.join(' → '));
+});
+
+test('one-turn override: silent when nothing actually changed band', () => {
+  const stored = pinAxis(defaultVector(), '解释深度', 4);
+  const profile = VECTOR_PROFILE(stored);
+  // 4 → 5 is the same band, so the sentence the model would read is identical.
+  assert.equal(turnStyleNoteText(profile, turnOverride(stored, '解释深度', 5)), '',
+    'repeating an instruction the prefix already gave teaches the model this block is noise');
+  // 4 → 1 crosses a band, so it is said.
+  assert.ok(turnStyleNoteText(profile, turnOverride(stored, '解释深度', 1)).includes(AXES[3].directives.low));
+  // No override marker at all, and no vector at all: nothing either way.
+  assert.equal(turnStyleNoteText(profile, stored), '', 'an unmarked vector is not an override');
+  assert.equal(turnStyleNoteText(profile, null), '');
+  assert.equal(turnStyleNoteText(null, null), '');
+});
+
+test('one-turn override: compared against the DEFAULT point when she has no stored vector', () => {
+  // Otherwise an override on a vector-less teacher would look like a no-op
+  // against nothing, and her 「这次直接给我一版就好」 would silently do nothing.
+  const once = turnOverride(defaultVector(), '结构化程度', 5);
+  const note = turnStyleNoteText({ stylePref: '详细讲解（讲清为什么）' }, once);
+  assert.ok(note.includes(AXES[1].directives.high), 'the override is still heard');
 });
 
 test('byte-parity with the legacy serve.mjs assembly (real prompt files, no profile)', async () => {
@@ -244,11 +376,11 @@ test('bands fire when they are wired: the same note is NOT the legacy one once a
   const note = stateNoteText(state, { subject: 'p1.1.1', facts: FACTS });
   assert.notEqual(note, legacyStateNote(state), 'a silently dropped band would slip through without this');
   assert.ok(note.includes('# 课程计划骨架'), 'skeleton band');
-  assert.ok(note.includes('# 记忆（班级与课程'), 'memory band');
+  assert.ok(note.includes('# 记忆（教师、班级与课程'), 'memory band');
   assert.ok(note.includes('# 焦点节点 p1.1.1'), 'focus band');
   // Order: focus sits last, nearest the teacher's newest message.
-  assert.ok(note.indexOf('# 课程计划骨架') < note.indexOf('# 记忆（班级与课程'));
-  assert.ok(note.indexOf('# 记忆（班级与课程') < note.indexOf('# 焦点节点 p1.1.1'));
+  assert.ok(note.indexOf('# 课程计划骨架') < note.indexOf('# 记忆（教师、班级与课程'));
+  assert.ok(note.indexOf('# 记忆（教师、班级与课程') < note.indexOf('# 焦点节点 p1.1.1'));
 });
 
 test('skeleton band: rows for every node, titles only — and no plan renders nothing (both directions)', () => {
@@ -285,6 +417,89 @@ test('memory band: whole, unfiltered, every turn — and omitted only when memor
   assert.ok(band.includes('这门课想落在醒狮上'), 'the course fact too');
   assert.ok(!band.includes('原本打算做龙舟'), 'archived facts stay out of the prompt');
   assert.ok(band.indexOf('scope=class') < band.indexOf('scope=course'), 'class first');
+});
+
+// ---------------- ADR-0011 §5: 「we looked and found nothing」 vs 「we did not look」
+//
+// The two absences produce opposite instructions to the model, and until now
+// nothing asserted the difference. An empty band says this class has no
+// constraints; an absent band says nothing about constraints at all. A layer
+// that coerces a failed memory load into `[]` therefore hands the model a
+// confident falsehood, and the symptom — 敲鼓感受节奏 offered to a class with no
+// drums — is indistinguishable from the feature never having shipped.
+
+test('memory band: an EMPTY store and an UNWIRED path are different prompts, and both say which they are', () => {
+  const missing = memoryBandText(null);
+  const empty = memoryBandText([]);
+  assert.equal(missing, '', 'not looked up → no band at all');
+  assert.notEqual(empty, '', 'looked up and empty → a band that says so');
+
+  assert.ok(empty.includes('共 0 条'), 'the count is stated, not implied by absence');
+  assert.ok(empty.includes('是查过之后没有，不是没查'), 'the model is told which absence this is');
+  for (const scope of ['teacher', 'class', 'course']) {
+    assert.ok(empty.includes(`scope=${scope}`), `${scope} header survives an empty store`);
+  }
+
+  // And the opposite direction: a populated band never claims to be empty.
+  const full = memoryBandText(FACTS);
+  assert.ok(full.includes('共 2 条'), 'live facts are counted');
+  assert.ok(!full.includes('不是没查'), 'the empty notice appears only when it is true');
+});
+
+test('memory band: teacher scope rides the prompt too — widening must not delete a fact from context', () => {
+  // 「这对我带的每个班都成立」 is her deliberate tap on 扩大. A band rendering only
+  // class and course would answer that tap by dropping the fact out of every
+  // future prompt — 「我早就跟你说过」, caused by the widen button.
+  const widened = [{
+    id: 'f-course-9', kind: 'space', scope: 'teacher', text: '下雨就用不了户外场地',
+    quote: '我们下雨天就出不去', at: '2026-07-20T09:00:00Z', source: 'teacher',
+    widened_from: 'course', widened_at: '2026-07-25T09:00:00Z',
+  }];
+  const band = memoryBandText(widened);
+  assert.ok(band.includes('下雨就用不了户外场地'), 'a teacher-scope fact is in the band');
+  assert.ok(band.includes('scope=teacher'), 'under its own scope header');
+  assert.ok(band.indexOf('scope=teacher') < band.indexOf('scope=class'), 'widest first');
+  assert.ok(band.indexOf('scope=class') < band.indexOf('scope=course'), 'then class, then course');
+  assert.ok(band.includes('共 1 条'));
+});
+
+test('ASSERTION (ADR-0011 §5) FIRES: memory looked up, band dropped from the note', () => {
+  // The regression the ADR names — a refactor that keeps fetching facts and
+  // stops appending the band. It cannot be produced through today's inputs
+  // (every array yields a band), which is exactly what a tripwire for a future
+  // refactor should look like, so the rule is exercised as the function it is.
+  const noBand = ['# 当前 course_state（只读快照）', '# 课程计划骨架（只读…）'];
+  assert.throws(() => assertMemoryBand(noBand, []), /记忆 band is missing/, 'empty lookup dropped');
+  assert.throws(() => assertMemoryBand(noBand, FACTS), /记忆 band is missing/, 'populated lookup dropped');
+  assert.throws(() => assertMemoryBand([], FACTS), /ADR-0011/, 'and it names the ADR that requires it');
+  // A band under the OLD heading is still a dropped band: renaming the heading
+  // without updating the constant is how an assertion stops asserting.
+  assert.throws(() => assertMemoryBand(['# 记忆（班级与课程；…）'], FACTS), /记忆 band is missing/);
+});
+
+test('ASSERTION (ADR-0011 §5) STAYS SILENT: not looked up, or looked up and shipped', () => {
+  const withBand = [memoryBandText([])];
+  assert.doesNotThrow(() => assertMemoryBand([], null), 'null = not looked up, absence is correct');
+  assert.doesNotThrow(() => assertMemoryBand([], undefined), 'undefined = not looked up');
+  assert.doesNotThrow(() => assertMemoryBand(withBand, []), 'empty and shipped');
+  assert.doesNotThrow(() => assertMemoryBand([memoryBandText(FACTS)], FACTS), 'populated and shipped');
+
+  // And through the real assembler, on every stage and every band combination.
+  const state = createInitialState('assert-memory');
+  assert.doesNotThrow(() => stateNoteText(state, { facts: null }));
+  assert.doesNotThrow(() => stateNoteText(state, {}));
+  assert.doesNotThrow(() => stateNoteText(state, { facts: [] }));
+  assert.ok(stateNoteText(state, { facts: [] }).includes('# 记忆（教师、班级与课程'));
+});
+
+test('the assertion is wired into stateNoteText, not merely exported', async () => {
+  for (const stage of [0, 1, 2, 3, 4, 5]) {
+    const s = createInitialState(`assert-${stage}`);
+    s.stage = stage;
+    s.course_plan = PLAN;
+    const { stateNote } = await buildPromptParts(s, stub, { facts: FACTS, subject: 'p1.1.1' });
+    assert.ok(stateNote.includes('# 记忆（教师、班级与课程'), `stage ${stage} ships the band`);
+  }
 });
 
 test('memory band is NOT retrieved by relevance: a class fact about drums rides a turn about lion heads', () => {

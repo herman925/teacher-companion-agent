@@ -33,7 +33,7 @@ import { buildPromptParts, cacheStableHistory, stageModuleName, profileSectionTe
 import { shouldSearch, buildQuery, runWebSearch, searchResultsToContext, supportsWebSearch } from './src/web-search.mjs';
 import { checkScope, refusalTurn } from './src/scope-guard.mjs';
 import { store } from './src/store.mjs';
-import { deriveCourseTitle, normalizeSubject, TITLE_MAX } from './src/store/json-store.mjs';
+import { deriveCourseTitle, normalizeSubject, TITLE_MAX, MATERIAL_KINDS } from './src/store/json-store.mjs';
 import { shouldRegenTitle, buildTitleMessages, sanitizeTitle, TITLE_INTERVALS, TITLE_INTERVAL_DEFAULT } from './src/title-agent.mjs';
 import { parseCookies, sessionCookie, clearSessionCookie, SESSION_COOKIE, displayNameError } from './src/auth-util.mjs';
 import { vaultReady, encryptKey, decryptKey } from './src/key-vault.mjs';
@@ -41,6 +41,9 @@ import { createRateGate } from './src/rate-gate.mjs';
 import { assertPublicHttpsUrl } from './src/net-guard.mjs';
 import { containsCredential } from './src/redact.mjs';
 import { appendAccess, pruneAccess, readAccess, RETENTION_DAYS } from './src/access-log.mjs';
+import { loadFacts, captureMemoryFacts, rawMemoryFacts, touchFacts } from './src/memory-capture.mjs';
+import { createLocalObjectStore, materialKey, validKey } from './src/storage/object-store.mjs';
+import { intakeFile, ACCEPTED_MIME_TYPES } from './src/upload-intake.mjs';
 
 // Auth (SECURITY.md): opaque session cookie → store lookup. Courses are scoped
 // to the session user; no session = visitor (演示模式 only, /api/courses* 401s).
@@ -221,6 +224,52 @@ const SCOPE_ENFORCE = process.env.SCOPE_ENFORCE === '1';
 // outside the database it audits is harder to quietly edit.
 const DATA_DIR = process.env.DEMO_DATA_DIR || path.join(ROOT, '.data');
 
+// ---------- uploaded files (ADR-0013 §6) ----------
+// The bytes live under the data root, never under anything the static handler
+// serves. `OBJECT_DIR` is checked explicitly at the bottom of the static
+// handler as well — the dot-segment rule already covers the default `.data`
+// layout, but DEMO_DATA_DIR can point anywhere and a second lock costs nothing.
+const OBJECT_DIR = path.resolve(path.join(DATA_DIR, 'objects'));
+const objectStore = createLocalObjectStore({ baseDir: OBJECT_DIR });
+
+/** Read a positive megabyte setting from the env, else the default. */
+const mb = (name, fallbackMb) => {
+  const n = Number(process.env[name]);
+  return (Number.isFinite(n) && n > 0 ? n : fallbackMb) * 1024 * 1024;
+};
+/** One file. Big enough for a phone photo or a 教案, small enough that a
+ * mistake is not a disk. */
+const UPLOAD_MAX_BYTES = mb('UPLOAD_MAX_MB', 10);
+/** Everything ONE teacher may keep. Local disk is the pilot's storage and
+ * ADR-0013 §6's objection to it is real — a full system disk stops PostgreSQL
+ * and takes the service down — so the compensating controls ship WITH the
+ * endpoint rather than after it. */
+const UPLOAD_USER_BUDGET_BYTES = mb('UPLOAD_BUDGET_MB', 500);
+/** Below this much free space, uploads are refused with a clear message
+ * instead of filling the volume the database is on. */
+const UPLOAD_DISK_FLOOR_BYTES = mb('UPLOAD_DISK_FLOOR_MB', 1024);
+
+/**
+ * Delete one stored object. Injected into `deleteCourse` / `eraseUser`, which
+ * both take a deleter and have both been called WITHOUT one until now — the
+ * store harvested the keys and serve.mjs logged an orphan warning.
+ *
+ * The moment real uploads exist that warning becomes a photograph of children
+ * left in storage with no row pointing at it: undeletable, because the row was
+ * the only record of the key. That is the exact failure ADR-0013 §6 names, so
+ * the deleter lands in the same change as the endpoint.
+ * @param {string} cosKey
+ */
+async function deleteObject(cosKey) {
+  if (!validKey(cosKey)) {
+    // A key this store cannot resolve is not ours to delete — say so loudly
+    // rather than swallow it, because the alternative reading is「deleted」.
+    console.warn(`[objects] refusing to delete an unrecognized key: ${String(cosKey).slice(0, 120)}`);
+    return;
+  }
+  await objectStore.delete(cosKey);
+}
+
 /**
  * Record one admin content read. ADR-0013 §7 accepts full admin reach ONLY
  * because every read is recorded, so this is the compensating control itself,
@@ -308,6 +357,13 @@ async function effectiveRegistry(req) {
   return registry;
 }
 
+// ---------- memory: the fact write path (ADR-0011, ADR-0013 §9) ----------
+// The policy, the guards and the store writes live in memory-capture.mjs — in
+// their own file because every rule there is a rule that can be satisfied by
+// doing nothing, and a guard exercised only through a live vendor turn is a
+// guard nobody ever proves. It takes the store as an argument so the tests run
+// the SAME function against a scratch store.
+
 // ---------- turn pipeline ----------
 
 /**
@@ -336,12 +392,20 @@ async function runTurn(req, emit) {
   // `subject` is the engine-resolved turn subject (ADR-0010 §1) — 'course' or a
   // plan node id. It selects the focus band, whose header is what labels a
   // hypothesis body AS a hypothesis; without it a node body arrives as a flat
-  // statement. UNWIRED, and said out loud rather than faked: `facts` (the memory
-  // band) has no store yet — no field in course_state, nothing writing it — so
-  // the band is correctly absent rather than empty. See HANDOFF.md.
+  // statement.
+  //
+  // `facts` is the always-on memory band (ADR-0011). THE THREE VALUES ARE
+  // DIFFERENT ANSWERS AND MUST STAY DIFFERENT: an array renders the band, `[]`
+  // renders both headers with no rows (this class genuinely has no recorded
+  // constraints), and `null`/absent omits the band entirely (memory could not
+  // be read on this path). The stateless /api/chat branch has no course and no
+  // owner, so it passes nothing and the band is correctly absent rather than
+  // falsely empty — see the loader in runCourseTurn for why coercing a read
+  // failure into `[]` would be the dangerous direction.
   const { system: systemPrompt, stateNote } = await buildPromptParts(state, loadPrompt, {
     profile: req.profile,
     subject: req.subject,
+    facts: req.facts,
   });
   const keptHistory = cacheStableHistory(req.history || []);
   const messages = [
@@ -497,8 +561,18 @@ async function runTurn(req, emit) {
     // `confirmed_by_quote` is trusted, and the model can mint the teacher's own
     // words. Coerced rather than passed through, so an absent message reads as
     // an empty one (nothing can be quoted from it) instead of as "unchecked".
+    // `resolveUploadRef` is forwarded to L3 and, below, to the apply step —
+    // BOTH, or neither. harness.mjs threads it into the same
+    // engine.evidenceIsGrounded the applier calls precisely so the two reach
+    // the same verdict on the same row; a harness that grounds an upload the
+    // applier then strips reports a turn legal that the ledger will mark.
     const violations = parsed.turn
-      ? validateTurn(parsed.turn, state, { stylePref: req.profile?.stylePref, teacherText, mock: fromMock })
+      ? validateTurn(parsed.turn, state, {
+        stylePref: req.profile?.stylePref,
+        teacherText,
+        mock: fromMock,
+        resolveUploadRef: req.resolveUploadRef,
+      })
       : parsed.violations;
     const blocking = violations.filter((v) => v.action === 'block');
     allViolations.push(...violations.map((v) => ({ ...v, attempt })));
@@ -532,7 +606,18 @@ async function runTurn(req, emit) {
       });
     }
 
-    if (accepted) { turn = parsed.turn; break; }
+    if (accepted) {
+      turn = parsed.turn;
+      // The memory channel (ADR-0011 §4). Read off the RAW payload rather than
+      // the parsed turn: parseTurn rebuilds the turn from a fixed field list,
+      // so a new optional field has to be picked up here or it is dropped
+      // before anyone sees it. Attached to the turn object so it rides
+      // `messages.turn_contract` into storage and the exports — the record of
+      // what the model ASKED to remember, which stays true whether or not the
+      // guards below let any of it through.
+      turn.memory_facts = rawMemoryFacts(result.payload);
+      break;
+    }
     if (attempt === 2) { turn = safeTemplate(state); degraded = true; break; } // L4 terminal fallback
     // L4: inject violation report and regenerate once.
     messages.push(
@@ -549,11 +634,13 @@ async function runTurn(req, emit) {
     // is kept but marked, and stops counting toward the stage gates.
     teacherText,
     // The `demo_sample` exemption belongs to the scripted walkthrough alone.
-    // NO `resolveUploadRef` is passed: there is no upload endpoint yet, so
-    // there is nothing to resolve against and an `upload_ref` grounds nothing
-    // (engine.evidenceIsGrounded). When the endpoint lands, this is where the
-    // owned-material lookup is threaded in.
     mock: fromMock,
+    // The owned-material lookup, built ONCE per turn in runCourseTurn from the
+    // requesting teacher's own materials on THIS course. Absent on the
+    // stateless /api/chat path, where there is no course and no owner — and an
+    // absent resolver grounds nothing (engine.evidenceIsGrounded), which is the
+    // closed direction.
+    resolveUploadRef: req.resolveUploadRef,
   });
   allViolations.push(...applied.violations.map((v) => ({ ...v, attempt: 'apply' })));
   // Blueprint artifacts merge into the living mother plan (module-granularity
@@ -662,12 +749,46 @@ async function runCourseTurn(userId, courseId, body, emit) {
     content: m.content,
   }));
 
+  // The owned-material set, loaded ONCE and BEFORE the model runs, so nothing
+  // in the turn can influence it. Scoped by teacher AND course: a ref naming
+  // her own material on a different course still fails, because the evidence it
+  // would ground belongs to this course's ledger.
+  //
+  // OWNERSHIP, NOT EXISTENCE. `listMaterialIds(userId, courseId)` filters by
+  // owner AND course in both tiers (and by `materials_owner` RLS on the
+  // Postgres one), so the set can only ever contain her rows on this course;
+  // the resolver is then a membership test against that set. A resolver that
+  // answered 「does this id exist」 would be a privacy leak and an
+  // evidence-fabrication channel at the same time: any teacher could cite any
+  // other teacher's upload as her own evidence. The course half matters too,
+  // and is the quieter of the two — her own material from LAST term's course
+  // is not a record of what happened in this one.
+  let owned = new Set();
+  try {
+    owned = new Set((await store.listMaterialIds(userId, courseId)).map(String));
+  } catch (e) {
+    // Fail CLOSED: an unreadable material list grounds nothing, so an
+    // `upload_ref` is treated as unverified and the evidence row is marked.
+    console.warn('[materials] owned-list read failed — upload_ref grounds nothing this turn:', e?.message ?? e);
+  }
+  // Synchronous by construction: applyDelta and validateTurn are pure and must
+  // stay so, which is why the lookup happens here and the predicate only
+  // answers from what was already loaded.
+  const resolveUploadRef = (ref) => owned.has(String(ref));
+
+  // The memory band. `null` when the read failed — never `[]`; see loadFacts.
+  const classId = course.class_id ?? null;
+  const facts = await loadFacts(store, userId, courseId, classId);
+
   let captured = null;
   const wrap = (event, data) => { if (event === 'turn') captured = data; emit(event, data); };
   // `subject` and `userId` ride the same request object the pipeline already
   // takes: the subject selects the focus band, the user id puts this teacher's
   // scope verdicts in the 范围护栏 log next to the anonymous ones.
-  await runTurn({ ...body, subject, userId, state: course.course_state, history, message: body.message }, wrap);
+  await runTurn({
+    ...body, subject, userId, facts, resolveUploadRef,
+    state: course.course_state, history, message: body.message,
+  }, wrap);
 
   // Persist only a real, accepted turn. append-only messages + gated state save.
   if (captured && captured.turn) {
@@ -688,9 +809,43 @@ async function runCourseTurn(userId, courseId, body, emit) {
       guards: captured.guards?.length ? captured.guards : null,
       stage_name: captured.stageName ?? null,
     });
+    let stateSaved = false;
     try {
       await store.saveState(courseId, captured.turn.state_delta ?? {}, captured.state, course.state_version);
+      stateSaved = true;
     } catch { /* optimistic-lock conflict (not expected single-user); messages kept, state left */ }
+
+    // ---- memory: file this turn's facts, AFTER the state that justifies them ----
+    // Order is the rule, not a preference: a fact must never outlive the state
+    // and the messages it came from. saveState failures are swallowed just
+    // above, so extraction placed any higher would file memory for a turn that
+    // was never persisted — and memory rides every future prompt, so that row
+    // would outlast the thing it was supposed to describe.
+    if (stateSaved) {
+      const memory = await captureMemoryFacts(store, {
+        userId,
+        courseId,
+        classId,
+        teacherText: String(body.message ?? ''),
+        candidates: captured.turn.memory_facts,
+        facts,
+      });
+      // Every outcome is stated, including every refusal. The client turns
+      // these into 记住了 receipts with 撤销 in the same tap — undo at the moment
+      // of capture is what makes automatic extraction safe, because a wrong
+      // fact has to die while she is still looking at it.
+      if (memory.recorded.length || memory.refused.length || memory.archived.length || memory.notice) {
+        emit('memory', memory);
+        for (const r of memory.refused) {
+          console.warn(`[memory] refused (${r.reason}): ${String(r.text).slice(0, 40)}`);
+        }
+      }
+      // The facts that just rode this prompt are marked as used, so the cap
+      // evicts what she never hits rather than what she hits most.
+      await touchFacts(store, userId, (facts ?? []).filter((f) => !f.archived).map((f) => f.id));
+    } else if (Array.isArray(captured.turn.memory_facts) && captured.turn.memory_facts.length) {
+      console.warn('[memory] state was not saved — this turn\'s facts were NOT filed');
+    }
     // Auto-title (DATABASE.md §4): the model's own theme extraction names the
     // course; a human rename (title_locked) always wins and is never overwritten.
     try {
@@ -739,6 +894,80 @@ async function runCourseTurn(userId, courseId, body, emit) {
       }
     } catch { /* naming is cosmetic — never fail the turn over it */ }
   }
+}
+
+// ---------- uploads: the ingest path ----------
+
+/**
+ * Read a request body with a hard ceiling.
+ *
+ * NEVER BUFFER FIRST AND CHECK AFTER. The declared `content-length` is checked
+ * before a byte is read (that catches the honest 200MB photo immediately), and
+ * the stream is counted as it arrives so a chunked body that lies about its
+ * size still stops at the cap instead of at the memory limit. What we do hold
+ * is bounded by the cap itself, which is what makes it safe to sniff and strip
+ * the file in one piece.
+ *
+ * @param {import('node:http').IncomingMessage} req @param {number} max
+ * @returns {Promise<{ok: true, bytes: Buffer}|{ok: false, reason: 'too_large'}>}
+ */
+async function readCappedBody(req, max) {
+  const declared = Number(req.headers['content-length']);
+  if (Number.isFinite(declared) && declared > max) return { ok: false, reason: 'too_large' };
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > max) {
+      req.destroy();
+      return { ok: false, reason: 'too_large' };
+    }
+    chunks.push(chunk);
+  }
+  return { ok: true, bytes: Buffer.concat(chunks) };
+}
+
+/** Bytes this teacher already holds, across every course. */
+async function usedBytes(userId) {
+  const rows = await store.listMaterials(userId);
+  return rows.reduce((n, m) => n + (Number(m.size_bytes) || 0), 0);
+}
+
+/**
+ * Serve one material's bytes. Shared by the owner route and the admin route so
+ * the two cannot drift in what they send — only in who is allowed to ask, and
+ * in whether the read is written to the access log.
+ *
+ * NO CACHING HEADERS, and `attachment` rather than inline: these bytes are a
+ * photograph of children, so a shared browser must not keep them and a stray
+ * link must not render them into a page.
+ */
+function streamMaterial(res, material) {
+  if (!validKey(material.cos_key)) {
+    res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ ok: false, message: '文件不存在' }));
+    return;
+  }
+  const stream = objectStore.get(material.cos_key);
+  let opened = false;
+  stream.on('error', () => {
+    // A row whose object is gone is a broken link, not a server fault — and
+    // saying 404 keeps it indistinguishable from 「not yours」.
+    if (!opened) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, message: '文件不存在' }));
+    } else res.destroy();
+  });
+  stream.once('open', () => {
+    opened = true;
+    res.writeHead(200, {
+      'content-type': material.mime_type || 'application/octet-stream',
+      'content-disposition': `attachment; filename="${material.id}"`,
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    });
+    stream.pipe(res);
+  });
 }
 
 // ---------- http plumbing ----------
@@ -992,12 +1221,11 @@ const server = http.createServer(async (req, res) => {
       }
       // DELETE /api/courses/:id — whole-course erasure (data-subject deletion)
       if (seg.length === 1 && req.method === 'DELETE') {
-        // No COS client exists in this server yet, so no `deleteObject` is
-        // injected and the keys come back for the caller to own. They are
-        // LOGGED, not returned to the browser: an object key is the address of
-        // a photograph of children, and ADR-0013 §6 keeps the bucket private.
-        // The moment an upload endpoint lands, its deleter is injected here.
-        const removed = await store.deleteCourse(uid, courseId);
+        // The deleter is injected: deleting a course deletes its objects
+        // (ADR-0013 §6). Any key the store could not hand to it comes back in
+        // the receipt and is LOGGED, never returned to the browser — an object
+        // key is the address of a photograph of children.
+        const removed = await store.deleteCourse(uid, courseId, { deleteObject });
         if (!removed.deleted) return json(404, { ok: false, message: '课程不存在' });
         if (removed.cos_keys.length && !removed.objects_deleted) {
           console.warn(`[cos] ${removed.cos_keys.length} object(s) from course ${courseId} still need deleting: ${removed.cos_keys.join(' ')}`);
@@ -1023,6 +1251,119 @@ const server = http.createServer(async (req, res) => {
         } catch (e) {
           return json(e.status ?? 500, { ok: false, message: e.message });
         }
+      }
+      // PUT /api/courses/:id/class — bind this course to one of HER classes
+      // (ADR-0011 §3). This is the binding `listFacts` resolves class-scope
+      // memory through, so without it class facts are written and never read.
+      //
+      // THE CLASS IS RE-VERIFIED HERE even though `setCourseClass` verifies it
+      // in both tiers. Foreign keys bypass row-level security, so no policy
+      // checks the referenced class — and binding a stranger's class would pull
+      // HER class-scope memory into HIS course, on every turn, forever. Two
+      // checks for the one thing that has no lock of its own.
+      if (seg.length === 2 && seg[1] === 'class' && req.method === 'PUT') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const q = body ? JSON.parse(body) : {};
+        const classId = q.class_id == null || q.class_id === '' ? null : String(q.class_id);
+        try {
+          if (classId != null) {
+            const mine = await store.listClasses(uid);
+            if (!mine.some((k) => k.id === classId)) return json(404, { ok: false, message: '班级不存在' });
+          }
+          const bound = await store.setCourseClass(uid, courseId, classId);
+          return json(200, { ok: true, course: bound });
+        } catch (e) {
+          return json(e.status ?? 500, { ok: false, message: e.message });
+        }
+      }
+      // ---- uploads (ADR-0013 §6) ----
+      // POST /api/courses/:id/materials — raw body, one file, content-type in
+      // the header. No multipart parser: this repository has one dependency and
+      // it is `pg`, and a hand-rolled multipart parser is a security surface in
+      // exchange for a convenience the browser does not need (`fetch(url, {body:
+      // file})` sends the bytes and the type on its own).
+      //
+      // THE ORDER IS BYTES, THEN ROW, and the catch undoes the bytes. A row
+      // without an object is a broken link she can be told about; an object
+      // without a row is a photograph of children that nothing points at, which
+      // means nothing can ever delete it (ADR-0013 §6's named failure).
+      if (seg.length === 2 && seg[1] === 'materials' && req.method === 'POST') {
+        const free = await objectStore.freeBytes();
+        if (free != null && free < UPLOAD_DISK_FLOOR_BYTES) {
+          console.error(`[objects] refusing uploads: ${Math.round(free / 1048576)}MB free, floor is ${Math.round(UPLOAD_DISK_FLOOR_BYTES / 1048576)}MB`);
+          return json(507, { ok: false, message: '服务器暂时没有存放空间了——请联系管理员' });
+        }
+        const body = await readCappedBody(req, UPLOAD_MAX_BYTES);
+        if (!body.ok) {
+          return json(413, { ok: false, message: `文件太大了——单个文件最多 ${Math.round(UPLOAD_MAX_BYTES / 1048576)}MB` });
+        }
+        if (!body.bytes.length) return json(400, { ok: false, message: '没有收到文件内容' });
+        const used = await usedBytes(uid);
+        if (used + body.bytes.length > UPLOAD_USER_BUDGET_BYTES) {
+          return json(507, { ok: false, message: `你的上传空间用完了（上限 ${Math.round(UPLOAD_USER_BUDGET_BYTES / 1048576)}MB）——删掉一门旧课程可以腾出空间` });
+        }
+        // Identified by CONTENT. The filename and the declared type are both
+        // teacher-supplied text, so both are hints; the magic bytes decide, and
+        // anything the sniffer cannot name is refused rather than guessed at.
+        const intake = intakeFile(body.bytes, req.headers['content-type']);
+        if (!intake.ok) return json(415, { ok: false, reason: intake.reason, message: intake.message });
+
+        // The kind defaults from the format and can be narrowed by the caller,
+        // never widened past the store's allowlist. `contains_children` decides
+        // retention and access rules, so a photo is assumed to contain children
+        // unless the caller says otherwise — the safe direction is the stricter
+        // one.
+        const askedKind = url.searchParams.get('kind');
+        const kind = MATERIAL_KINDS.includes(askedKind)
+          ? askedKind
+          : (intake.mime === 'image/jpeg' ? 'photo' : 'document');
+        const childrenParam = url.searchParams.get('children');
+        const containsChildren = childrenParam === null
+          ? intake.mime === 'image/jpeg'
+          : childrenParam !== '0' && childrenParam !== 'false';
+
+        const key = materialKey(courseId, intake.ext);
+        await objectStore.put(key, intake.bytes);
+        let row;
+        try {
+          row = await store.recordMaterial(uid, courseId, {
+            kind,
+            mime_type: intake.mime,
+            cos_key: key,
+            size_bytes: intake.bytes.length,
+            exif_stripped: intake.exif_stripped,
+            contains_children: containsChildren,
+          });
+        } catch (e) {
+          await objectStore.delete(key); // never leave bytes nothing points at
+          return json(e.status ?? 500, { ok: false, message: e.message });
+        }
+        // The object key is NOT returned. It is the address of a photograph of
+        // children, and the only way to read one back is a session-checked
+        // handler that looks the ownership up again.
+        return json(200, {
+          ok: true,
+          material: {
+            id: row.id, kind: row.kind, mime_type: row.mime_type, size_bytes: row.size_bytes,
+            exif_stripped: row.exif_stripped, contains_children: row.contains_children,
+            created_at: row.created_at,
+          },
+        });
+      }
+      // GET /api/courses/:id/materials — her own uploads on this course. Keys
+      // stripped, for the same reason.
+      if (seg.length === 2 && seg[1] === 'materials' && req.method === 'GET') {
+        const rows = await store.listMaterials(uid, courseId);
+        return json(200, {
+          ok: true,
+          materials: rows.map((m) => ({
+            id: m.id, kind: m.kind, mime_type: m.mime_type, size_bytes: m.size_bytes,
+            exif_stripped: m.exif_stripped, contains_children: m.contains_children,
+            created_at: m.created_at,
+          })),
+          limits: { file_max_bytes: UPLOAD_MAX_BYTES, user_budget_bytes: UPLOAD_USER_BUDGET_BYTES, accepted: ACCEPTED_MIME_TYPES },
+        });
       }
       // GET /api/courses/:id/messages?before=&limit=&subject= — paged history.
       // No subject = the whole course log, so every existing caller is unchanged;
@@ -1086,6 +1427,167 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // ---------- memory + classes: the TEACHER plane (ADR-0011) ----------
+  //
+  // THERE IS NO CREATE ROUTE FOR A FACT, AND THERE MUST NEVER BE ONE. A fact is
+  // EXTRACTED from something she said — `memory-capture.mjs` screens every
+  // candidate against the closed taxonomy, requires the quote to occur in THIS
+  // turn's teacher message, archives child claims on arrival and clamps the
+  // scope. A `POST /api/memory` would skip all four in one call, and it would
+  // also turn the memory viewer into a form: the teacher would be filling in
+  // the state machine instead of talking to the agent (non-negotiable #2).
+  // So these routes read, retire and widen what the conversation produced —
+  // nothing here can bring a fact into being. `demo/tests/memory-routes.test.mjs`
+  // pins that absence with a test, so an edit that adds one fails rather than
+  // passing review.
+  //
+  // Every route is session-checked, scoped to `uid`, and runs on the ORDINARY
+  // connection — never the admin plane. A foreign id and a missing id answer the
+  // same 404 with the same body: a distinguishable response tells one teacher
+  // that another teacher's fact exists.
+  if (url.pathname === '/api/memory' || url.pathname.startsWith('/api/memory/')
+      || url.pathname === '/api/classes' || url.pathname.startsWith('/api/classes/')) {
+    const json = (status, obj) => {
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(obj));
+    };
+    /** The one 404 body. Both 「not yours」 and 「not there」 use it, verbatim. */
+    const notFound = () => json(404, { ok: false, message: '这条记忆不在了' });
+    try {
+      const me = await sessionUser(req);
+      if (!me) return json(401, { ok: false, need_login: true, message: '请先登录' });
+      const uid = me.id;
+      const mem = url.pathname.startsWith('/api/memory')
+        ? url.pathname.slice('/api/memory'.length).split('/').filter(Boolean).map(decodeURIComponent)
+        : null;
+      const cls = url.pathname.startsWith('/api/classes')
+        ? url.pathname.slice('/api/classes'.length).split('/').filter(Boolean).map(decodeURIComponent)
+        : null;
+
+      // GET /api/memory?course_id=&include_archived=1 — what the agent is
+      // currently carrying for this course: teacher scope, this course's class,
+      // and this course. `include_archived` is the VIEWER's flag and nothing
+      // else asks for it — the archived section is what stops a quiet drop from
+      // being invisible, which is worse than the drop.
+      if (mem && mem.length === 0 && req.method === 'GET') {
+        const courseId = url.searchParams.get('course_id') || null;
+        const includeArchived = url.searchParams.get('include_archived') === '1';
+        // listFacts THROWS on a read failure and must never be coerced to [] —
+        // an empty list reads as 「this class has no constraints」. The catch
+        // below turns it into a 500, which the client shows as 「没读到」.
+        const facts = await store.listFacts(uid, { courseId, includeArchived });
+        const classes = await store.listClasses(uid);
+        return json(200, { ok: true, facts, classes });
+      }
+
+      // POST /api/memory/:id/archive — her 忘掉.
+      //
+      // THE REASON IS SET HERE AND IS NOT READ OFF THE BODY. Archives already
+      // carry 'child_claim' (a claim about children with no evidence) and 'cap'
+      // (the standing ceiling evicted it). A teacher pressing 忘掉 is a THIRD
+      // event, and when she later asks 「为什么它不记得了」 she deserves an answer
+      // that says SHE retired it rather than one of ours. A body-supplied reason
+      // would let one event wear another's explanation.
+      if (mem && mem.length === 2 && mem[1] === 'archive' && req.method === 'POST') {
+        const row = await store.archiveFact(uid, mem[0], { reason: 'teacher_removed' });
+        if (!row) return notFound();
+        return json(200, { ok: true, fact: row });
+      }
+
+      // POST /api/memory/:id/widen {to_scope, class_id} — her deliberate tap,
+      // one rung: 课程 → 班级 → 我所有班.
+      //
+      // PROVENANCE STAYS ENGINE-SET. The body says WHERE TO, and nothing else:
+      // `source`, `widened_from` and `widened_at` are all written by the store
+      // (`widenFact`), and the ladder is enforced by the same screen both tiers
+      // share. A payload claiming `source: 'teacher'` changes nothing, because
+      // nothing here reads it.
+      if (mem && mem.length === 2 && mem[1] === 'widen' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const q = body ? JSON.parse(body) : {};
+        const toScope = String(q.to_scope ?? '');
+        const classId = q.class_id == null || q.class_id === '' ? null : String(q.class_id);
+        if (classId != null) {
+          const mine = await store.listClasses(uid);
+          if (!mine.some((k) => k.id === classId)) return json(404, { ok: false, message: '班级不存在' });
+        }
+        try {
+          const row = await store.widenFact(uid, mem[0], toScope, { classId });
+          if (!row) return notFound();
+          return json(200, { ok: true, fact: row });
+        } catch (e) {
+          return json(e.status ?? 500, { ok: false, message: e.message });
+        }
+      }
+
+      // GET /api/classes — her named classes. Drives 「ask which class only if
+      // she has more than one」: with one class the answer is not a question.
+      if (cls && cls.length === 0 && req.method === 'GET') {
+        return json(200, { ok: true, classes: await store.listClasses(uid) });
+      }
+
+      // POST /api/classes {name, age_band, class_size, is_default} — a class
+      // comes into existence by her NAMING one, which is why this takes a name
+      // and nothing structural. It is not a manage-classes screen and there is
+      // deliberately no DELETE: `facts.class_id` cascades, so deleting a class
+      // would destroy every constraint she widened to it, with no archive row
+      // and no notice.
+      if (cls && cls.length === 0 && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const q = body ? JSON.parse(body) : {};
+        try {
+          const created = await store.createClass(uid, {
+            name: q.name, ageBand: q.age_band ?? q.ageBand,
+            classSize: q.class_size ?? q.classSize, isDefault: q.is_default ?? q.isDefault,
+          });
+          return json(200, { ok: true, class: created });
+        } catch (e) {
+          return json(e.status ?? 500, { ok: false, message: e.message });
+        }
+      }
+
+      return json(405, { ok: false, message: 'method not allowed' });
+    } catch (e) {
+      return json(e.status ?? 500, { ok: false, message: e.message });
+    }
+  }
+
+  // ---------- reading one uploaded file back ----------
+  // GET /api/materials/:id/view — the ONLY way bytes leave this server on the
+  // teacher path, and it is private by construction, four locks deep:
+  //   1. the objects live outside the static root and are never served
+  //      statically, so there is no URL to leak in the first place;
+  //   2. this handler requires a session — there are no presigned URLs in the
+  //      local tier at all, which removes that whole class of bug;
+  //   3. the lookup is scoped to HER materials, so a foreign id is simply not
+  //      in the set — and on the Postgres tier `materials_owner` means the row
+  //      cannot even be SELECTed, so there is no `cos_key` to serve if this
+  //      check were ever refactored away;
+  //   4. admin reads go through a different endpoint, on the admin plane, and
+  //      every one of them appends an access-log line.
+  // A foreign id and a missing id answer the same 404: 「not yours」 and 「not
+  // there」 must not be distinguishable, or the endpoint becomes an oracle for
+  // which uploads exist.
+  const viewMatch = url.pathname.match(/^\/api\/materials\/([^/]+)\/view$/);
+  if (viewMatch && req.method === 'GET') {
+    const json = (status, obj) => {
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(obj));
+    };
+    const me = await sessionUser(req);
+    if (!me) return json(401, { ok: false, need_login: true, message: '请先登录' });
+    const id = decodeURIComponent(viewMatch[1]);
+    // `getMaterial` takes the user id, never a bare material id — the
+    // 「authenticated is not authorised」 hazard the store records for its
+    // course-id-only methods. It returns null rather than throwing for a
+    // foreign or missing id, which is how both answer the same 404.
+    const material = await store.getMaterial(me.id, id);
+    if (!material) return json(404, { ok: false, message: '文件不存在' });
+    return streamMaterial(res, material);
+  }
+
   // List a provider's available models (proxied — the browser can't reach vendors directly).
   //
   // A SESSION IS REQUIRED. This endpoint takes a caller-supplied address, makes
@@ -1134,6 +1636,17 @@ const server = http.createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
     const chatBody = JSON.parse(body);
+    // THE STATELESS PATH GETS NEITHER MEMORY NOR AN UPLOAD RESOLVER, and both
+    // omissions are written down rather than left to be rediscovered: there is
+    // no course here, so there is no owner to scope facts to and nothing for an
+    // `upload_ref` to be resolved against. Both fields are server-owned, so
+    // they are stripped HERE — on the line after the body is parsed, before any
+    // other code can read them. A client-supplied `facts` array would write
+    // straight into the model's memory band; the closed direction for
+    // `upload_ref` is 「grounds nothing」, which is what an absent resolver
+    // already means (engine.evidenceIsGrounded).
+    delete chatBody.facts;
+    delete chatBody.resolveUploadRef;
     // Same quota discipline as the course endpoint. Without a session this
     // endpoint could otherwise burn env keys anonymously (per-IP quota); with
     // one, account keys ride along and the per-user quota applies.
@@ -1288,6 +1801,22 @@ const server = http.createServer(async (req, res) => {
             await store.audit('console', 'reset_password', targetId, null);
             return json(200, { ok: true, temp_password: temp });
           }
+          // REVOKE — the third account state (ADR-0013 §11), and the one the
+          // console could not reach until now. `disable` writes a status the
+          // retention machinery never looks at: `dueForErasure` only ever sees
+          // `revoked`, and it needs `revoked_at` to know when the window
+          // opened. So a disabled account is data that stays forever with
+          // nobody having decided that it should.
+          //
+          // REVOKING IS NOT DELETING, and that separation is the whole point:
+          // login is refused, live sessions die, and every course, message and
+          // upload stays exactly where it is — the kindergarten may still need
+          // last year's curriculum. `store.revokeUser` writes its own audit row
+          // (both tiers), so this endpoint does not add a second one.
+          if (q.action === 'revoke') {
+            const user = await store.revokeUser('console', targetId);
+            return json(200, { ok: true, user });
+          }
           if (q.action === 'disable' || q.action === 'enable') {
             const user = await store.updateUser(targetId, { status: q.action === 'disable' ? 'disabled' : 'active' });
             await store.audit('console', `${q.action}_user`, targetId, null);
@@ -1305,6 +1834,15 @@ const server = http.createServer(async (req, res) => {
         try {
           const gone = await store.deleteUser(seg[1]);
           await store.audit('console', 'delete_user', seg[1], gone);
+          // `deleteUser` takes no deleter (the legacy signature), so the keys
+          // come back and this is where they die. Without this an erased
+          // teacher's uploads survive her rows — files nothing points at, which
+          // means nothing can find them to delete either.
+          let orphaned = 0;
+          for (const key of gone.cos_keys ?? []) {
+            if (!(await objectStore.delete(key))) orphaned += 1;
+          }
+          if (orphaned) console.warn(`[objects] ${orphaned} object(s) from erased user ${seg[1]} could not be deleted`);
           return json(200, { ok: true, ...gone });
         } catch (e) { return json(e.status ?? 500, { ok: false, message: e.message }); }
       }
@@ -1331,12 +1869,104 @@ const server = http.createServer(async (req, res) => {
         // instance, every message, every snapshot, in one file that then lives
         // on somebody's laptop. One row per export, before a byte is written.
         await recordAccess({ action: 'export_course', excerpt: `${courses.length} 个课程的完整记录` });
+        // THE EXPORT DUTY (AGENTS.md). Three kinds of state ship in this
+        // change, and state that only exists inside a widget is a defect, so
+        // all three ride the export:
+        //   · uploads — the row, never the bytes and never the object key;
+        //   · memory facts — including archived rows and their reasons, or a
+        //     wrong extraction is mysterious rather than diagnosable;
+        //   · accounts — with `status` and `revoked_at`, because a revocation
+        //     that no export records is a retention clock nobody can audit.
+        // Failures are STATED, never coerced into an empty list: an export
+        // reading `facts: []` would say 「nobody has remembered anything」,
+        // which is a different and much more comfortable claim than 「the
+        // memory could not be read」.
+        const sidecar = async (fn) => {
+          try { return { value: await fn(), error: null }; }
+          catch (e) { return { value: null, error: String(e?.message ?? e) }; }
+        };
+        // `adminListFacts` caps at 1000 rows in both tiers, so asking for more
+        // does not get more — it gets a quietly shortened export. Said out
+        // loud instead: the flag below is set when the answer came back exactly
+        // at the ceiling, because silent truncation is barred (AGENTS.md) and
+        // an export that lost half the memory with no note is worse than one
+        // that says it did.
+        const FACT_EXPORT_MAX = 1000;
+        const facts = await sidecar(() => store.adminListFacts({ limit: FACT_EXPORT_MAX }));
+        const materials = await sidecar(async () => {
+          const out = [];
+          for (const c of courses) {
+            for (const m of await store.listMaterials(c.user_id, c.id)) {
+              // The object key stays server-side even here: an export lands on
+              // a laptop, and the key is the address of a child's photograph.
+              const { cos_key, ...rest } = m;
+              out.push(rest);
+            }
+          }
+          return out;
+        });
+        const users = await sidecar(() => store.listUsers());
         res.writeHead(200, {
           'content-type': 'application/json; charset=utf-8',
           'content-disposition': 'attachment; filename="demo-data.json"',
         });
-        res.end(JSON.stringify({ exported_at: new Date().toISOString(), courses }, null, 2));
+        res.end(JSON.stringify({
+          exported_at: new Date().toISOString(),
+          courses,
+          users: users.value,
+          materials: materials.value,
+          facts: facts.value,
+          ...(facts.value?.length === FACT_EXPORT_MAX
+            ? { facts_truncated: `只导出了最近 ${FACT_EXPORT_MAX} 条记忆——还有更早的没有包含在内` }
+            : {}),
+          ...(users.error || materials.error || facts.error
+            ? { export_errors: { users: users.error, materials: materials.error, facts: facts.error } }
+            : {}),
+        }, null, 2));
         return;
+      }
+      // ---- memory facts, across teachers (ADR-0011 consequences) ----
+      // The observability duty for memory: WHICH utterance produced WHICH
+      // fact, archived rows and their reasons included. Cross-teacher reach on
+      // the admin connection, so it is a content read and is logged like one.
+      if (seg[0] === 'facts' && req.method === 'GET') {
+        const rows = await store.adminListFacts({
+          userId: url.searchParams.get('user_id') || null,
+          courseId: url.searchParams.get('course_id') || null,
+          limit: Number(url.searchParams.get('limit')) || 500,
+        });
+        await recordAccess({ action: 'read_facts', excerpt: `${rows.length} 条记忆` });
+        return json(200, { ok: true, facts: rows });
+      }
+      // ---- one course's uploads, on the admin plane ----
+      // ADR-0013 §7's reach is acceptable ONLY with the log, and an upload is
+      // the most sensitive thing this console can reach, so both the listing
+      // and the file itself append a row. The owner is resolved from the course
+      // rather than trusted from the request — the console has no session to
+      // scope by, so the course record is what says whose material this is.
+      if (seg[0] === 'courses' && seg[1] && seg[2] === 'materials' && req.method === 'GET') {
+        const course = await store.adminGetCourse(seg[1]);
+        if (!course) return json(404, { ok: false, message: '课程不存在' });
+        const rows = await store.listMaterials(course.user_id, seg[1]);
+        if (seg.length === 3) {
+          await recordAccess({ action: 'read_course', course_id: seg[1], excerpt: `${rows.length} 个上传文件` });
+          return json(200, {
+            ok: true,
+            materials: rows.map(({ cos_key, ...rest }) => rest),
+          });
+        }
+        if (seg.length === 5 && seg[4] === 'view') {
+          const material = rows.find((m) => String(m.id) === seg[3]);
+          if (!material) return json(404, { ok: false, message: '文件不存在' });
+          // Awaited before a byte moves: a log appended after the response has
+          // started is a log a client can skip by hanging up.
+          await recordAccess({
+            action: 'read_file', course_id: seg[1], subject: material.id,
+            excerpt: `${material.kind} · ${material.mime_type}${material.contains_children ? ' · 含儿童影像' : ''}`,
+          });
+          return streamMaterial(res, material);
+        }
+        return json(404, { ok: false, message: 'not found' });
       }
       if (seg[0] === 'courses' && seg[1]) {
         if (req.method === 'GET') {
@@ -1353,7 +1983,7 @@ const server = http.createServer(async (req, res) => {
           return json(200, { ok: true, course });
         }
         if (req.method === 'DELETE') {
-          const removed = await store.adminDelete(seg[1]);
+          const removed = await store.adminDelete(seg[1], { deleteObject });
           await store.audit('console', 'delete_course', null, {
             course_id: seg[1], deleted: removed.deleted, objects: removed.cos_keys.length,
           });
@@ -1384,7 +2014,13 @@ const server = http.createServer(async (req, res) => {
   const schema = rel.startsWith('/schema/');
   const base = path.resolve(schema ? path.join(ROOT, '..', 'harness') : ROOT);
   const filePath = path.resolve(path.join(base, rel));
-  if (!filePath.startsWith(base + path.sep) || rel.split('/').some((seg) => seg.startsWith('.'))) {
+  // The third lock, and the one that does not depend on where the data root
+  // happens to be: uploaded objects are NEVER served statically. With the
+  // default layout the dot-segment rule above already refuses `.data`, but
+  // DEMO_DATA_DIR can point anywhere — including inside demo/ — and a
+  // photograph of children must not become reachable by moving a directory.
+  if (!filePath.startsWith(base + path.sep) || rel.split('/').some((seg) => seg.startsWith('.'))
+      || filePath === OBJECT_DIR || filePath.startsWith(OBJECT_DIR + path.sep)) {
     res.writeHead(403); res.end('forbidden'); return;
   }
   try {

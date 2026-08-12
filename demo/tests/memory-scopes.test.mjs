@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  SCOPES, FACT_KINDS, MEMORY_COLUMNS, MEMORY_TSV_VERSION, DEFAULT_FACT_CAP,
+  SCOPES, PROMPT_SCOPES, FACT_KINDS, MEMORY_COLUMNS, MEMORY_TSV_VERSION, DEFAULT_FACT_CAP,
   normalizeFacts, screenFacts, mergeFact, supersedeFact, capFacts, factsToTSV, widenScope,
 } from '../src/memory-scopes.mjs';
 
@@ -651,4 +651,27 @@ test('the drum story: one sentence in 活动 3.2.1 reaches 周3 two days later',
   assert.ok(block.includes('班上没有鼓'));
   assert.ok(block.includes('我们班没有鼓'), '原话跟着走，错抽取才查得出来');
   assert.ok(block.includes('teacher'), '放宽是她的决定，模型该知道');
+});
+
+// ---------- which scopes ride the prompt ----------
+
+test('PROMPT_SCOPES: widest first, and node is deliberately not in it', () => {
+  // The order is the tail-loss order — if anything is ever cut, it must be the
+  // narrowest claim, not the one that binds every class she teaches.
+  assert.deepEqual([...PROMPT_SCOPES], ['teacher', 'class', 'course']);
+  assert.ok(!PROMPT_SCOPES.includes('node'), 'node memory is generated and reaches the model as the focus band');
+  for (const s of PROMPT_SCOPES) assert.ok(SCOPES.includes(s), `${s} must be a real scope`);
+});
+
+test('PROMPT_SCOPES: every scope on the list renders its own block, and each one can hold facts', () => {
+  // MUST PASS in every direction at once: a scope on the list that `factsToTSV`
+  // filtered to nothing would be a band that silently drops her widened facts.
+  const one = (scope) => ({ id: `f-${scope}`, kind: 'space', scope, text: `${scope} 作用域的一条约束`, at: AT(1), source: scope === 'course' ? 'auto' : 'teacher', widened_at: AT(2) });
+  const all = PROMPT_SCOPES.map(one);
+  for (const scope of PROMPT_SCOPES) {
+    const block = factsToTSV(all, scope);
+    assert.ok(block.includes(`scope=${scope}`), `${scope} header`);
+    assert.ok(block.includes(`${scope} 作用域的一条约束`), `${scope} row`);
+    assert.ok(block.includes('1 条'), `${scope} counts exactly its own`);
+  }
 });

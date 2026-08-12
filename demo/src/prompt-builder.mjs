@@ -4,7 +4,11 @@
 // The prompt files in demo/src/prompts/ are read as-is and never modified.
 
 import { toSkeletonTSV, ancestorsOf, walkPlan } from './plan-tsv.mjs';
-import { factsToTSV } from './memory-scopes.mjs';
+import { factsToTSV, PROMPT_SCOPES } from './memory-scopes.mjs';
+import {
+  vectorToDirectives, describeVector, axisDirective, isReadableVector, defaultVector,
+  EVIDENCE_INVARIANT,
+} from './interaction-axes.mjs';
 
 /** Stage → prompt module name (stage 4 reuses the stage3 module by design). */
 export const STAGE_MODULE = { 0: 'stage0', 1: 'stage1', 2: 'stage2', 3: 'stage3', 4: 'stage3', 5: 'stage5' };
@@ -17,9 +21,19 @@ export function stageModuleName(state) {
 const FENCE = '```';
 
 /**
- * 回应风格 → the exact directive injected into the system prompt. Single
- * source of truth: the profile UI builds its choices and its explanations
- * from this map, so the teacher reads precisely what the model is told.
+ * 回应风格 → the exact directive injected into the system prompt.
+ *
+ * THE FALLBACK, NOT THE MECHANISM, since 2026-08-13. ADR-0009 §1 replaced the
+ * single selector with the six-axis vector, and `interactionSectionText` renders
+ * that vector when the profile carries one. This map still runs — unchanged, to
+ * the byte — for every profile that does not, which today is every profile that
+ * exists: nothing writes `interaction_vector` yet. Deleting it would change the
+ * behaviour of every shipped teacher on the day the vector lands, which is the
+ * one thing the migration may not do （ADR-0009 consequences）.
+ *
+ * Single source of truth for the legacy path: the profile UI builds its choices
+ * and its explanations from this map, so the teacher reads precisely what the
+ * model is told.
  */
 export const STYLE_DIRECTIVES = {
   '简洁要点（直接给做法）': '回应尽量精炼：先给可执行的做法，再用一两句话说明，不铺陈。',
@@ -56,11 +70,46 @@ export function profileSectionText(profile) {
   if (bands.length) parts.push(`任教班级：${bands.join('、')}`);
   else if (s(profile.ageBand)) parts.push(`年段：${s(profile.ageBand)}`);
   if (s(profile.classSize)) parts.push(`班额：${s(profile.classSize)}`);
+  // ONE STYLE INSTRUCTION, NEVER TWO. When the profile carries a readable
+  // vector, the six-axis block downstream IS the style instruction, and leaving
+  // the preset sentence here too would hand the model two descriptions of how to
+  // write — which is how a teacher who moved one handle finds nothing changed.
+  // Free text is different in kind: 「喜欢户外和动手类活动」 is a CONTENT
+  // preference the six axes cannot express, so it survives either way.
   const styleDirective = STYLE_DIRECTIVES[s(profile.stylePref)];
-  if (styleDirective) parts.push(`回应风格：${styleDirective}`);
+  if (styleDirective) { if (!isReadableVector(profile.interaction_vector)) parts.push(`回应风格：${styleDirective}`); }
   else if (s(profile.stylePref)) parts.push(`偏好：${s(profile.stylePref)}`);
   if (!parts.length) return '';
   return `教师档案（只读参考）：${parts.join('；')}。据此调整举例与语气，不要向教师复述档案内容。`;
+}
+
+/**
+ * The interaction-axis band: the six axes of ADR-0009 §1 rendered as prose.
+ *
+ * WHY IT SITS IN THE CACHE-STABLE PREFIX, next to 教师档案 and not in the
+ * volatile note. The stored vector is teacher-lifetime state: it moves when she
+ * pins a handle or when inference nudges one — a handful of times in a career,
+ * not once a turn. Putting it in the prefix costs one prefix rebuild on each of
+ * those days （exactly what changing `stylePref` costs today）and nothing on
+ * every other turn. Putting it in the note would spend ~700 volatile bytes per
+ * turn, forever, to describe something that did not change.
+ *
+ * The genuinely volatile half — 「这次直接给我一版就好」 — is not here. It rides
+ * `turnStyleNoteText` in the note, late, where it can differ every turn without
+ * touching the prefix and where recency helps adherence. 后台判断稳定，前台表达
+ * 灵活, split along the exact seam the cache cares about.
+ *
+ * Returns '' for a profile with no vector, or one this build cannot read whole
+ * （see `isReadableVector`）— and in that case `profileSectionText` above has
+ * kept the legacy 回应风格 line, so the model is never left with no style
+ * instruction at all.
+ *
+ * @param {{interaction_vector?: Object}|null|undefined} profile
+ * @returns {string}
+ */
+export function interactionSectionText(profile) {
+  const vector = profile && typeof profile === 'object' ? profile.interaction_vector : null;
+  return isReadableVector(vector) ? vectorToDirectives(vector) : '';
 }
 
 /** Section separator, shared by the system prompt and the per-turn note. */
@@ -92,6 +141,8 @@ export async function buildSystemPrompt(state, loadPrompt, opts = {}) {
   ];
   const profileText = profileSectionText(opts.profile);
   if (profileText) sections.push(profileText);
+  const interactionText = interactionSectionText(opts.profile);
+  if (interactionText) sections.push(interactionText);
   return sections.join(SECTION_SEP);
 }
 
@@ -133,8 +184,21 @@ export function skeletonBandText(plan) {
   return `# 课程计划骨架（只读；本表只有标题与状态，需要哪个节点的正文就在回复里说）\n\n${FENCE}tsv\n${toSkeletonTSV(plan)}\n${FENCE}`;
 }
 
+/** The heading every memory band starts with. Its own constant because the
+ * assembler's ADR-0011 §5 assertion recognises the band by it — a heading edited
+ * in one place and matched in another is how the assertion would quietly stop
+ * asserting anything. */
+const MEMORY_HEADING = '# 记忆（教师、班级与课程；每轮完整给出，不做筛选）';
+
+/** What the band says when it has nothing to say. THE ENTIRE POINT OF ADR-0011
+ * §5, in one sentence aimed at the model rather than at us: 「we looked」 and
+ * 「we did not look」 must not read the same. Without it a zero-row band and an
+ * absent band are the same evidence — and one of them means the class has no
+ * constraints while the other means the constraints failed to load. */
+const MEMORY_EMPTY_NOTE = '：查过了，这位教师、这个班、这门课目前都没有记下约束——是查过之后没有，不是没查';
+
 /**
- * The memory band: class facts then course facts, EVERY TURN, whole.
+ * The memory band: teacher, class and course facts, EVERY TURN, whole.
  *
  * NOT RETRIEVED BY RELEVANCE, and that is the entire design. 「我们班没有鼓」
  * constrains every activity in every week; one retrieval miss two days later
@@ -143,13 +207,25 @@ export function skeletonBandText(plan) {
  * Growth is bounded upstream by curation (`capFacts`, which says so out loud),
  * never by quietly dropping rows here.
  *
- * Class first, because it is the wider claim and the one whose loss she
- * notices; if anything ever gets cut at a tail, it must not be that.
+ * WIDEST FIRST (`PROMPT_SCOPES`, whose comment owns the reasoning): teacher,
+ * then class, then course. Teacher scope is rendered because `widenScope` can
+ * put a fact there by her deliberate tap, and a band that skipped it would
+ * answer 「这对我带的每个班都成立」 by dropping the fact out of every future
+ * prompt.
  *
- * `null`/`undefined` means memory is not wired on this path and the band is
- * omitted. An EMPTY ARRAY still renders both headers — that is how a new class
- * legitimately having no facts stays distinguishable from a refactor that
- * silently stopped appending memory (ADR-0011 §5).
+ * THE TWO ABSENCES ARE DIFFERENT, AND BOTH ARE SPELLED OUT (ADR-0011 §5):
+ *   - `null`/`undefined` — memory was NOT LOOKED UP on this path (or the lookup
+ *     failed and the caller passed null, which `listFacts` is specified to make
+ *     possible by throwing rather than returning []). The band is omitted
+ *     entirely, so the model is told nothing about memory rather than told there
+ *     is none.
+ *   - an EMPTY ARRAY — memory WAS looked up and is genuinely empty. Every scope
+ *     header renders, the count reads 0, and the heading says out loud that this
+ *     is a result and not a gap.
+ * A layer that coerces a failed load into `[]` therefore tells the model this
+ * class has no constraints, which is the 「我早就跟你说过」 failure arriving
+ * through an infrastructure fault. The two shapes are kept visibly different so
+ * that mistake is a test failure rather than a support ticket.
  *
  * @param {Array<Object>|null|undefined} facts live and archived facts; archived
  *   ones are excluded by `factsToTSV`
@@ -157,8 +233,67 @@ export function skeletonBandText(plan) {
  */
 export function memoryBandText(facts) {
   if (facts == null) return '';
-  const blocks = [factsToTSV(facts, 'class'), factsToTSV(facts, 'course')];
-  return `# 记忆（班级与课程；每轮完整给出，不做筛选）\n\n${FENCE}tsv\n${blocks.join('\n\n')}\n${FENCE}`;
+  const blocks = PROMPT_SCOPES.map((scope) => factsToTSV(facts, scope));
+  // Every block is a header comment line, a column header line, then one line
+  // per live fact — `flatten` strips tabs and newlines out of every cell, so a
+  // fact can never span lines and this count cannot drift from the rows.
+  const rows = blocks.reduce((n, b) => n + Math.max(0, b.split('\n').length - 2), 0);
+  const heading = `${MEMORY_HEADING} · 共 ${rows} 条${rows ? '' : MEMORY_EMPTY_NOTE}`;
+  return `${heading}\n\n${FENCE}tsv\n${blocks.join('\n\n')}\n${FENCE}`;
+}
+
+/**
+ * 「这次直接给我一版就好」— the one-turn style override (ADR-0009 §2), and the
+ * only part of the axis vector that belongs in the volatile note.
+ *
+ * WHY IT IS SPLIT FROM `interactionSectionText`. The stored vector is stable and
+ * rides the cache-stable prefix; an override is by definition true for exactly
+ * one turn. Rendering it in the prefix would invalidate the prefix on the
+ * override turn AND again on the turn after it, twice per 「这次…」 — for a
+ * sentence whose whole value is being read as 「right now」, which is what the
+ * tail already does better.
+ *
+ * ONLY THE AXES THAT ACTUALLY MOVED A BAND. `turnOverride` marks an axis even
+ * when the new value sits in the same band, and the band is what selects the
+ * sentence — so an override from 4 to 5 says nothing new. Emitting it anyway
+ * would spend volatile bytes to repeat an instruction the prefix already gave,
+ * and would teach the model that this block is noise.
+ *
+ * ENDS WITH THE EVIDENCE INVARIANT, like every rendered axis block. This one
+ * sits LATER in the assembled prompt than the prefix's copy, and axes such as
+ * 主动性「主动提醒与挑战」 read like licence to fill gaps, so the clause has to be
+ * downstream of the last directive rather than only of the first
+ * (interaction-axes.mjs states that requirement; this is where it is honoured).
+ *
+ * @param {{interaction_vector?: Object}|null|undefined} profile the STORED
+ *   profile, i.e. what the prefix already said
+ * @param {Object|null|undefined} turnVector the render-only vector from
+ *   `interaction-axes.turnOverride`
+ * @returns {string} '' when there is no override, or none that changes a band
+ */
+export function turnStyleNoteText(profile, turnVector) {
+  if (!isReadableVector(turnVector)) return '';
+  const storedVector = profile && typeof profile === 'object' ? profile.interaction_vector : null;
+  // No stored vector means the prefix rendered no axis block, so 「what the
+  // model was already told」 is the default point — the same one the vector
+  // module falls back to. Comparing against anything else would let an override
+  // look like a no-op when it is not.
+  const before = new Map(
+    describeVector(isReadableVector(storedVector) ? storedVector : defaultVector()).map((r) => [r.axis, r]),
+  );
+  const lines = [];
+  for (const row of describeVector(turnVector)) {
+    if (!row.turnOverride) continue;
+    if (before.get(row.axis)?.band === row.band) continue;
+    lines.push(`${row.zh}：${axisDirective(row.axis, row.value)}`);
+  }
+  if (!lines.length) return '';
+  return [
+    '# 本轮临时表达调整（教师刚提出，只对这一轮有效；她的档案没有改）',
+    '',
+    ...lines,
+    EVIDENCE_INVARIANT,
+  ].join('\n');
 }
 
 /**
@@ -260,20 +395,65 @@ export function focusBandText(plan, subject) {
 }
 
 /**
+ * ADR-0011 §5's assertion, as its own function so it can be tested in the
+ * direction that matters.
+ *
+ * §5 rejected a pre-send harness check for memory and asked for 「an assertion
+ * inside the assembler plus a unit test, catching the regression where a
+ * refactor silently stops appending memory」. Inline in `stateNoteText` it would
+ * be untestable in the firing direction — today's `memoryBandText` returns a
+ * band for every array, so no input can make it fire, which is precisely what a
+ * tripwire for a FUTURE refactor should look like. Pulled out here, both
+ * directions are ordinary arguments.
+ *
+ * It throws rather than warns. Memory fetched and then not shipped is a bug in
+ * our own code, and the symptom it produces — the model offering 敲鼓感受节奏 to a
+ * class with no drums — is indistinguishable from the feature never having been
+ * built. A failed turn is loud; a silently memory-less prompt is 「我早就跟你说
+ * 过」 with nothing on screen to explain it.
+ *
+ * @param {Array<string>} sections the note's assembled sections
+ * @param {Array<Object>|null|undefined} facts what the caller passed as memory
+ * @throws {Error} when memory was looked up and the band is not in the note
+ */
+export function assertMemoryBand(sections, facts) {
+  if (!Array.isArray(facts)) return; // not looked up → correctly absent
+  if (sections.some((s) => String(s).startsWith(MEMORY_HEADING))) return;
+  throw new Error(
+    'prompt-builder: memory was looked up but the 记忆 band is missing from the per-turn note '
+    + '(ADR-0011 §5). A prompt assembled this way tells the model the class has no constraints.',
+  );
+}
+
+/**
  * The volatile per-turn note: live state snapshot + pacing, then the skeleton,
- * memory and focus bands.
+ * memory, one-turn style and focus bands.
  *
- * BAND ORDER IS DELIBERATE. Focus sits last, nearest the teacher's newest
- * message, for the same recency reason this whole note is a trailing system
- * message rather than part of the prefix.
+ * BAND ORDER IS DELIBERATE, widest context first and most specific last:
+ *   snapshot+pacing → 课程计划骨架 → 记忆 → 本轮临时表达调整 → 焦点节点
+ * Focus sits last, nearest the teacher's newest message, for the same recency
+ * reason this whole note is a trailing system message rather than part of the
+ * prefix. The one-turn style override sits directly above it because it is the
+ * only other thing here that is true of THIS turn alone.
  *
- * DEGRADES TO THE BYTE. No `course_plan`, no `facts`, no `subject` → the output
- * is exactly what it was before the bands existed. That is not politeness to
- * old fixtures: every caller that has not been taught about bands yet keeps
- * getting a whole, correct prompt rather than a quietly emptied one.
+ * THE ADR-0011 §5 ASSERTION LIVES HERE. That section rejected a pre-send harness
+ * check for memory and asked instead for 「an assertion inside the assembler plus
+ * a unit test, catching the regression where a refactor silently stops appending
+ * memory」. This is it, and it is deliberately a throw: memory having been looked
+ * up and then not shipped is a bug in our own code, not a condition in the
+ * world, and the symptom it produces downstream — the model offering 敲鼓感受节奏
+ * to a class with no drums — is indistinguishable from the feature never having
+ * been built. Failing the turn is loud; shipping a silently memory-less prompt
+ * is 「我早就跟你说过」 with nothing on screen to explain it.
+ *
+ * DEGRADES TO THE BYTE. No `course_plan`, no `facts`, no `subject`, no override
+ * → the output is exactly what it was before the bands existed. That is not
+ * politeness to old fixtures: every caller that has not been taught about bands
+ * yet keeps getting a whole, correct prompt rather than a quietly emptied one.
  *
  * @param {Object} state current course_state
- * @param {{subject?: string, facts?: Array<Object>}} [opts]
+ * @param {{subject?: string, facts?: Array<Object>, profile?: Object,
+ *   turnVector?: Object}} [opts]
  * @returns {string}
  */
 export function stateNoteText(state, opts = {}) {
@@ -289,8 +469,13 @@ export function stateNoteText(state, opts = {}) {
   if (skeleton) sections.push(skeleton);
   const memory = memoryBandText(opts.facts);
   if (memory) sections.push(memory);
+  const turnStyle = turnStyleNoteText(opts.profile, opts.turnVector);
+  if (turnStyle) sections.push(turnStyle);
   const focus = focusBandText(state?.course_plan, opts.subject);
   if (focus) sections.push(focus);
+
+  // ADR-0011 §5. Fires on exactly one condition: memory fetched, memory dropped.
+  assertMemoryBand(sections, opts.facts);
   return sections.join(SECTION_SEP);
 }
 
@@ -313,11 +498,28 @@ export function stateNoteText(state, opts = {}) {
  * the Rules band and must stay byte-stable, so the skeleton, memory and focus
  * bands all ride the note, where changing every turn costs nothing.
  *
+ * THE AXIS VECTOR SPLITS ALONG THE SAME SEAM (2026-08-13, ADR-0009 §1/§2). The
+ * STORED vector is teacher-lifetime state that moves a handful of times ever, so
+ * it renders into `system` beside 教师档案 — one prefix rebuild on the day she
+ * moves a handle, nothing on any other turn. The ONE-TURN override renders into
+ * `stateNote`, because a sentence true for exactly one turn in the prefix would
+ * cost two prefix rebuilds every time she uses it. 后台判断稳定，前台表达灵活,
+ * cut where the cache can see it.
+ *
  * @param {Object} state current course_state
  * @param {(name: string) => string|Promise<string>} loadPrompt injected loader
- * @param {{profile?: Object, subject?: string, facts?: Array<Object>}} [opts]
+ * @param {{profile?: Object, subject?: string, facts?: Array<Object>,
+ *   turnVector?: Object}} [opts]
+ *   `profile` is read-only teacher context and carries `interaction_vector`
+ *   (ADR-0009's storage slot) — no separate argument, so a caller that already
+ *   passes a profile gets the axes for free.
  *   `subject` is the engine-owned turn subject — a plan node id, or `'course'`;
- *   the model never chooses it. `facts` are the course/class memory facts.
+ *   the model never chooses it.
+ *   `facts` are the teacher/class/course memory facts, ALWAYS the whole set
+ *   (`store.listFacts`). Pass `null` when the lookup failed — never `[]`, which
+ *   asserts to the model that there are no constraints.
+ *   `turnVector` is `interaction-axes.turnOverride(...)`'s render-only vector for
+ *   this turn, or absent.
  * @returns {Promise<{system: string, stateNote: string}>}
  */
 export async function buildPromptParts(state, loadPrompt, opts = {}) {
@@ -327,6 +529,8 @@ export async function buildPromptParts(state, loadPrompt, opts = {}) {
   const sections = [base, contract, stageDoc];
   const profileText = profileSectionText(opts.profile);
   if (profileText) sections.push(profileText);
+  const interactionText = interactionSectionText(opts.profile);
+  if (interactionText) sections.push(interactionText);
   return { system: sections.join(SECTION_SEP), stateNote: stateNoteText(state, opts) };
 }
 

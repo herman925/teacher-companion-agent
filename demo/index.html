@@ -189,6 +189,25 @@
     <div class="node-view-body" id="node-view-body"></div>
   </section>
 
+  <!-- Landing by course state (ADR-0010): on a phone the 工作台 is an edge sheet
+       she has to go and open, so a course with a live plan used to land on the
+       same blank greeting as a course that does not exist yet. This card states
+       where the course IS — the entry fork, what is still unknown, or what is
+       dated for today — and every branch offers the next move rather than asking
+       her to declare a stage. Screen furniture: never appended to the transcript,
+       never sent, never logged as agent speech; a landing_shown session-log event
+       carries the observability duty. Filled by renderLanding(); hidden on
+       desktop, where the panel is already beside the conversation. -->
+  <!-- Which class this course is for. A STATEMENT, not a question: it appears
+       only once the binding exists, and the picker (renderClassChoice) shows up
+       in the conversation only when she has more than one class and none is
+       bound. With one class it is bound silently — asking a teacher which of her
+       one classes this is would be the state machine leaking onto her side of
+       the desk (non-negotiable #2). -->
+  <div class="class-header-slot" id="class-header-slot" hidden></div>
+
+  <section class="landing" id="landing" hidden aria-label="课程当前进展"></section>
+
   <main class="chat-main" id="messages" aria-live="polite"></main>
 
   <!-- 工作台 panel (ADR-0010 §3): the living 课程计划树 — 月计划（2–5 周的一
@@ -327,6 +346,15 @@
             <span class="nav-glyph g-file" aria-hidden="true"></span>
             <span class="nav-text"><span class="nav-title">教师档案</span><span class="nav-sub">地区 · 教龄 · 回应风格</span></span>
           </button>
+          <!-- 记忆: what the agent has picked up from the conversation. A REPORT
+               — it has no add button and no blank field anywhere, because the
+               only way a fact comes into being is that the agent heard her say
+               it (non-negotiable #2). Rebuilt on every open; needs an account,
+               since facts live on the server. -->
+          <button type="button" data-pane="memory">
+            <span class="nav-glyph g-mem" aria-hidden="true"></span>
+            <span class="nav-text"><span class="nav-title">记忆</span><span class="nav-sub">我记住的班级条件</span></span>
+          </button>
           <button type="button" data-pane="ui">
             <span class="nav-glyph g-sun" aria-hidden="true"></span>
             <span class="nav-text"><span class="nav-title">界面与体验</span><span class="nav-sub">外观 · 操作偏好</span></span>
@@ -339,6 +367,7 @@
         <div class="modal-panes">
           <section class="modal-pane" id="pane-account" data-pane="account"></section>
           <section class="modal-pane on" id="pane-profile" data-pane="profile"></section>
+          <section class="modal-pane" id="pane-memory" data-pane="memory"></section>
           <section class="modal-pane" id="pane-ui" data-pane="ui"></section>
           <section class="modal-pane" id="pane-models" data-pane="models"></section>
         </div>

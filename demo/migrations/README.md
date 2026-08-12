@@ -12,6 +12,7 @@ from the first table rather than retrofitted
 | `003_rls.sql` | `ENABLE` + `FORCE ROW LEVEL SECURITY` and the policies (§2c) | `postgres` |
 | `004_views.sql` | `leader_dashboard`, granted to `app_leader` and to nobody else (§2d) | `postgres` |
 | `005_auth_plane.sql` | `sessions` / `admin_audit` / `user_keys` / `app_state`, the account columns (§4), and the migration ledger | `postgres` |
+| `006_facts_widened_at.sql` | `facts.widened_at` — WHEN a fact was widened, which `001` does not record (§2e) | `postgres` |
 
 Read this whole file before running anything. The section that matters is
 [Verify that RLS is real](#verify-that-rls-is-real) — this setup is the kind
@@ -81,7 +82,13 @@ sudo -u postgres psql -d teacher_platform \
 sudo -u postgres psql -d teacher_platform -f demo/migrations/003_rls.sql
 sudo -u postgres psql -d teacher_platform -f demo/migrations/004_views.sql
 sudo -u postgres psql -d teacher_platform -f demo/migrations/005_auth_plane.sql
+sudo -u postgres psql -d teacher_platform -f demo/migrations/006_facts_widened_at.sql
 ```
+
+`006` is the first additive file: it uses `ADD COLUMN IF NOT EXISTS` and may be
+re-run. Every other file here is deliberately not idempotent. Apply it on any
+box that already has `001`–`005` — without it every memory query in
+`pg-store.mjs` fails with `42703`, and the teacher memory band goes silent.
 
 Two `-f` options in one invocation share a single psql session, which is how
 `002` sees the variables set by the vars file. Keep them in that order.

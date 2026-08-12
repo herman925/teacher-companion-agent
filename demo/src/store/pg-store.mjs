@@ -51,6 +51,15 @@
 // auth-plane tables (sessions, admin_audit, user_keys, app_state) and the
 // migration ledger 001's header said the fifth file would trigger.
 //
+// AND 006_facts_widened_at.sql. The memory methods below select and write
+// `facts.widened_at`, which 001 does not create: 001 records THAT a fact was
+// widened (`source = 'widened'`, `widened_from`) and not WHEN, while
+// memory-scopes.mjs reads the presence of that stamp as the proof a widening
+// was her deliberate act. Without the column every facts query here fails with
+// 42703 — loudly, on the memory read only, which is the safe direction. Filling
+// it from `created_at` instead was rejected: a store that writes plausible
+// values into audit columns is the failure this codebase is built against.
+//
 // Nothing here creates a table. The application connects as app_rw/app_admin,
 // neither of which owns the schema, and a store that quietly runs DDL is a
 // store that can quietly get the DDL wrong. WORSE THAN WRONG: a table
@@ -83,7 +92,15 @@ import { hashPassword, verifyPassword, tempPassword, sessionToken, sessionSid } 
 import {
   TITLE_MAX, MATERIAL_KINDS, MATERIAL_MIME_TYPES,
   DEFAULT_ERASURE_WINDOW_DAYS, normalizeSubject, countPlanNodes, isDueForErasure,
+  // Memory, classes and signals: the screening functions and the row mappers
+  // are SHARED, not re-implemented. They carry the closed taxonomy, the
+  // `body`→`text` / `created_at`→`at` renames and the `'auto'`→`'extracted'`
+  // provenance mapping — three things the two tiers must not disagree about,
+  // and each of which fails silently on JSON and loudly (23514, 22P02) here.
+  factRow, classRow, signalRow,
+  screenFactInput, screenClassInput, screenSignalInput, screenWiden,
 } from './json-store.mjs';
+import { resolveAxisId } from '../interaction-axes.mjs';
 // json-store's `tallyBy` has no counterpart here on purpose: the per-subject
 // message tally is a GROUP BY, computed in the database rather than by reading
 // every message row into the admin console.
@@ -157,6 +174,25 @@ const snapshotRow = (r) => ({
 
 const MESSAGE_COLUMNS = `id, role, subject, content, turn_contract, provider,
   provider_label, usage, stage_name, cache, guards, created_at`;
+
+/** `widened_at` comes from 006_facts_widened_at.sql. Until that file is
+ * applied every statement using this list fails with 42703 — on the memory read
+ * only, loudly, which is the safe direction for it to fail in. */
+const FACT_COLUMNS = `id, user_id, scope, course_id, class_id, kind, body, quote,
+  source, widened_from, widened_at, used_at, archived_at, archive_reason,
+  superseded_by, created_at`;
+
+const CLASS_COLUMNS = 'id, user_id, name, age_band, class_size, is_default, created_at';
+
+const SIGNAL_COLUMNS = 'id, user_id, axis, signal, delta, course_id, message_id, created_at';
+
+const MATERIAL_COLUMNS = `id, course_id, user_id, kind, cos_key, mime_type, size_bytes,
+  exif_stripped, contains_children, retention_until::text AS retention_until, created_at`;
+
+/** One material row in the shape the JSON tier returns. */
+const materialRow = (r) => (r
+  ? { ...r, size_bytes: int(r.size_bytes), created_at: iso(r.created_at) }
+  : null);
 
 /**
  * The PostgreSQL store.
@@ -533,12 +569,16 @@ export function createPgStore(opts = {}) {
       if (!isUuid(courseId)) return null;
       return asUser(userId, async (c) => {
         const { rows } = await c.query(
-          `SELECT id, title, course_state, state_version, created_at, updated_at
+          `SELECT id, title, course_state, class_id, state_version, created_at, updated_at
              FROM courses WHERE id = $1 AND user_id = $2`, [courseId, userId],
         );
         const r = rows[0];
         return r ? {
           id: r.id, title: r.title, course_state: r.course_state,
+          // Which class this course is for (ADR-0011 §3). Reported, never
+          // asked: the header states 中三班, and she is only asked in the one
+          // case the system genuinely cannot resolve.
+          class_id: r.class_id ?? null,
           state_version: r.state_version,
           created_at: iso(r.created_at), updated_at: iso(r.updated_at),
         } : null;
@@ -1215,9 +1255,7 @@ export function createPgStore(opts = {}) {
           `INSERT INTO materials (course_id, user_id, kind, cos_key, mime_type, size_bytes,
                                   exif_stripped, contains_children, retention_until)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-           RETURNING id, course_id, user_id, kind, cos_key, mime_type, size_bytes,
-                     exif_stripped, contains_children, retention_until::text AS retention_until,
-                     created_at`,
+           RETURNING ${MATERIAL_COLUMNS}`,
           [
             courseId, userId, kind, key, mime,
             Number(material?.size_bytes ?? 0) || 0,
@@ -1226,8 +1264,7 @@ export function createPgStore(opts = {}) {
             material?.retention_until ?? null,
           ],
         );
-        const r = rows[0];
-        return { ...r, size_bytes: int(r.size_bytes), created_at: iso(r.created_at) };
+        return materialRow(rows[0]);
       });
     },
 
@@ -1236,14 +1273,378 @@ export function createPgStore(opts = {}) {
       if (courseId != null && !isUuid(courseId)) return [];
       return asUser(userId, async (c) => {
         const { rows } = await c.query(
-          `SELECT id, course_id, user_id, kind, cos_key, mime_type, size_bytes,
-                  exif_stripped, contains_children, retention_until::text AS retention_until, created_at
-             FROM materials
+          `SELECT ${MATERIAL_COLUMNS} FROM materials
             WHERE user_id = $1 AND ($2::uuid IS NULL OR course_id = $2)
             ORDER BY created_at DESC`,
           [userId, courseId ?? null],
         );
-        return rows.map((r) => ({ ...r, size_bytes: int(r.size_bytes), created_at: iso(r.created_at) }));
+        return rows.map(materialRow);
+      });
+    },
+
+    /**
+     * One owned upload, by id. Null — never a throw — for a foreign or a
+     * missing id, so the endpoint answers 404 either way and cannot be used to
+     * tell 「not yours」 apart from 「not there」.
+     *
+     * `materials_owner` is the real lock behind this: an unowned row cannot be
+     * SELECTed at all, so there is no `cos_key` to serve even if the endpoint's
+     * own ownership check is ever refactored away. The signature takes userId
+     * and never a bare id — see the `ownerOf` hazard above.
+     */
+    async getMaterial(userId, materialId) {
+      if (!isUuid(materialId)) return null;
+      return asUser(userId, async (c) => {
+        const { rows } = await c.query(
+          `SELECT ${MATERIAL_COLUMNS} FROM materials WHERE id = $1 AND user_id = $2`,
+          [materialId, userId],
+        );
+        return materialRow(rows[0] ?? null);
+      });
+    },
+
+    /**
+     * The ids of every material this teacher owns ON THIS COURSE — a cheap
+     * id-only projection, loaded once per turn so `resolveUploadRef` can be the
+     * SYNCHRONOUS predicate `engine.evidenceIsGrounded` requires.
+     *
+     * Scoped by BOTH user and course: an `upload_ref` naming her own material
+     * on a different course must not ground evidence either.
+     */
+    async listMaterialIds(userId, courseId) {
+      if (!isUuid(courseId)) return [];
+      return asUser(userId, async (c) => {
+        const { rows } = await c.query(
+          'SELECT id FROM materials WHERE user_id = $1 AND course_id = $2', [userId, courseId],
+        );
+        return rows.map((r) => String(r.id));
+      });
+    },
+
+    // ================= memory facts (ADR-0011 / ADR-0013 §9) =================
+    // The store PERSISTS; it never curates. Screening, merging, superseding and
+    // capping belong to memory-scopes.mjs and run before anything gets here.
+    //
+    // Every method below runs under `facts_owner`. Note the asymmetry that
+    // makes the write the canary for the read: the policy's WITH CHECK also
+    // requires the referenced course and class to be HERS, so a write with the
+    // wrong (or unset) app.user_id fails LOUDLY with 42501 — while a read with
+    // the same fault returns zero rows and looks exactly like a class with no
+    // constraints. That is why `listFacts` must throw rather than ever coerce a
+    // failure into an empty list.
+
+    /**
+     * THE ALWAYS-ON MEMORY READ: every scope this turn can see, in one call,
+     * in memory-scopes' shape, ready for `buildPromptParts({facts})`.
+     *
+     * `includeArchived` is the memory viewer's; the prompt path never asks for
+     * it, because not sending archived facts is the entire point of archiving.
+     */
+    async listFacts(userId, { courseId = null, classId = null, includeArchived = false } = {}) {
+      const cid = isUuid(courseId) ? courseId : null;
+      const kid = isUuid(classId) ? classId : null;
+      return asUser(userId, async (c) => {
+        // The class is resolved THROUGH the course when it was not named —
+        // without that hop, class memory is written and never read.
+        let cls = kid;
+        if (!cls && cid) {
+          const { rows } = await c.query(
+            'SELECT class_id FROM courses WHERE id = $1 AND user_id = $2', [cid, userId],
+          );
+          cls = rows[0]?.class_id ?? null;
+        }
+        const { rows } = await c.query(
+          `SELECT ${FACT_COLUMNS} FROM facts
+            WHERE user_id = $1
+              AND ($4::boolean OR archived_at IS NULL)
+              AND (scope = 'teacher'
+                OR (scope = 'class'  AND $3::uuid IS NOT NULL AND class_id  = $3)
+                OR (scope = 'course' AND $2::uuid IS NOT NULL AND course_id = $2))
+            ORDER BY created_at, id`,
+          [userId, cid, cls, includeArchived === true],
+        );
+        return rows.map(factRow);
+      });
+    },
+
+    /** Insert ONE already-screened fact; returns it with the STORAGE id, which
+     * is what every later pointer uses. */
+    async recordFact(userId, fact) {
+      const input = screenFactInput(fact);
+      return asUser(userId, async (c) => {
+        // `facts_owner`'s WITH CHECK refuses a foreign course or class already,
+        // but it refuses with a raw 42501 carrying no status. Asked first so
+        // both tiers answer 404 on the same call.
+        if (input.courseId) {
+          const { rows } = await c.query(
+            'SELECT id FROM courses WHERE id = $1 AND user_id = $2', [input.courseId, userId],
+          );
+          if (!rows[0]) throw err(404, '课程不存在');
+        }
+        if (input.classId) {
+          const { rows } = await c.query(
+            'SELECT id FROM classes WHERE id = $1 AND user_id = $2', [input.classId, userId],
+          );
+          if (!rows[0]) throw err(404, '班级不存在');
+        }
+        if (input.supersededBy) {
+          // `facts.superseded_by` is a self-FK. A pointer at a row that is not
+          // hers would pass the foreign key (FKs bypass RLS) and be invisible
+          // to her forever, so ownership is checked rather than assumed.
+          const { rows } = await c.query(
+            'SELECT id FROM facts WHERE id = $1 AND user_id = $2', [input.supersededBy, userId],
+          );
+          if (!rows[0]) throw err(400, '指向的记忆不存在');
+        }
+        const { rows } = await c.query(
+          `INSERT INTO facts (user_id, scope, course_id, class_id, kind, body, quote,
+                              source, archived_at, archive_reason, superseded_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10, $11)
+           RETURNING ${FACT_COLUMNS}`,
+          [
+            userId, input.scope, input.courseId, input.classId, input.kind,
+            input.body, input.quote || null, input.source,
+            input.archivedAt, input.archiveReason, input.supersededBy,
+          ],
+        );
+        return factRow(rows[0]);
+      });
+    },
+
+    /**
+     * THE ONLY WAY A FACT LEAVES THE PROMPT. Archiving is not deleting — and
+     * cannot be: `app_rw` holds no DELETE on `facts` (002_roles.sql), which is
+     * why there is no `deleteFact` in this interface at all.
+     */
+    async archiveFact(userId, factId, { reason = 'unknown', supersededBy = null } = {}) {
+      if (supersededBy != null && !isUuid(supersededBy)) throw err(400, '指向的记忆编号不是有效的编号');
+      if (!isUuid(factId)) return null;
+      return asUser(userId, async (c) => {
+        const { rows } = await c.query(
+          `SELECT ${FACT_COLUMNS} FROM facts WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+          [factId, userId],
+        );
+        const f = rows[0];
+        if (!f) return null;
+        if (supersededBy) {
+          const { rows: target } = await c.query(
+            'SELECT id FROM facts WHERE id = $1 AND user_id = $2', [supersededBy, userId],
+          );
+          if (!target[0]) throw err(400, '指向的记忆不存在');
+        }
+        // Idempotent on the stamp: a second archive must not move the moment a
+        // belief was retired.
+        if (f.archived_at) return factRow(f);
+        const { rows: next } = await c.query(
+          `UPDATE facts SET archived_at = now(), archive_reason = $3,
+                            superseded_by = coalesce($4::uuid, superseded_by)
+            WHERE id = $1 AND user_id = $2
+            RETURNING ${FACT_COLUMNS}`,
+          [factId, userId, String(reason ?? '').trim() || 'unknown', supersededBy],
+        );
+        return factRow(next[0]);
+      });
+    },
+
+    /**
+     * Persist her deliberate tap: one rung, never two. The ladder rules live in
+     * the pure module and are re-used here (`screenWiden`), so the two cannot
+     * disagree about what a legal widening is.
+     *
+     * The key columns move with the scope — a class fact keeps no `course_id`
+     * — because `facts.course_id` is ON DELETE CASCADE: a widened constraint
+     * that kept its old pointer would be destroyed, with no archive row and no
+     * notice, the day she deleted the course it was first said in.
+     */
+    async widenFact(userId, factId, toScope, { classId = null } = {}) {
+      if (!isUuid(factId)) return null;
+      return asUser(userId, async (c) => {
+        const { rows } = await c.query(
+          `SELECT ${FACT_COLUMNS} FROM facts WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+          [factId, userId],
+        );
+        const f = rows[0];
+        if (!f) return null;
+        screenWiden({ scope: f.scope, archived: f.archived_at != null }, toScope, classId);
+        if (toScope === 'class') {
+          // The class must be hers: `facts_owner`'s WITH CHECK says so too, in
+          // 42501 rather than in a status the endpoint can render.
+          const { rows: own } = await c.query(
+            'SELECT id FROM classes WHERE id = $1 AND user_id = $2', [classId, userId],
+          );
+          if (!own[0]) throw err(404, '班级不存在');
+        }
+        const { rows: next } = await c.query(
+          `UPDATE facts
+              SET scope = $3, source = 'widened', widened_at = now(),
+                  widened_from = coalesce(widened_from, $4),
+                  class_id = $5, course_id = NULL
+            WHERE id = $1 AND user_id = $2
+            RETURNING ${FACT_COLUMNS}`,
+          // `widened_from` records where the fact ORIGINALLY sat: coalesce
+          // keeps the first rung, so one that climbed to teacher scope still
+          // shows it began as one course's fact.
+          [factId, userId, toScope, f.scope, toScope === 'class' ? classId : null],
+        );
+        return factRow(next[0]);
+      });
+    },
+
+    /**
+     * Stamp `used_at` on the facts that just rode a prompt, in ONE statement.
+     *
+     * `capFacts` archives oldest-UNUSED rather than oldest, so without this the
+     * cap evicts the constraints she hits most often — 「我早就跟你说过」 arriving
+     * through the eviction policy. Runs on every turn, so it is a batch by id
+     * list and never one statement per fact.
+     */
+    async touchFactsUsed(userId, factIds) {
+      const ids = [...new Set((Array.isArray(factIds) ? factIds : []).filter(isUuid))];
+      if (!ids.length) return 0;
+      return asUser(userId, async (c) => {
+        const r = await c.query(
+          'UPDATE facts SET used_at = now() WHERE user_id = $1 AND id = ANY($2::uuid[])',
+          [userId, ids],
+        );
+        return r.rowCount;
+      });
+    },
+
+    // ================= classes (ADR-0011 §3) =================
+
+    async listClasses(userId) {
+      return asUser(userId, async (c) => {
+        const { rows } = await c.query(
+          `SELECT ${CLASS_COLUMNS} FROM classes WHERE user_id = $1 ORDER BY created_at, id`, [userId],
+        );
+        return rows.map(classRow);
+      });
+    },
+
+    async createClass(userId, input = {}) {
+      const fields = screenClassInput(input);
+      const wantDefault = Boolean(input?.isDefault ?? input?.is_default);
+      return asUser(userId, async (c) => {
+        // CLEAR THEN SET, in this transaction. `idx_classes_one_default` is a
+        // partial UNIQUE index: insert-then-clear raises 23505 here, while the
+        // JSON tier would hold two defaults forever and say nothing.
+        if (wantDefault) {
+          await c.query('UPDATE classes SET is_default = false WHERE user_id = $1 AND is_default', [userId]);
+        }
+        const { rows } = await c.query(
+          `INSERT INTO classes (user_id, name, age_band, class_size, is_default)
+           VALUES ($1, $2, $3, $4, $5) RETURNING ${CLASS_COLUMNS}`,
+          [userId, fields.name, fields.age_band, fields.class_size, wantDefault],
+        );
+        return classRow(rows[0]);
+      });
+    },
+
+    /** Correct a class's name, band or size. Deliberately cannot set
+     * `is_default` — that invariant has exactly one owner. */
+    async updateClass(userId, classId, patch = {}) {
+      const fields = screenClassInput(patch, { partial: true });
+      if (!isUuid(classId)) return null;
+      return asUser(userId, async (c) => {
+        const { rows } = await c.query(
+          `SELECT ${CLASS_COLUMNS} FROM classes WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+          [classId, userId],
+        );
+        const k = rows[0];
+        if (!k) return null;
+        const merged = { ...classRow(k), ...fields };
+        const { rows: next } = await c.query(
+          `UPDATE classes SET name = $3, age_band = $4, class_size = $5
+            WHERE id = $1 AND user_id = $2 RETURNING ${CLASS_COLUMNS}`,
+          [classId, userId, merged.name, merged.age_band, merged.class_size],
+        );
+        return classRow(next[0]);
+      });
+    },
+
+    /** Mark one class default, clearing the previous one — clear first, or the
+     * partial unique index refuses the write. */
+    async setDefaultClass(userId, classId) {
+      if (!isUuid(classId)) return null;
+      return asUser(userId, async (c) => {
+        const { rows } = await c.query(
+          'SELECT id FROM classes WHERE id = $1 AND user_id = $2 FOR UPDATE', [classId, userId],
+        );
+        if (!rows[0]) return null;
+        await c.query('UPDATE classes SET is_default = false WHERE user_id = $1 AND is_default', [userId]);
+        const { rows: next } = await c.query(
+          `UPDATE classes SET is_default = true WHERE id = $1 AND user_id = $2 RETURNING ${CLASS_COLUMNS}`,
+          [classId, userId],
+        );
+        return classRow(next[0]);
+      });
+    },
+
+    /**
+     * Bind a course to a class — what makes class-scope facts reachable from a
+     * course. `null` unbinds.
+     *
+     * The class is verified to be hers BEFORE the UPDATE: `courses_owner`'s
+     * WITH CHECK keeps the row hers but says nothing about the class it points
+     * at, because foreign keys bypass row-level security.
+     */
+    async setCourseClass(userId, courseId, classId) {
+      if (!isUuid(courseId)) throw err(404, '课程不存在');
+      if (classId != null && !isUuid(classId)) throw err(404, '班级不存在');
+      return asUser(userId, async (c) => {
+        if (classId != null) {
+          const { rows } = await c.query(
+            'SELECT id FROM classes WHERE id = $1 AND user_id = $2', [classId, userId],
+          );
+          if (!rows[0]) throw err(404, '班级不存在');
+        }
+        const { rows } = await c.query(
+          `UPDATE courses SET class_id = $3 WHERE id = $1 AND user_id = $2
+           RETURNING id, class_id`,
+          [courseId, userId, classId ?? null],
+        );
+        if (!rows[0]) throw err(404, '课程不存在');
+        return { id: rows[0].id, class_id: rows[0].class_id ?? null };
+      });
+    },
+
+    // ================= interaction signals (ADR-0009 §3) =================
+    // APPEND-ONLY BY THE ABSENCE OF A GRANT: `app_rw` holds SELECT and INSERT
+    // and nothing else (002_roles.sql), so there is no update or delete path
+    // here and none should ever be written.
+
+    async recordSignal(userId, input = {}) {
+      const s = screenSignalInput(input);
+      return asUser(userId, async (c) => {
+        // `interaction_signals_owner` checks only `user_id`, so a signal could
+        // otherwise point at another teacher's course. Checked here, in both
+        // tiers, for the same reason `setCourseClass` checks its class.
+        if (s.courseId) {
+          const { rows } = await c.query(
+            'SELECT id FROM courses WHERE id = $1 AND user_id = $2', [s.courseId, userId],
+          );
+          if (!rows[0]) throw err(404, '课程不存在');
+        }
+        const { rows } = await c.query(
+          `INSERT INTO interaction_signals (user_id, axis, signal, delta, course_id, message_id)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${SIGNAL_COLUMNS}`,
+          [userId, s.axis, s.signal, s.delta, s.courseId, s.messageId],
+        );
+        return signalRow(rows[0]);
+      });
+    },
+
+    async listSignals(userId, { limit = 100, axis = null } = {}) {
+      const want = axis == null ? null : resolveAxisId(axis);
+      if (axis != null && !want) throw err(400, '未知的互动维度');
+      return asUser(userId, async (c) => {
+        const { rows } = await c.query(
+          `SELECT ${SIGNAL_COLUMNS} FROM interaction_signals
+            WHERE user_id = $1 AND ($2::text IS NULL OR axis = $2)
+            ORDER BY created_at DESC, id DESC LIMIT $3`,
+          [userId, want, Math.max(0, Number(limit) || 0)],
+        );
+        return rows.map(signalRow);
       });
     },
 
@@ -1498,6 +1899,33 @@ export function createPgStore(opts = {}) {
     async adminDelete(courseId, { deleteObject = null } = {}) {
       if (!isUuid(courseId)) return { deleted: false, cos_keys: [], objects_deleted: false };
       return deleteCourseWithObjects(courseId, null, deleteObject);
+    },
+
+    /**
+     * Every fact, across teachers, INCLUDING archived rows and their reasons.
+     *
+     * THE ONE NEW METHOD THAT NEEDS THE ADMIN CONNECTION. `app_rw` cannot read
+     * across teachers by construction, and the observability duty for memory
+     * (AGENTS.md; ADR-0011's consequences) requires the console and the export
+     * to show WHICH utterance produced WHICH fact — a wrong extraction has to be
+     * diagnosable rather than mysterious. `quote` is why that column exists.
+     *
+     * A deliberate cross-teacher bypass under ADR-0013 §7, so the endpoint in
+     * front of it MUST append an access-log line. A console read without one is
+     * not the design.
+     */
+    async adminListFacts({ userId = null, courseId = null, limit = 200 } = {}) {
+      if (userId != null && !isUuid(userId)) return [];
+      if (courseId != null && !isUuid(courseId)) return [];
+      const cap = Math.min(1000, Math.max(1, Number(limit) || 200));
+      const { rows } = await q(
+        `SELECT ${FACT_COLUMNS} FROM facts
+          WHERE ($1::uuid IS NULL OR user_id = $1)
+            AND ($2::uuid IS NULL OR course_id = $2)
+          ORDER BY created_at DESC, id DESC LIMIT $3`,
+        [userId, courseId, cap],
+      );
+      return rows.map(factRow);
     },
 
     async adminExportAll() {

@@ -19,6 +19,14 @@ export const LOG_CATEGORIES = [
   { id: 'harness', label: '护栏' },
   { id: 'error', label: '错误' },
   { id: 'session', label: '会话/设置' },
+  // 记忆与画像 (ADR-0011 / ADR-0009 §4): what the agent picked up from the
+  // conversation and what moved its picture of this teacher. Its own category
+  // rather than a sub-kind of `workflow` because these two are the only events
+  // that describe the TEACHER rather than the course, and an auditor asking
+  // 「what does it think it knows about her」 must be able to filter to exactly
+  // that — including every refusal, since a fact she believes was remembered
+  // and was not is the failure this whole feature exists to prevent.
+  { id: 'memory', label: '记忆与画像' },
 ];
 
 const CATEGORY_IDS = new Set(LOG_CATEGORIES.map((c) => c.id));

@@ -25,7 +25,47 @@
 // partitions storage, because global ordering is what proves what was asked
 // when. The tag is engine-owned: it comes from the request, never the model.
 //   saveState(courseId, delta, newState, ver)  -> { state_version } (optimistic lock + checkpoints)
+// MEMORY (ADR-0011 · ADR-0013 §9). Facts are the teacher's persistent
+// constraints — 「班上没有鼓」 — and they ride EVERY prompt, which is why the read
+// is one call and the taxonomy is closed:
+//   listFacts(userId, {courseId, classId, includeArchived})
+//                                              -> facts in memory-scopes shape
+// THIS ONE THROWS AND MUST NEVER RETURN [] ON FAILURE. `memoryBandText` omits
+// the band for null and renders both headers for [], and that difference is
+// security-relevant: a read error coerced into an empty list tells the model
+// this class has no constraints, and it offers 敲鼓感受节奏 to the class with no
+// drums. The caller passes null on failure and [] only on a genuine empty.
+//   recordFact(userId, {courseId, classId, kind, text, quote, scope, source,
+//                       archivedAt, archiveReason, supersededBy})   -> fact
+// The store PERSISTS; it never curates. Screening, merging, superseding and
+// capping are memory-scopes.mjs's, and PROVENANCE IS ENGINE-SET: `source` is
+// mapped through one function that sends anything unrecognised to the
+// least-trusted value, so persisting a fact cannot launder a teacher source in.
+//   archiveFact(userId, factId, {reason, supersededBy})  -> fact | null
+// The ONLY way a fact leaves the prompt. There is deliberately NO deleteFact:
+// app_rw holds no DELETE on facts, so one would pass every JSON test and fail
+// with 42501 in production.
+//   widenFact(userId, factId, toScope, {classId})        -> fact | null
+//   touchFactsUsed(userId, factIds)                      -> number stamped
+// CLASSES (ADR-0011 §3) — an identity (中三班) that OUTLIVES a course, created
+// by her naming one in conversation, never through a management screen:
+//   listClasses(userId) · createClass(userId, {name, ageBand, classSize, isDefault})
+//   updateClass(userId, classId, {name, ageBand, classSize})
+//   setDefaultClass(userId, classId)     — the single owner of at-most-one-default
+//   setCourseClass(userId, courseId, classId|null) -> {id, class_id}
+// No deleteClass in v1: facts.class_id is ON DELETE CASCADE, so deleting a class
+// would silently destroy every class fact she deliberately widened.
+// INTERACTION SIGNALS (ADR-0009 §3) — append-only audit trail behind the axis
+// vector, which itself is a singleton in users.settings and needs no method:
+//   recordSignal(userId, {axis, signal, delta, courseId, messageId})
+//   listSignals(userId, {limit, axis})   -> newest first
+// UPLOADS:
+//   recordMaterial / listMaterials / getMaterial(userId, materialId)
+//   listMaterialIds(userId, courseId)    -> ids only, for the SYNCHRONOUS
+//                                           resolveUploadRef the engine needs
 //   adminListCourses()                         -> all courses (all users) + message/snapshot counts
+//   adminListFacts({userId, courseId, limit})  -> facts across teachers, archived
+//                                                 included (ADR-0013 §7: log the read)
 //   adminGetCourse(courseId)                   -> full raw record | null
 //   adminDelete(courseId, { deleteObject })    -> same receipt (delete any owner)
 //   adminExportAll()                           -> [full records] for one-file export

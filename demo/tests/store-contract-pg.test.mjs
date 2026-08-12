@@ -58,6 +58,68 @@ runStoreContract('pg-store', async () => {
 }, { skip });
 
 // ===========================================================================
+// TIER PARITY — the one check that does NOT need a database
+// ===========================================================================
+// The contract suite above proves the two tiers BEHAVE the same, and it skips
+// on every machine without PostgreSQL — so a method that exists only in
+// json-store passes the whole gate and is discovered the day the swap happens,
+// as a TypeError in a teacher's turn. This test is the cheap standing guard
+// against that: it constructs both stores (a pg.Pool opens no connection until
+// something queries it) and compares the surfaces.
+//
+// It skips only when `pg` is not installed, which is the static-tier case.
+test('both tiers expose the same surface — a method on one only is a defect', async (t) => {
+  let createPgStore;
+  try {
+    ({ createPgStore } = await import('../src/store/pg-store.mjs'));
+  } catch {
+    return t.skip('pg 未安装——静态层不带这个依赖');
+  }
+  const { createJsonStore } = await import('../src/store/json-store.mjs');
+
+  const json = createJsonStore({ baseDir: '/nonexistent-never-read' });
+  // A syntactically valid URL nothing will ever dial: no query is issued here,
+  // and `new pg.Pool` connects lazily.
+  const pgs = createPgStore({
+    connectionString: 'postgresql://app_rw:x@127.0.0.1:1/none',
+    adminConnectionString: 'postgresql://app_admin:x@127.0.0.1:1/none',
+  });
+
+  const methods = (s) => new Set(Object.keys(s).filter((k) => typeof s[k] === 'function'));
+  const inJson = methods(json);
+  const inPg = methods(pgs);
+
+  const missing = [...inJson].filter((m) => !inPg.has(m)).sort();
+  assert.deepEqual(missing, [], `pg-store 少了这些方法：${missing.join(', ')}`);
+
+  // The other direction is not symmetric — `close()` releases the pools and has
+  // no meaning for a directory — so it is listed rather than asserted away.
+  const extra = [...inPg].filter((m) => !inJson.has(m)).sort();
+  assert.deepEqual(extra, ['close'], `pg-store 多出来的方法只应该是 close：${extra.join(', ')}`);
+
+  // Named explicitly as well, because a surface comparison would also pass if
+  // BOTH tiers were missing something. These are the methods ADR-0011 / ADR-0009
+  // / ADR-0013 §6 need and neither tier had.
+  for (const m of [
+    'listFacts', 'recordFact', 'archiveFact', 'widenFact', 'touchFactsUsed',
+    'listClasses', 'createClass', 'updateClass', 'setDefaultClass', 'setCourseClass',
+    'recordSignal', 'listSignals', 'getMaterial', 'listMaterialIds', 'adminListFacts',
+  ]) {
+    assert.equal(typeof json[m], 'function', `json-store 缺 ${m}`);
+    assert.equal(typeof pgs[m], 'function', `pg-store 缺 ${m}`);
+  }
+  // And the ones that must NOT exist, in either tier: app_rw holds no DELETE on
+  // facts or materials (002_roles.sql), so either would pass the JSON suite and
+  // fail with 42501 in production.
+  for (const m of ['deleteFact', 'deleteMaterial', 'deleteClass', 'deleteSignal']) {
+    assert.equal(json[m], undefined, `json-store 不该有 ${m}`);
+    assert.equal(pgs[m], undefined, `pg-store 不该有 ${m}`);
+  }
+
+  await pgs.close();
+});
+
+// ===========================================================================
 // ADR-0013 §5's PROOF OBLIGATION
 // ===========================================================================
 // 「A test that connects as teacher A and tries to read teacher B's course, and

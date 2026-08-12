@@ -915,38 +915,489 @@ export function runStoreContract(name, makeStore, { skip = false } = {}) {
   });
 
   // ==================== memory facts (ADR-0011 / ADR-0013 §9) ====================
+  // The signature is the one in store.mjs's interface comment: memory-scopes'
+  // vocabulary going in (`text`, `source: 'auto'|'teacher'`) and coming back
+  // out, so the result of listFacts goes straight to buildPromptParts({facts})
+  // without a translation layer that only one tier would have.
 
-  t('facts: the closed taxonomy is what keeps child observations out of memory', async (store, ctx) => {
-    // No store implements facts yet — the JSON tier only knows to SWEEP them on
-    // erasure (USER_SCOPED_FILES). This block is written now so that whoever
-    // lands the surface lands it identically in both tiers; if the signature
-    // below turns out wrong, change the contract and the implementation
-    // together, in one commit.
-    if (typeof store.recordFact !== 'function' || typeof store.listFacts !== 'function') {
-      return ctx.skip('this store has no facts surface yet (ADR-0013 §9 unimplemented in both tiers)');
-    }
+  t('facts: the closed taxonomy is what keeps child observations out of memory', async (store) => {
     const a = await newUser(store);
     const b = await newUser(store);
     const course = await store.createCourse(a.id, '醒狮');
 
     const fact = await store.recordFact(a.id, {
-      scope: 'course', course_id: course.id, kind: 'equipment',
-      body: '班上没有鼓', quote: '我们班没有鼓', source: 'extracted',
+      scope: 'course', courseId: course.id, kind: 'equipment',
+      text: '班上没有鼓', quote: '我们班没有鼓', source: 'auto',
     });
+    assert.ok(fact.id, 'the STORAGE id comes back — every later pointer uses it');
     assert.equal(fact.kind, 'equipment');
     assert.equal(fact.scope, 'course');
-    assert.equal(fact.body, '班上没有鼓');
+    assert.equal(fact.course_id, course.id);
+    assert.equal(fact.class_id, null);
+    // memory-scopes' field names, not the column names. The two renames
+    // (`body`→`text`, `created_at`→`at`) happen in ONE place or the tiers drift.
+    assert.equal(fact.text, '班上没有鼓');
+    assert.equal(fact.quote, '我们班没有鼓');
+    assert.equal(fact.source, 'auto');
+    assert.equal(fact.archived, false);
+    assert.ok(Date.parse(fact.at) > 0, 'at is a sortable timestamp');
 
-    // The structural guard. 「孩子们对鼓声特别有反应」 is a child observation and
-    // has NO kind to be filed under, so it cannot enter memory and bypass the
-    // evidence rules. This is non-negotiable #1 expressed as a CHECK
-    // constraint rather than a keyword heuristic — refuse, never guess.
+    // THE STRUCTURAL GUARD. 「孩子们对鼓声特别有反应」 is a child observation and
+    // has NO kind to be filed under, so it cannot enter memory and ride every
+    // future prompt under a settled-looking header. Non-negotiable #1 as a
+    // closed set rather than a keyword heuristic — refuse, never guess.
     await rejectsWithStatus(() => store.recordFact(a.id, {
-      scope: 'course', course_id: course.id, kind: 'child_observation',
-      body: '孩子们对鼓声特别有反应', source: 'extracted',
+      scope: 'course', courseId: course.id, kind: 'child_observation',
+      text: '孩子们对鼓声特别有反应', source: 'auto',
     }), 400, '儿童观察没有可以归档的类别，必须被拒');
+    await rejectsWithStatus(() => store.recordFact(a.id, {
+      scope: 'course', courseId: course.id, text: '孩子们很喜欢', source: 'auto',
+    }), 400, '没有类别的记忆同样被拒，而不是猜一个');
+    // MUST PASS UNTOUCHED: all five legal kinds are accepted, or the guard is
+    // not a taxonomy, it is an outage.
+    for (const kind of ['equipment', 'space', 'schedule', 'class_composition', 'teacher_preference']) {
+      const ok = await store.recordFact(a.id, {
+        scope: 'course', courseId: course.id, kind, text: `占位 ${kind}`, quote: '她说的', source: 'auto',
+      });
+      assert.equal(ok.kind, kind);
+    }
+    await rejectsWithStatus(() => store.recordFact(a.id, {
+      scope: 'node', courseId: course.id, kind: 'equipment', text: '节点记忆', source: 'auto',
+    }), 400, '节点记忆是生成出来的，不从这里落库');
+    await rejectsWithStatus(() => store.recordFact(a.id, {
+      scope: 'course', courseId: course.id, kind: 'equipment', text: '   ', source: 'auto',
+    }), 400, '空的记忆没有内容可记');
 
-    assert.deepEqual((await store.listFacts(a.id)).map((f) => f.id), [fact.id]);
-    assert.deepEqual(await store.listFacts(b.id), [], '别的老师的记忆里没有这条');
+    // A fact filed against another teacher's course would be read back into HER
+    // model context — this table is a prompt-injection surface as much as a
+    // privacy one (003_rls.sql says so at facts_owner).
+    await rejectsWithStatus(() => store.recordFact(b.id, {
+      scope: 'course', courseId: course.id, kind: 'equipment', text: '抢一条记忆', source: 'auto',
+    }), 404, '别人的课程下不能挂记忆');
+
+    assert.equal((await store.listFacts(a.id, { courseId: course.id })).some((f) => f.id === fact.id), true);
+    assert.deepEqual(await store.listFacts(b.id, { courseId: course.id }), [], '别的老师的记忆里没有这条');
+  });
+
+  // PROVENANCE IS ENGINE-SET (ADR-0011). memory-scopes refuses `source:
+  // 'teacher'` off a payload; persisting must not become the way around it.
+  t('facts: an unrecognised source falls to the least-trusted value', async (store) => {
+    const a = await newUser(store);
+    const course = await store.createCourse(a.id, '龙舟');
+    const mk = (text, source) => store.recordFact(a.id, {
+      scope: 'course', courseId: course.id, kind: 'equipment', text, quote: '她说的', source,
+    });
+
+    assert.equal((await mk('没写来源', undefined)).source, 'auto', '没写来源就是机器提取的');
+    assert.equal((await mk('来源写成怪东西', 'wildly-invented')).source, 'auto');
+    // 'widened' is unreachable from recordFact on purpose: widening is her tap,
+    // and widenFact is the only method that writes it.
+    assert.equal((await mk('冒充扩大过', 'widened')).source, 'auto', '声称自己被扩大过并不会让它被扩大');
+    // MUST PASS: the engine CAN file her own words as hers — the guard is
+    // against unrecognised input, not against the caller.
+    assert.equal((await mk('她自己说的', 'teacher')).source, 'teacher');
+  });
+
+  t('facts: one read returns every scope this turn can see', async (store) => {
+    const a = await newUser(store);
+    const course = await store.createCourse(a.id, '醒狮');
+    const other = await store.createCourse(a.id, '龙舟');
+    const klass = await store.createClass(a.id, { name: '中三班', ageBand: '中班', classSize: 30 });
+    await store.setCourseClass(a.id, course.id, klass.id);
+
+    const courseFact = await store.recordFact(a.id, {
+      scope: 'course', courseId: course.id, kind: 'schedule',
+      text: '这门课只排在下午', quote: '这门课我们放下午', source: 'auto',
+    });
+    const otherFact = await store.recordFact(a.id, {
+      scope: 'course', courseId: other.id, kind: 'schedule',
+      text: '龙舟那门课排上午', quote: '龙舟放上午', source: 'auto',
+    });
+    const classFact = await store.recordFact(a.id, {
+      scope: 'class', classId: klass.id, kind: 'equipment',
+      text: '班上没有鼓', quote: '我们班没有鼓', source: 'teacher',
+    });
+    const teacherFact = await store.recordFact(a.id, {
+      scope: 'teacher', kind: 'teacher_preference',
+      text: '我喜欢先看整体', quote: '我习惯先看整体', source: 'teacher',
+    });
+
+    const seen = await store.listFacts(a.id, { courseId: course.id });
+    const ids = new Set(seen.map((f) => f.id));
+    assert.ok(ids.has(courseFact.id), '这门课自己的约束');
+    assert.ok(ids.has(classFact.id), '班级的约束——通过课程绑定的班找到的');
+    assert.ok(ids.has(teacherFact.id), '老师层的偏好');
+    assert.equal(ids.has(otherFact.id), false, '别的课程的约束不会跟过来');
+
+    // A class fact keeps NO course_id: facts.course_id is ON DELETE CASCADE, so
+    // a pointer at the course it was said in would destroy it with that course.
+    assert.equal(classFact.course_id, null, '班级记忆不挂在某一门课上');
+    assert.equal(teacherFact.course_id, null);
+    assert.equal(teacherFact.class_id, null);
+
+    // Without the binding, class memory is written and never read.
+    const unbound = await store.createCourse(a.id, '舞龙');
+    const blind = await store.listFacts(a.id, { courseId: unbound.id });
+    assert.equal(blind.some((f) => f.id === classFact.id), false, '没绑班的课程读不到班级记忆');
+    assert.equal(blind.some((f) => f.id === teacherFact.id), true, '老师层的记忆不需要绑定');
+    // Naming the class directly is the memory viewer's read.
+    const byClass = await store.listFacts(a.id, { classId: klass.id });
+    assert.equal(byClass.some((f) => f.id === classFact.id), true);
+
+    // The class outlives the course it was first mentioned in (ADR-0011 §3).
+    assert.equal((await store.deleteCourse(a.id, course.id)).deleted, true);
+    const survivors = await store.listFacts(a.id, { classId: klass.id });
+    assert.equal(survivors.some((f) => f.id === classFact.id), true, '删掉课程不会带走她扩大过的班级记忆');
+    assert.deepEqual(
+      (await store.listFacts(a.id, { courseId: course.id })).filter((f) => f.id === courseFact.id),
+      [], '这门课自己的记忆随课程一起走',
+    );
+  });
+
+  t('facts: archiving is the only exit from the prompt, and it is not deleting', async (store) => {
+    const a = await newUser(store);
+    const course = await store.createCourse(a.id, '醒狮');
+    const old = await store.recordFact(a.id, {
+      scope: 'course', courseId: course.id, kind: 'equipment',
+      text: '班上没有鼓', quote: '我们班没有鼓', source: 'auto',
+    });
+    const fresh = await store.recordFact(a.id, {
+      scope: 'course', courseId: course.id, kind: 'equipment',
+      text: '园里买了两个鼓', quote: '园里买了两个鼓', source: 'teacher',
+    });
+
+    const archived = await store.archiveFact(a.id, old.id, { reason: 'superseded', supersededBy: fresh.id });
+    assert.equal(archived.archived, true);
+    assert.equal(archived.archive_reason, 'superseded');
+    assert.equal(archived.superseded_by, fresh.id, '归档要留指针，链条才看得见');
+    assert.ok(Date.parse(archived.archived_at) > 0);
+
+    const live = await store.listFacts(a.id, { courseId: course.id });
+    assert.equal(live.some((f) => f.id === old.id), false, '归档之后就不再进提示词了');
+    assert.equal(live.some((f) => f.id === fresh.id), true);
+    // Archiving is NOT deleting: the record of what was believed when survives,
+    // and the memory viewer's 已归档 section is what shows it.
+    const all = await store.listFacts(a.id, { courseId: course.id, includeArchived: true });
+    assert.equal(all.some((f) => f.id === old.id), true, '记忆页的已归档区还看得到它');
+
+    // Idempotent on the stamp, for the same reason revocation is.
+    const again = await store.archiveFact(a.id, old.id, { reason: 'teacher_removed' });
+    assert.equal(again.archived_at, archived.archived_at, '第二次归档不许把时间往后拨');
+    assert.equal(again.archive_reason, 'superseded', '也不许改写当初归档的理由');
+
+    // A pointer at a row that is not a fact of hers is refused rather than
+    // stored: facts.superseded_by is a self-referencing uuid FK.
+    await rejectsWithStatus(
+      () => store.archiveFact(a.id, fresh.id, { reason: 'superseded', supersededBy: 'f-course-1a2b3c' }),
+      400, 'memory-scopes 派生出来的 id 不是有效的存储编号',
+    );
+    await rejectsWithStatus(
+      () => store.archiveFact(a.id, fresh.id, { reason: 'superseded', supersededBy: randomUUID() }),
+      400, '指向一条不存在的记忆要拒',
+    );
+
+    const b = await newUser(store);
+    assert.equal(await store.archiveFact(b.id, fresh.id, { reason: 'teacher_removed' }), null, '别人的记忆归档不了');
+    assert.equal(await store.archiveFact(a.id, randomUUID(), { reason: 'teacher_removed' }), null);
+    assert.equal(
+      (await store.listFacts(a.id, { courseId: course.id })).some((f) => f.id === fresh.id),
+      true, '被拒的归档什么都没改',
+    );
+    // There is no deleteFact, in either tier, and that is deliberate: app_rw
+    // holds no DELETE on facts (002_roles.sql), so one would pass every JSON
+    // test and fail with 42501 in production.
+    assert.equal(typeof store.deleteFact, 'undefined', '不能有 deleteFact');
+  });
+
+  t('facts: widening is one rung at a time, and only she can do it', async (store) => {
+    const a = await newUser(store);
+    const course = await store.createCourse(a.id, '醒狮');
+    const klass = await store.createClass(a.id, { name: '中三班' });
+    const other = await newUser(store);
+    const theirs = await store.createClass(other.id, { name: '别人的班' });
+
+    const fact = await store.recordFact(a.id, {
+      scope: 'course', courseId: course.id, kind: 'equipment',
+      text: '班上没有鼓', quote: '我们班没有鼓', source: 'auto',
+    });
+
+    await rejectsWithStatus(() => store.widenFact(a.id, fact.id, 'teacher'), 400, '不能跳级：一次只能扩大一级');
+    await rejectsWithStatus(() => store.widenFact(a.id, fact.id, 'class'), 400, '扩大到班级要说清楚是哪个班');
+    await rejectsWithStatus(() => store.widenFact(a.id, fact.id, 'class', { classId: theirs.id }), 404, '别人的班不能用');
+    assert.equal(await store.widenFact(a.id, randomUUID(), 'class', { classId: klass.id }), null);
+
+    const wide = await store.widenFact(a.id, fact.id, 'class', { classId: klass.id });
+    assert.equal(wide.scope, 'class');
+    assert.equal(wide.class_id, klass.id);
+    assert.equal(wide.course_id, null, '扩大之后不再挂在那门课上，否则删课会连它一起删掉');
+    assert.equal(wide.widened_from, 'course', '记住它原来在哪一级');
+    // The stamp is what makes the widening survive a reload: without it
+    // normalizeFacts rewrites the row back to 'auto' and clamps it to course
+    // scope, undoing her tap invisibly (memory-scopes.mjs:238).
+    assert.ok(Date.parse(wide.widened_at) > 0, '扩大要留时间戳');
+    assert.equal(wide.source, 'teacher', '扩大是她的动作，来源就是她');
+
+    const top = await store.widenFact(a.id, fact.id, 'teacher');
+    assert.equal(top.scope, 'teacher');
+    assert.equal(top.class_id, null);
+    assert.equal(top.widened_from, 'course', 'widened_from 记的是最初的那一级，不是上一级');
+    await rejectsWithStatus(() => store.widenFact(a.id, fact.id, 'teacher'), 400, '已经在这一级了');
+    await rejectsWithStatus(() => store.widenFact(a.id, fact.id, 'course'), 400, '扩大不许悄悄变成缩小');
+
+    await store.archiveFact(a.id, fact.id, { reason: 'teacher_removed' });
+    await rejectsWithStatus(() => store.widenFact(a.id, fact.id, 'class', { classId: klass.id }), 400, '已归档的记忆不再扩大');
+  });
+
+  t('facts: used_at is stamped, because the cap evicts oldest-UNUSED', async (store) => {
+    const a = await newUser(store);
+    const b = await newUser(store);
+    const course = await store.createCourse(a.id, '醒狮');
+    const one = await store.recordFact(a.id, {
+      scope: 'course', courseId: course.id, kind: 'equipment', text: '没有鼓', quote: '没有鼓', source: 'auto',
+    });
+    const two = await store.recordFact(a.id, {
+      scope: 'course', courseId: course.id, kind: 'space', text: '教室很小', quote: '教室很小', source: 'auto',
+    });
+    assert.equal(one.used_at, null, '还没用过就是 null');
+
+    assert.equal(await store.touchFactsUsed(a.id, []), 0, '空列表不写库');
+    assert.equal(await store.touchFactsUsed(a.id, ['f-course-1a2b3c']), 0, '派生 id 不是存储编号，忽略而不是报错');
+    assert.equal(await store.touchFactsUsed(b.id, [one.id]), 0, '别人的记忆盖不上时间戳');
+
+    assert.equal(await store.touchFactsUsed(a.id, [one.id, randomUUID()]), 1, '只数真的盖上的那些');
+    const rows = await store.listFacts(a.id, { courseId: course.id });
+    assert.ok(Date.parse(rows.find((f) => f.id === one.id).used_at) > 0, '用过的记忆留下时间戳');
+    assert.equal(rows.find((f) => f.id === two.id).used_at, null, '没用到的那条不动');
+  });
+
+  // ==================== classes (ADR-0011 §3) ====================
+
+  t('classes: an identity that outlives a course, with at most one default', async (store) => {
+    const a = await newUser(store);
+    const b = await newUser(store);
+
+    assert.deepEqual(await store.listClasses(a.id), [], '新老师名下没有班');
+    const first = await store.createClass(a.id, { name: '中三班', ageBand: '中班', classSize: 30, isDefault: true });
+    assert.ok(first.id);
+    assert.equal(first.name, '中三班');
+    assert.equal(first.age_band, '中班');
+    assert.equal(first.class_size, 30);
+    assert.equal(first.is_default, true);
+    assert.ok(Date.parse(first.created_at) > 0);
+
+    const second = await store.createClass(a.id, { name: '大一班', isDefault: true });
+    assert.equal(second.is_default, true);
+    // idx_classes_one_default is a PARTIAL UNIQUE INDEX: setting the new default
+    // before clearing the old one raises 23505 on PostgreSQL, while a JSON tier
+    // that forgot would hold two defaults forever and nothing would say so.
+    const defaults = (await store.listClasses(a.id)).filter((k) => k.is_default);
+    assert.deepEqual(defaults.map((k) => k.id), [second.id], '默认班只能有一个');
+
+    const back = await store.setDefaultClass(a.id, first.id);
+    assert.equal(back.is_default, true);
+    assert.deepEqual(
+      (await store.listClasses(a.id)).filter((k) => k.is_default).map((k) => k.id),
+      [first.id], '换默认班也只能有一个',
+    );
+    assert.equal(await store.setDefaultClass(b.id, first.id), null, '别人的班设不了默认');
+    assert.equal(await store.setDefaultClass(a.id, randomUUID()), null);
+
+    const fixed = await store.updateClass(a.id, first.id, { name: '中三班（下学期）', classSize: 28 });
+    assert.equal(fixed.name, '中三班（下学期）');
+    assert.equal(fixed.class_size, 28);
+    assert.equal(fixed.age_band, '中班', '没写的字段保持原样');
+    assert.equal(fixed.is_default, true, '改名不会动默认班这件事');
+    // updateClass deliberately cannot set is_default: the invariant has one
+    // owner, so there is only one place it can be got wrong.
+    const sneaky = await store.updateClass(a.id, second.id, { name: '大一班', is_default: true, isDefault: true });
+    assert.equal(sneaky.is_default, false, '改班级信息不是设默认班的后门');
+    assert.equal(await store.updateClass(b.id, first.id, { name: '抢班' }), null, '别人的班改不了');
+    assert.equal(await store.updateClass(a.id, randomUUID(), { name: '不存在' }), null);
+
+    await rejectsWithStatus(() => store.createClass(a.id, { name: '   ' }), 400, '班级要有名字');
+    await rejectsWithStatus(() => store.createClass(a.id, { name: '中三班', classSize: -1 }), 400, '人数不能是负数');
+    assert.deepEqual(await store.listClasses(b.id), [], '别人的班不会串过来');
+    // No deleteClass in v1: facts.class_id is ON DELETE CASCADE, so deleting a
+    // class would silently destroy every class fact she deliberately widened.
+    assert.equal(typeof store.deleteClass, 'undefined', '不能有 deleteClass');
+  });
+
+  t('setCourseClass: the binding class memory is read through', async (store) => {
+    const a = await newUser(store);
+    const b = await newUser(store);
+    const course = await store.createCourse(a.id, '醒狮');
+    const klass = await store.createClass(a.id, { name: '中三班' });
+    const theirs = await store.createClass(b.id, { name: '别人的班' });
+
+    assert.equal((await store.getCourse(a.id, course.id)).class_id, null, '还没问过是哪个班');
+    const bound = await store.setCourseClass(a.id, course.id, klass.id);
+    assert.deepEqual(bound, { id: course.id, class_id: klass.id });
+    assert.equal((await store.getCourse(a.id, course.id)).class_id, klass.id);
+
+    // Foreign keys bypass row-level security, so no policy checks the class the
+    // course points at — this method has to.
+    await rejectsWithStatus(() => store.setCourseClass(a.id, course.id, theirs.id), 404, '不能绑到别人的班上');
+    await rejectsWithStatus(() => store.setCourseClass(b.id, course.id, theirs.id), 404, '别人的课程绑不了');
+    assert.equal((await store.getCourse(a.id, course.id)).class_id, klass.id, '被拒的绑定什么都没改');
+
+    assert.deepEqual(await store.setCourseClass(a.id, course.id, null), { id: course.id, class_id: null }, '也能解绑');
+  });
+
+  // ==================== interaction signals (ADR-0009 §3) ====================
+
+  t('signals: append-only, one closed set of axes, newest first', async (store) => {
+    const a = await newUser(store);
+    const b = await newUser(store);
+    const course = await store.createCourse(a.id, '醒狮');
+    const theirs = await store.createCourse(b.id, '别人的课');
+
+    const one = await store.recordSignal(a.id, {
+      axis: 'guidance', signal: 'asked_for_detail', delta: 0.5, courseId: course.id,
+    });
+    assert.ok(one.id != null);
+    assert.equal(one.axis, 'guidance');
+    assert.equal(one.signal, 'asked_for_detail');
+    assert.equal(one.delta, 0.5, '幅度是数字，不是字符串');
+    assert.equal(one.course_id, course.id);
+    assert.ok(Date.parse(one.created_at) > 0);
+
+    // The profile pane holds the Chinese label and the inference layer holds the
+    // id; both must reach the same row or the audit trail splits in two.
+    const two = await store.recordSignal(a.id, { axis: '引导强度', signal: 'skipped_card', delta: -1 });
+    assert.equal(two.axis, 'guidance', '中文名和代号写进同一个维度');
+    assert.equal(two.course_id, null, '没有课程也能记');
+
+    await rejectsWithStatus(() => store.recordSignal(a.id, { axis: '不存在的维度', signal: 'x', delta: 1 }), 400, '未知维度要拒');
+    await rejectsWithStatus(() => store.recordSignal(a.id, { axis: 'guidance', signal: '  ', delta: 1 }), 400, '要说清楚观察到了什么');
+    await rejectsWithStatus(() => store.recordSignal(a.id, { axis: 'guidance', signal: 'x', delta: 'a lot' }), 400, '幅度要是一个数');
+    await rejectsWithStatus(() => store.recordSignal(a.id, { axis: 'guidance', signal: 'x', delta: 1, courseId: theirs.id }), 404, '不能记到别人的课程上');
+
+    // A LABEL, not a sentence. Counted in code points, like every other
+    // teacher-derived string in this codebase.
+    const long = '今天番禺天气怎么样'.repeat(20);
+    const clipped = await store.recordSignal(a.id, { axis: 'pacing', signal: long, delta: 0 });
+    assert.equal([...clipped.signal].length, 60, '信号是标签，不是对话记录');
+
+    const rows = await store.listSignals(a.id, { limit: 50 });
+    assert.equal(rows.length, 3);
+    assert.equal(rows[0].id, clipped.id, '最新的在前');
+    assert.deepEqual((await store.listSignals(a.id, { axis: 'guidance' })).map((r) => r.id), [two.id, one.id]);
+    assert.deepEqual((await store.listSignals(a.id, { axis: '引导强度' })).map((r) => r.id), [two.id, one.id]);
+    assert.equal((await store.listSignals(a.id, { limit: 1 })).length, 1);
+    assert.deepEqual(await store.listSignals(b.id, {}), [], '别的老师的信号看不到');
+    await rejectsWithStatus(() => store.listSignals(a.id, { axis: '不存在的维度' }), 400, '按未知维度筛也要拒');
+
+    // Append-only by the absence of a grant (002_roles.sql): app_rw holds
+    // SELECT and INSERT on interaction_signals and nothing else, so a method
+    // that edited or removed a row would fail with 42501 in production.
+    assert.equal(typeof store.updateSignal, 'undefined');
+    assert.equal(typeof store.deleteSignal, 'undefined');
+  });
+
+  // ==================== uploads: the two reads the endpoints need ==========
+
+  t('materials: one owned upload by id, and the ids the resolver needs', async (store) => {
+    const a = await newUser(store);
+    const b = await newUser(store);
+    const course = await store.createCourse(a.id, '醒狮');
+    const other = await store.createCourse(a.id, '龙舟');
+
+    const mine = await store.recordMaterial(a.id, course.id, {
+      kind: 'photo', mime_type: 'image/jpeg', cos_key: `courses/${course.id}/${randomUUID()}.jpg`,
+      size_bytes: 2048, exif_stripped: true, contains_children: true,
+    });
+    const elsewhere = await store.recordMaterial(a.id, other.id, {
+      kind: 'photo', mime_type: 'image/png', cos_key: `courses/${other.id}/${randomUUID()}.png`,
+      size_bytes: 1024, exif_stripped: true, contains_children: false,
+    });
+
+    const read = await store.getMaterial(a.id, mine.id);
+    assert.equal(read.id, mine.id);
+    assert.equal(read.cos_key, mine.cos_key, '端点要拿到对象键才能把字节发出去');
+    assert.equal(read.exif_stripped, true);
+    // Null rather than a throw: the endpoint answers 404 either way and cannot
+    // be used to tell 「not yours」 apart from 「not there」.
+    assert.equal(await store.getMaterial(b.id, mine.id), null, '别人的上传读不到');
+    assert.equal(await store.getMaterial(a.id, randomUUID()), null);
+    assert.equal(await store.getMaterial(a.id, 'not-a-uuid'), null);
+
+    // The set resolveUploadRef checks. Scoped by BOTH teacher and course, so an
+    // upload_ref naming her own material on another course grounds nothing.
+    assert.deepEqual(await store.listMaterialIds(a.id, course.id), [String(mine.id)]);
+    assert.equal((await store.listMaterialIds(a.id, other.id)).includes(String(mine.id)), false);
+    assert.deepEqual(await store.listMaterialIds(b.id, course.id), [], '别人的课程下什么都没有');
+    assert.deepEqual(await store.listMaterialIds(a.id, randomUUID()), []);
+    assert.ok((await store.listMaterialIds(a.id, other.id)).includes(String(elsewhere.id)));
+  });
+
+  // ==================== admin reads and erasure ====================
+
+  t('adminListFacts: which utterance produced which fact, archived ones included', async (store) => {
+    const a = await newUser(store);
+    const b = await newUser(store);
+    const courseA = await store.createCourse(a.id, '醒狮');
+    const courseB = await store.createCourse(b.id, '龙舟');
+
+    const kept = await store.recordFact(a.id, {
+      scope: 'course', courseId: courseA.id, kind: 'equipment',
+      text: '班上没有鼓', quote: '我们班没有鼓', source: 'auto',
+    });
+    const gone = await store.recordFact(a.id, {
+      scope: 'course', courseId: courseA.id, kind: 'space',
+      text: '教室很小', quote: '我们教室很小', source: 'auto',
+    });
+    await store.archiveFact(a.id, gone.id, { reason: 'child_claim' });
+    const hers = await store.recordFact(b.id, {
+      scope: 'course', courseId: courseB.id, kind: 'schedule',
+      text: '周三没有活动时间', quote: '周三排不开', source: 'auto',
+    });
+
+    const forA = await store.adminListFacts({ userId: a.id, limit: 50 });
+    const ids = forA.map((f) => f.id);
+    assert.ok(ids.includes(kept.id));
+    // An archived fact and its reason are the whole point: a wrong extraction
+    // has to be diagnosable rather than mysterious.
+    assert.ok(ids.includes(gone.id), '归档的也要看得见，否则错抽出来的那条就查不到了');
+    assert.equal(forA.find((f) => f.id === gone.id).archive_reason, 'child_claim');
+    assert.equal(forA.find((f) => f.id === kept.id).quote, '我们班没有鼓', '看得到是哪句话产生了它');
+    assert.equal(ids.includes(hers.id), false, '按老师筛就只有这位老师的');
+
+    assert.deepEqual(
+      (await store.adminListFacts({ courseId: courseB.id, limit: 50 })).map((f) => f.id), [hers.id],
+    );
+    // The cross-teacher read: app_rw cannot do this by construction.
+    const everyone = await store.adminListFacts({ limit: 200 });
+    assert.ok(everyone.some((f) => f.id === kept.id) && everyone.some((f) => f.id === hers.id));
+  });
+
+  t('erase: memory, classes and signals go with the account', async (store) => {
+    const a = await newUser(store);
+    const course = await store.createCourse(a.id, '醒狮');
+    const klass = await store.createClass(a.id, { name: '中三班', isDefault: true });
+    await store.setCourseClass(a.id, course.id, klass.id);
+    await store.recordFact(a.id, {
+      scope: 'course', courseId: course.id, kind: 'equipment',
+      text: '班上没有鼓', quote: '我们班没有鼓', source: 'auto',
+    });
+    await store.recordFact(a.id, {
+      scope: 'class', classId: klass.id, kind: 'space',
+      text: '教室里没有投影仪', quote: '我们教室没有投影仪', source: 'teacher',
+    });
+    await store.recordSignal(a.id, { axis: 'guidance', signal: 'asked_for_detail', delta: 0.5 });
+
+    const receipt = await store.eraseUser(null, a.id);
+    users.delete(a.id);
+    // The receipt is the only evidence an operator has that the erase did what
+    // it says, so the counts have to be real ones.
+    assert.equal(receipt.deleted.facts, 2, '两条记忆都算进回执');
+    assert.equal(receipt.deleted.classes, 1);
+    assert.equal(receipt.deleted.interaction_signals, 1);
+
+    // A collection that is not swept survives an erase and nobody finds out
+    // until an audit does — which is what USER_SCOPED_FILES exists to prevent
+    // in one tier and the erase transaction in the other.
+    assert.deepEqual(await store.adminListFacts({ userId: a.id, limit: 50 }), [], '记忆不能比账号活得久');
+    assert.deepEqual(await store.listClasses(a.id), []);
+    assert.deepEqual(await store.listSignals(a.id, {}), []);
   });
 }

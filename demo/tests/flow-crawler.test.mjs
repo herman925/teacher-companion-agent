@@ -11,13 +11,13 @@ import assert from 'node:assert/strict';
 
 import { mockTurn } from '../src/mock.mjs';
 import { parseTurn, validateTurn } from '../src/harness.mjs';
-import { createInitialState, applyDelta } from '../src/engine.mjs';
+import { createInitialState, applyDelta, applyPlanDelta } from '../src/engine.mjs';
 
 const DEAD_AWAITING = '我先在这里等你带孩子去现场';
 const HORIZON_RE = /演示脚本到这里|演示的边界/;
 const GENERIC_FOLLOWUPS = ['好的', '還有呢？', '然后呢'];
 
-const coverage = { steps: 0, branches: 0 };
+const coverage = { steps: 0, branches: 0, planOps: 0 };
 
 /** One asserted pipeline step; returns the applied state + turn. */
 function stepAssert(state, history, message, label) {
@@ -25,7 +25,10 @@ function stepAssert(state, history, message, label) {
   const { turn, violations: pv } = parseTurn(raw);
   assert.ok(turn, label + ' parses');
   assert.equal(pv.length, 0, label + ' parse clean');
-  const blocking = validateTurn(turn, state).filter((v) => v.action === 'block');
+  // teacherText + mock mirror serve.mjs/local-turn.mjs: without them the citation
+  // rule trusts any quote and the crawl would pass a plan_delta that confirms a
+  // node on the teacher's behalf.
+  const blocking = validateTurn(turn, state, { teacherText: message, mock: true }).filter((v) => v.action === 'block');
   assert.deepEqual(blocking, [], label + ' blocking: ' + JSON.stringify(blocking));
   assert.ok(turn.wf_trace && Array.isArray(turn.wf_trace.nodes) && turn.wf_trace.nodes.length > 0, label + ' wf_trace present');
   assert.ok(typeof turn.wf_trace.state_notes === 'string' && turn.wf_trace.state_notes.length > 0, label + ' state_notes present');
@@ -35,8 +38,14 @@ function stepAssert(state, history, message, label) {
   const applied = applyDelta(state, turn.state_delta, { roundComplete: turn.round_complete, teacherTurn: true });
   const dirty = applied.violations.filter((v) => ['illegal_stage_jump', 'bad_delta', 'node_prerequisite'].includes(v.kind));
   assert.deepEqual(dirty, [], label + ' delta clean: ' + JSON.stringify(dirty));
+  // The plan tree's write path walks with the rest of the pipeline: a malformed
+  // op, an unknown parent, a node born `confirmed` or a quote she never typed
+  // all surface here, on every step of every flow and every forked chip.
+  const pd = applyPlanDelta(applied.state, turn.plan_delta, { teacherText: message });
+  assert.deepEqual(pd.violations, [], label + ' plan delta clean: ' + JSON.stringify(pd.violations));
+  coverage.planOps += (turn.plan_delta || []).length;
   coverage.steps += 1;
-  return { turn, state: applied.state };
+  return { turn, state: pd.state };
 }
 
 /**
@@ -198,5 +207,8 @@ test('crawler coverage: branches forked and steps walked', () => {
   // 5 main walks + 1 extra pick walk fork the chips of every questioning turn.
   assert.ok(coverage.branches >= 25, 'chip branches forked: ' + coverage.branches);
   assert.ok(coverage.steps >= 60, 'total steps walked: ' + coverage.steps);
-  console.log('crawler coverage → steps:', coverage.steps, '· chip branches:', coverage.branches);
+  // A crawl that applied zero plan ops proves nothing about the plan path — the
+  // 导图 and the plan tree would be invisible to a key-less demo run again.
+  assert.ok(coverage.planOps >= 20, 'plan_delta ops applied during the crawl: ' + coverage.planOps);
+  console.log('crawler coverage → steps:', coverage.steps, '· chip branches:', coverage.branches, '· plan ops:', coverage.planOps);
 });

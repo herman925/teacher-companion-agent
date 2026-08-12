@@ -221,6 +221,8 @@
     <span class="spacer"></span>
     <button id="tab-data" class="tab on">数据</button>
     <button id="tab-users" class="tab">用户</button>
+    <button id="tab-memory" class="tab">记忆</button>
+    <button id="tab-audit" class="tab">审计</button>
     <button id="tab-limits" class="tab">限流</button>
     <button id="tab-scope" class="tab">范围护栏</button>
   </div>
@@ -257,6 +259,11 @@
       <div class="detail-card">
         <div class="detail-head" id="detail-head">完整记录</div>
         <div class="detail-hint" id="detail-hint">点左侧课程名查看 course_state · messages · snapshots。</div>
+        <!-- Uploads for the opened course. Metadata only until someone asks for
+             a file, and asking writes an access-log row — ADR-0013 §7 accepts
+             admin reach into a teacher's uploads only because every reach is
+             recorded. -->
+        <div id="detail-materials" hidden></div>
         <pre id="detail" hidden></pre>
       </div>
     </div>
@@ -281,7 +288,65 @@
           <thead id="user-head"></thead>
           <tbody id="user-rows"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
         </table>
-        <p class="detail-hint" style="margin-top:8px">创建账号会生成一次性初始密码（只显示一次）；用户首次登录后必须改密码。停用会立刻踢下线并退出其所有设备。删除会永久移除账号、其全部课程数据与登录记录（需点两次确认，不可恢复）。所有操作都会写入审计记录。</p>
+        <p class="detail-hint" style="margin-top:8px">创建账号会生成一次性初始密码（只显示一次）；用户首次登录后必须改密码。
+          <b>停用</b>只是暂时不让登录，随时可以启用。
+          <b>撤销</b>用在老师离职、账号不再使用的时候：同样立刻下线并拒绝登录，但<b>数据一条都不删</b>——园里可能还要用去年的课程——同时开始计保留期（到期后才由人决定是否清除）。撤销可以「恢复」，恢复会把保留期的时钟停掉。
+          <b>删除</b>会永久移除账号、其全部课程数据、上传的文件与登录记录（需点两次确认，不可恢复）。所有操作都会写入审计记录，在「审计」标签页里看得到。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 记忆 tab (ADR-0011): every fact the agent extracted, WITH the teacher's own
+       sentence beside it. The observability duty for memory is specific — which
+       utterance produced which fact — because without it a wrong extraction is
+       mysterious rather than diagnosable. Archived rows stay visible with their
+       reason: archiving is not deleting, and 「为什么这条不再生效」 is exactly the
+       question this table exists to answer. -->
+  <div id="view-memory" hidden>
+    <div class="bar">
+      <input type="text" id="memory-search" placeholder="筛选：内容 / 原话 / 类别 / 老师 id…" autocomplete="off">
+      <span class="count" id="memory-count"></span>
+      <span class="spacer"></span>
+      <label class="frange"><input type="checkbox" id="memory-archived"> 显示已归档</label>
+      <button id="memory-refresh">刷新</button>
+    </div>
+    <div class="wrap">
+      <div class="list" style="flex:1 1 100%">
+        <p class="note" style="margin:0 0 10px">
+          记忆每一轮都会整份发给模型，所以这里的每一条都在持续影响输出。类别是封闭的五种
+          （<code>equipment</code>／<code>space</code>／<code>schedule</code>／<code>class_composition</code>／<code>teacher_preference</code>）——
+          「孩子已经学会了……」这类话没有类别可归，进不了记忆，这是结构上的拦法，不是关键词匹配。
+          读这一页会写访问日志。
+        </p>
+        <table>
+          <thead><tr><th>时间</th><th>范围</th><th>类别</th><th>记住的内容</th><th>老师原话</th><th>来源</th><th>状态</th><th>账号 / 课程</th></tr></thead>
+          <tbody id="memory-rows"><tr><td colspan="8" class="empty">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 审计 tab (SECURITY.md §4): who did what to which account. This is where a
+       revocation shows up — 撤销 keeps the data and starts the retention clock,
+       so the row recording it is the only thing that says when that clock
+       started and who started it. -->
+  <div id="view-audit" hidden>
+    <div class="bar">
+      <input type="text" id="audit-search" placeholder="筛选：操作 / 账号 id…" autocomplete="off">
+      <span class="count" id="audit-count"></span>
+      <span class="spacer"></span>
+      <button id="audit-refresh">刷新</button>
+    </div>
+    <div class="wrap">
+      <div class="list" style="flex:1 1 100%">
+        <p class="note" style="margin:0 0 10px">
+          账号操作的流水：创建、重置密码、停用、撤销、改角色、删除、解除限流。
+          管理员读了哪些课程内容不在这里——那是「访问日志」，两份记录回答的是两个问题。
+        </p>
+        <table>
+          <thead><tr><th>时间</th><th>操作</th><th>操作人</th><th>目标账号</th><th>详情</th></tr></thead>
+          <tbody id="audit-rows"><tr><td colspan="5" class="empty">加载中…</td></tr></tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -630,11 +695,73 @@
       $('#detail-head').textContent = `${title || id} · 完整记录`;
       $('#detail-hint').hidden = true;
       const pre = $('#detail'); pre.hidden = false; pre.textContent = '加载中…';
+      viewMaterials(id);
       try {
         const res = await af('/api/admin/courses/' + id);
         const data = await res.json();
         pre.textContent = JSON.stringify(data.course, null, 2);
       } catch (e) { pre.textContent = '加载失败：' + e.message; }
+    }
+
+    const MATERIAL_KIND_LABEL = { photo: '照片', observation: '观察记录', document: '文档', generated: '生成的材料' };
+    const MATERIAL_EXT = {
+      'image/jpeg': 'jpg', 'image/png': 'png', 'application/pdf': 'pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    };
+    const kb = (n) => `${Math.max(1, Math.round(Number(n || 0) / 1024))}KB`;
+
+    /** The uploads on one course. Listing them is itself a content read, so it
+     * is logged server-side; opening one is logged again, separately. */
+    async function viewMaterials(courseId) {
+      const box = $('#detail-materials');
+      box.hidden = false;
+      box.replaceChildren();
+      let rows = [];
+      try {
+        const res = await af(`/api/admin/courses/${courseId}/materials`);
+        if (res.status === 401) { showAdminGate(); box.hidden = true; return; }
+        rows = (await res.json()).materials ?? [];
+      } catch (e) {
+        box.textContent = '上传文件读取失败：' + e.message;
+        return;
+      }
+      if (!rows.length) { box.hidden = true; return; }
+      const head = document.createElement('div');
+      head.className = 'detail-hint';
+      head.style.margin = '0 0 6px';
+      head.textContent = `上传的文件（${rows.length}）——打开任何一个都会记进访问日志`;
+      box.append(head);
+      for (const m of rows) {
+        const line = document.createElement('div');
+        line.className = 'row-actions';
+        line.style.margin = '0 0 6px';
+        const label = document.createElement('span');
+        // 含儿童影像 is the flag that decides retention and access, so it is on
+        // the line rather than buried in the JSON below.
+        label.textContent = `${MATERIAL_KIND_LABEL[m.kind] ?? m.kind} · ${kb(m.size_bytes)} · ${localDate(m.created_at)}`
+          + `${m.contains_children ? ' · 含儿童影像' : ''}${m.exif_stripped ? ' · 已去元数据' : ''}`;
+        line.append(label);
+        line.append(mkbtn('打开', () => openMaterial(courseId, m)));
+        box.append(line);
+      }
+    }
+
+    /** Fetch the bytes WITH the admin header (a bare link carries none, so on a
+     * password-protected instance it would 401), then hand them to the browser
+     * as a download. Never rendered inline: these can be photographs of
+     * children, and a page that displays one leaves it in the tab. */
+    async function openMaterial(courseId, m) {
+      try {
+        const res = await af(`/api/admin/courses/${courseId}/materials/${m.id}/view`);
+        if (res.status === 401) { showAdminGate(); return; }
+        if (!res.ok) { banner('打开失败：文件不存在或已被删除'); return; }
+        const url = URL.createObjectURL(await res.blob());
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${m.id}.${MATERIAL_EXT[m.mime_type] ?? 'bin'}`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+      } catch (e) { banner('打开失败：' + e.message); }
     }
 
     function downloadBlob(obj, name) {
@@ -666,6 +793,7 @@
       selected.clear();
       await loadData();
       $('#detail').hidden = true;
+      $('#detail-materials').hidden = true;
       $('#detail-hint').hidden = false;
       $('#detail-head').textContent = '完整记录';
     }
@@ -737,20 +865,136 @@
       $('#data-actions').hidden = which !== 'data';
       $('#data-filters').hidden = which !== 'data';
       $('#view-users').hidden = which !== 'users';
+      $('#view-memory').hidden = which !== 'memory';
+      $('#view-audit').hidden = which !== 'audit';
       $('#view-limits').hidden = which !== 'limits';
       $('#view-scope').hidden = which !== 'scope';
       $('#tab-data').classList.toggle('on', which === 'data');
       $('#tab-users').classList.toggle('on', which === 'users');
+      $('#tab-memory').classList.toggle('on', which === 'memory');
+      $('#tab-audit').classList.toggle('on', which === 'audit');
       $('#tab-limits').classList.toggle('on', which === 'limits');
       $('#tab-scope').classList.toggle('on', which === 'scope');
       if (which === 'users') loadUsers();
+      if (which === 'memory') loadMemory();
+      if (which === 'audit') loadAudit();
       if (which === 'limits') loadLimits();
       if (which === 'scope') loadScope();
     }
     $('#tab-data').addEventListener('click', () => showView('data'));
     $('#tab-users').addEventListener('click', () => showView('users'));
+    $('#tab-memory').addEventListener('click', () => showView('memory'));
+    $('#tab-audit').addEventListener('click', () => showView('audit'));
     $('#tab-limits').addEventListener('click', () => showView('limits'));
     $('#tab-scope').addEventListener('click', () => showView('scope'));
+
+    // ---- 记忆 tab (ADR-0011 / ADR-0013 §9): the extracted facts, with the
+    // sentence each one came out of. Memory rides EVERY turn, so a wrong row
+    // here is not a stale record — it is a wrong instruction, repeated. ----
+    let memoryRows = [];
+    const FACT_KIND_LABEL = {
+      equipment: '器材', space: '场地', schedule: '时间安排',
+      class_composition: '班级构成', teacher_preference: '老师偏好',
+    };
+    const FACT_SCOPE_LABEL = { node: '节点', course: '这门课', class: '这个班', teacher: '她所有班' };
+    // Why a fact stopped being sent. Stated, never blank: 「不见了」 with no
+    // reason is how a teacher learns to distrust the memory page.
+    const ARCHIVE_LABEL = {
+      child_claim: '讲的是孩子已经做到的事——那要凭现场证据，不进记忆',
+      cap: '到了记忆上限，最久没用到的先归档',
+      superseded: '被后来的一条取代了',
+      teacher_removed: '老师说不用记了',
+      unknown: '已归档（原因未记录）',
+    };
+    async function loadMemory() {
+      const rows = $('#memory-rows');
+      try {
+        const res = await af('/api/admin/facts?limit=500');
+        if (res.status === 401) { showAdminGate(); return; }
+        const data = await res.json();
+        memoryRows = data.facts ?? [];
+      } catch (e) { banner('读记忆失败：' + e.message); return; }
+      banner('', false);
+      renderMemory();
+    }
+    function renderMemory() {
+      const rows = $('#memory-rows');
+      rows.replaceChildren();
+      const q = ($('#memory-search')?.value ?? '').trim().toLowerCase();
+      const withArchived = $('#memory-archived').checked;
+      const vis = memoryRows
+        .filter((f) => (withArchived || !f.archived))
+        .filter((f) => !q || [f.text, f.quote, f.kind, f.scope, f.user_id, f.course_id].join(' ').toLowerCase().includes(q));
+      $('#memory-count').textContent = `显示 ${vis.length} / 共 ${memoryRows.length}`;
+      if (!vis.length) {
+        rows.innerHTML = `<tr><td colspan="8" class="empty">${memoryRows.length ? '没有匹配的记忆。' : '还没有记住任何东西——老师说出可归类的约束（班上没有鼓、场地只有周三能用…）之后才会有。'}</td></tr>`;
+        return;
+      }
+      for (const f of vis) {
+        const tr = document.createElement('tr');
+        tr.append(td(fmt(f.at)));
+        tr.append(td(FACT_SCOPE_LABEL[f.scope] ?? f.scope));
+        tr.append(td(FACT_KIND_LABEL[f.kind] ?? f.kind));
+        tr.append(td(f.text ?? f.body ?? ''));
+        // The teacher's own words. Empty is worth showing as 「—」 rather than
+        // as a blank cell: a fact with no quote is a fact nobody can trace.
+        tr.append(td(f.quote ? `「${f.quote}」` : '—'));
+        tr.append(td(f.source === 'teacher' ? '老师确认过' : '自动记下'));
+        tr.append(td(f.archived ? (ARCHIVE_LABEL[f.archive_reason] ?? f.archive_reason ?? '已归档') : '在用'));
+        const who = document.createElement('td');
+        who.className = 'mono';
+        who.textContent = `${(f.user_id ?? '').slice(0, 8)} / ${(f.course_id ?? '—').slice(0, 8)}`;
+        tr.append(who);
+        rows.append(tr);
+      }
+    }
+    $('#memory-refresh').addEventListener('click', loadMemory);
+    $('#memory-search').addEventListener('input', renderMemory);
+    $('#memory-archived').addEventListener('change', renderMemory);
+
+    // ---- 审计 tab: account operations, including the revocation clock ----
+    let auditRows = [];
+    const AUDIT_LABEL = {
+      create_user: '创建账号', reset_password: '重置密码', disable_user: '停用',
+      enable_user: '启用', revoke_user: '撤销账号（数据保留）', erase_user: '彻底删除账号与数据',
+      delete_user: '彻底删除账号与数据', set_role: '改角色', delete_course: '删除课程',
+      rate_limit_clear: '解除限流', rate_limit_clear_all: '解除全部限流',
+    };
+    async function loadAudit() {
+      try {
+        const res = await af('/api/admin/audit');
+        if (res.status === 401) { showAdminGate(); return; }
+        auditRows = (await res.json()).audit ?? [];
+      } catch (e) { banner('读审计失败：' + e.message); return; }
+      banner('', false);
+      renderAudit();
+    }
+    function renderAudit() {
+      const rows = $('#audit-rows');
+      rows.replaceChildren();
+      const q = ($('#audit-search')?.value ?? '').trim().toLowerCase();
+      const vis = auditRows.filter((r) => !q
+        || [r.action, AUDIT_LABEL[r.action] ?? '', r.target_user, r.admin_id].join(' ').toLowerCase().includes(q));
+      $('#audit-count').textContent = `显示 ${vis.length} / 共 ${auditRows.length}`;
+      if (!vis.length) {
+        rows.innerHTML = `<tr><td colspan="5" class="empty">${auditRows.length ? '没有匹配的记录。' : '还没有账号操作记录。'}</td></tr>`;
+        return;
+      }
+      for (const r of vis) {
+        const tr = document.createElement('tr');
+        tr.append(td(fmt(r.created_at ?? r.at)));
+        tr.append(td(AUDIT_LABEL[r.action] ?? r.action));
+        tr.append(td(r.admin_id ?? '—'));
+        const target = document.createElement('td');
+        target.className = 'mono';
+        target.textContent = r.target_user ?? '—';
+        tr.append(target);
+        tr.append(td(r.detail ? JSON.stringify(r.detail) : '—'));
+        rows.append(tr);
+      }
+    }
+    $('#audit-refresh').addEventListener('click', loadAudit);
+    $('#audit-search').addEventListener('input', renderAudit);
 
     // ---- 范围护栏 tab (ADR-0012 §3): the would-refuse log. Warn-only is only
     // worth running if somebody reads these rows before enforcement goes on. ----
@@ -891,12 +1135,27 @@
 
     // 用户 tab columns: account fields + the demographics teachers filled in
     const upf = (u, k) => u.profile?.[k] ?? '';
+    /** The account's state in words. A revoked row with no stamp is a data
+     * defect, not an old account — the clock never started — so it says so
+     * instead of reading as an ordinary revocation. */
+    function userState(u) {
+      if (u.status === 'active') return '正常';
+      if (u.status === 'revoked') return u.revoked_at ? '已撤销（数据保留）' : '已撤销（缺撤销时间）';
+      if (u.status === 'erased') return '已删除';
+      return '已停用';
+    }
     const USER_COLS = [
       { key: 'username', label: '用户名', get: (u) => u.username },
       { key: 'display_name', label: '昵称', get: (u) => u.display_name },
       { key: 'id', label: '用户ID', get: (u) => u.id, mono: true },
       { key: 'role', label: '角色', get: (u) => (u.role === 'admin' ? '管理员' : '教师') },
-      { key: 'status', label: '状态', get: (u) => (u.status === 'active' ? '正常' : '已停用') },
+      // Three states, three words (ADR-0013 §11). 停用 and 撤销 used to read the
+      // same on this page, which hid the one difference that matters: only a
+      // 撤销 row carries `revoked_at`, and only a row with that stamp is ever
+      // seen by the retention job. A 「已停用」 account is data that stays
+      // forever with nobody having decided that it should.
+      { key: 'status', label: '状态', get: (u) => userState(u) },
+      { key: 'revoked_at', label: '撤销时间', get: (u) => (u.revoked_at ? fmt(u.revoked_at) : '') },
       { key: 'region', label: '地区', get: (u) => [upf(u, 'province'), upf(u, 'region')].filter(Boolean).join('') },
       { key: 'kgrole', label: '园内角色', get: (u) => upf(u, 'role') },
       { key: 'teachYears', label: '教龄', get: (u) => upf(u, 'teachYears') },
@@ -929,7 +1188,8 @@
           const r = await userAction(u.id, { action: 'reset_password' });
           if (r.ok) tempBox(u.username, r.temp_password); else banner(r.message || '重置失败');
         }));
-        const tog = mkbtn(u.status === 'active' ? '停用' : '启用', async () => {
+        const backLabel = u.status === 'revoked' ? '恢复' : '启用';
+        const tog = mkbtn(u.status === 'active' ? '停用' : backLabel, async () => {
           if (u.status === 'active' && tog.dataset.armed !== '1') {
             tog.dataset.armed = '1'; tog.classList.add('confirming'); tog.textContent = '确定停用？';
             setTimeout(() => { if (tog.isConnected) { tog.dataset.armed = ''; tog.classList.remove('confirming'); tog.textContent = '停用'; } }, 3000);
@@ -940,6 +1200,27 @@
         });
         if (u.status === 'active') tog.className = 'danger';
         wrap.append(tog);
+        // REVOKE — the operation the console could not reach. 停用 writes a
+        // status the retention machinery never looks at; only 撤销 stamps
+        // `revoked_at`, and only that stamp says when the keeping window
+        // opened. It is not a delete: her courses, messages and uploads all
+        // stay, which is why the confirmation says so in those words.
+        if (u.status !== 'revoked' && u.status !== 'erased') {
+          const rev = mkbtn('撤销', async () => {
+            if (rev.dataset.armed !== '1') {
+              rev.dataset.armed = '1'; rev.classList.add('confirming'); rev.textContent = '撤销？数据保留，开始计保留期';
+              setTimeout(() => { if (rev.isConnected) { rev.dataset.armed = ''; rev.classList.remove('confirming'); rev.textContent = '撤销'; } }, 4000);
+              return;
+            }
+            const r = await userAction(u.id, { action: 'revoke' });
+            if (r.ok) {
+              await loadUsers();
+              banner(`已撤销 ${u.username}：登录被拒、在线会话已下线，课程与上传全部保留（保留期从 ${fmt(r.user?.revoked_at)} 起算）`);
+            } else banner(r.message || '撤销失败');
+          });
+          rev.className = 'danger';
+          wrap.append(rev);
+        }
         wrap.append(mkbtn(u.role === 'admin' ? '设为教师' : '设为管理员', async () => {
           const r = await userAction(u.id, { action: 'set_role', role: u.role === 'admin' ? 'teacher' : 'admin' });
           if (r.ok) loadUsers(); else banner(r.message || '操作失败');

@@ -9,6 +9,10 @@ import { WF_NODES, NODE_PREREQS } from '../wf-nodes.mjs';
 import { BLUEPRINT_STATUS, normalizeBlueprint, numberBlueprint } from '../blueprint-util.mjs';
 import { numberPlan } from '../plan-tsv.mjs';
 import { layoutBlueprintMap, edgePath } from '../blueprint-map-layout.mjs';
+// The 记忆 page's vocabulary and its widen ladder come from the pure module, so
+// the button that exists and the rung the server accepts cannot disagree.
+import { kindLabel, sourceLabel, archiveNote, widenOffer } from './memory-view.mjs';
+import { landingHeadline } from './landing-view.mjs';
 
 // ---------------------------------------------------------------- sanitizer
 
@@ -1687,8 +1691,467 @@ export function renderWfTrace(wfTrace) {
   details.append(body);
   return details;
 }
+// ------------------------------------------------------------ 记忆 viewer
+//
+// The grouping, the vocabulary, the widen ladder and the correction sentence
+// all live in memory-view.mjs — pure, tested, and carrying the rules this page
+// exists to keep. Everything below is the DOM half.
+//
+// THERE IS NO ADD BUTTON ANYWHERE ON THIS PAGE, and that is a decision rather
+// than an omission: every control here acts on a row that exists because she
+// said something, so the only way a fact can come into being is that the agent
+// heard it and is now showing her what it heard (non-negotiable #2).
 
-// -------------------------------------------------------------- debug drawer
+/** The fact body plus the teacher's own words. Shared by the live rows and the
+ * archived ones, because an archived fact she cannot read is not 「shown as
+ * archived」 — it is gone with a label on it. */
+function memoryFactBody(li, fact) {
+  const head = el('div', 'memory-fact');
+  head.append(el('span', 'memory-kind', kindLabel(fact.kind)));
+  head.append(el('span', 'memory-text', fact.text ?? ''));
+  li.append(head);
+  // HER OWN WORDS, beside every row. The quote is what makes a remembered
+  // constraint checkable instead of an assertion the agent makes about her —
+  // and it is the same string the write path required to occur in her message.
+  if (fact.quote) li.append(el('div', 'memory-quote', `你说的：「${fact.quote}」`));
+}
+
+/** One live fact row: what was remembered, where it came from, and the three
+ * things she may do with it — correct, forget, widen one rung. */
+function memoryItem(fact, opts) {
+  const li = el('li', 'memory-item');
+  li.dataset.factId = fact.id ?? '';
+  li.dataset.kind = fact.kind ?? '';
+  memoryFactBody(li, fact);
+
+  const meta = [
+    String(fact.at ?? '').slice(0, 10),
+    sourceLabel(fact),
+    fact.widened_at ? '你扩大过' : '',
+  ].filter(Boolean).join(' · ');
+  li.append(el('div', 'memory-meta', meta));
+
+  const actions = el('div', 'memory-actions');
+
+  if (opts.onCorrect) {
+    // NOT an edit box. It hands a sentence to the composer and the ordinary
+    // extraction path re-files the fact with a fresh quote from a fresh turn —
+    // memory-view.correctionPrompt records why an in-place edit cannot exist.
+    const fix = el('button', 'memory-act', '改一下');
+    fix.type = 'button';
+    fix.title = '把这条放回输入框，你说清楚，我重新记';
+    fix.addEventListener('click', () => opts.onCorrect(fact));
+    actions.append(fix);
+  }
+
+  if (opts.onForget) {
+    // Two-step and inline, never a browser dialog — the discipline the history
+    // rail already uses for deletes (DESIGN.md §4).
+    const forget = el('button', 'memory-act danger', '忘掉');
+    forget.type = 'button';
+    forget.addEventListener('click', () => {
+      if (forget.dataset.armed === '1') { opts.onForget(fact); return; }
+      forget.dataset.armed = '1';
+      forget.classList.add('confirming');
+      forget.textContent = '确定忘掉？';
+    });
+    actions.append(forget);
+  }
+
+  const widen = widenOffer(fact, { classId: opts.classId ?? null, className: opts.className ?? '' });
+  if (widen && opts.onWiden) {
+    // The label names the rung; the armed state names the REACH. One tap must
+    // not assert 「这个班就是这样」 and 「我带的每个班都这样」 at once, which is the
+    // whole reason memory-scopes refuses to skip a rung.
+    //
+    // The armed sentence is built HERE, not in memory-view: which tap a button
+    // is on is view state that lives and dies with this DOM node, and a pure
+    // module that computed it would be holding a fact about a widget.
+    const armedText = widen.to === 'class'
+      ? `确定？${opts.className || '这个班'}的每门课都会带上`
+      : '确定？你带的每个班都会带上';
+    const btn = el('button', 'memory-act widen', widen.label);
+    btn.type = 'button';
+    btn.title = widen.confirm;
+    btn.addEventListener('click', () => {
+      if (btn.dataset.armed === '1') { opts.onWiden(fact, widen); return; }
+      btn.dataset.armed = '1';
+      btn.classList.add('confirming');
+      btn.textContent = armedText;
+    });
+    actions.append(btn);
+  }
+
+  if (actions.childElementCount) li.append(actions);
+  return li;
+}
+
+/**
+ * The 记忆 page: the live scopes widest-first, then 已归档 with its reasons.
+ *
+ * A FAILED READ IS NOT AN EMPTY MEMORY, and the page says which one it is. The
+ * distinction is security-relevant everywhere else in this feature — under
+ * row-level security a read with no user set returns zero rows BY DESIGN — so a
+ * viewer that rendered 「还没有记住什么」 for a broken load would be teaching her
+ * to trust an outage.
+ * @param {ReturnType<import('./memory-view.mjs').groupMemory>} grouped
+ * @param {{classId?: string|null, className?: string, note?: string, error?: string,
+ *   unavailable?: string,
+ *   onForget?: (f: Object) => void,
+ *   onWiden?: (f: Object, offer: {to: string, classId: string|null}) => void,
+ *   onCorrect?: (f: Object) => void}} [opts]
+ * @returns {HTMLElement} .memory-view
+ */
+export function renderMemoryView(grouped, opts = {}) {
+  const root = el('div', 'memory-view');
+  root.append(el('p', 'memory-lead',
+    '这里是我从你说过的话里记下来的事——器材、场地、时间安排、班里的情况、你的习惯。每一条都带着你的原话。看着不对，改一句，或者让我忘掉。'));
+
+  // 「没有这个功能」 and 「这次没读到」 are DIFFERENT SENTENCES and must never
+  // share a style. Without an account there is no memory to fail at reading —
+  // that is a fact about the tier, so it reads in faded ink like any other
+  // empty state. A failed read is a fault, so it takes the brick rule. Merging
+  // them would tell a teacher on the static tier that something broke.
+  if (opts.unavailable) {
+    root.append(el('p', 'memory-empty', opts.unavailable));
+    return root;
+  }
+  if (opts.error) {
+    root.append(el('div', 'memory-error', opts.error));
+    return root;
+  }
+  if (!grouped || !grouped.loaded) {
+    root.append(el('div', 'memory-error',
+      '这次没读到记忆。不是「没有记住什么」，是没读到——过一会儿再打开看看。'));
+    return root;
+  }
+
+  root.append(el('div', 'memory-counts',
+    `共 ${grouped.liveCount} 条在用${grouped.archived.length ? ` · 已归档 ${grouped.archived.length} 条` : ''}`));
+
+  let drew = 0;
+  for (const group of grouped.groups) {
+    if (!group.rows.length) continue; // an empty scope is not a section
+    drew += 1;
+    const section = el('section', 'memory-group');
+    section.dataset.scope = group.scope;
+    const head = el('div', 'memory-group-head');
+    head.append(el('span', 'memory-scope-tag', group.label));
+    head.append(el('span', 'memory-group-count', `${group.rows.length} 条`));
+    section.append(head);
+    section.append(el('p', 'memory-group-hint', group.hint));
+    const list = el('ul', 'memory-list');
+    for (const fact of group.rows) list.append(memoryItem(fact, opts));
+    section.append(list);
+    root.append(section);
+  }
+  if (!drew) {
+    root.append(el('p', 'memory-empty',
+      '还没有记住什么。你在对话里说到班里的条件时——「我们班没有鼓」「周三下午才有多功能室」——我会记下来，再拿到这里给你看。'));
+  }
+
+  if (grouped.archived.length) {
+    const box = document.createElement('details');
+    box.className = 'memory-archived';
+    box.append(el('summary', '', `已归档 ${grouped.archived.length} 条（不再进入对话，但留着）`));
+    box.append(el('p', 'memory-group-hint',
+      '这些不会再带进对话。留着是因为：我悄悄丢掉你说过的话，比让你看见我丢了更糟。'));
+    const list = el('ul', 'memory-list memory-list-archived');
+    for (const fact of grouped.archived) {
+      const li = el('li', 'memory-item is-archived');
+      li.dataset.factId = fact.id ?? '';
+      li.dataset.reason = fact.archive_reason ?? 'unknown';
+      memoryFactBody(li, fact);
+      li.append(el('div', 'memory-archive-reason', archiveNote(fact)));
+      const when = String(fact.archived_at ?? '').slice(0, 10);
+      if (when) li.append(el('div', 'memory-meta', `归档于 ${when}`));
+      list.append(li);
+    }
+    box.append(list);
+    root.append(box);
+  }
+
+  if (opts.note) root.append(el('p', 'settings-note', opts.note));
+  return root;
+}
+
+// ------------------------------------------------------------ class picker
+//
+// FORM category (DESIGN.md §4b): a surface for HER to fill, so it carries the
+// persimmon left rule rather than the agent's green.
+
+/**
+ * 「这门课是哪个班的？」 — rendered ONLY when she has more than one class and the
+ * course is not bound. One class is bound silently and this renderer is never
+ * called; memory-view.shouldAskClass / silentClassBinding own that decision, and
+ * there is deliberately no 新建班级 control here (a class comes into being by
+ * her naming one in conversation, ADR-0011 §3).
+ * @param {Array<{id: string, name: string, age_band?: string|null, class_size?: number|null}>} classes
+ * @param {{onPick: (classId: string) => void, onSkip?: () => void}} opts
+ * @returns {HTMLElement} .class-choice
+ */
+export function renderClassChoice(classes, opts) {
+  const box = el('div', 'class-choice');
+  box.append(el('div', 'class-choice-q', '这门课是哪个班的？'));
+  box.append(el('p', 'class-choice-why',
+    '班上的条件——有没有鼓、场地什么时候能用——跟着班走，不跟着课走。选了之后，这门课就会带上那个班记过的事。'));
+  const row = el('div', 'class-choice-row');
+  for (const cls of classes ?? []) {
+    const chip = el('button', 'chip class-chip', cls?.name ?? '未命名');
+    chip.type = 'button';
+    chip.dataset.classId = cls?.id ?? '';
+    const detail = [cls?.age_band, cls?.class_size ? `${cls.class_size} 人` : ''].filter(Boolean).join(' · ');
+    if (detail) chip.title = detail;
+    chip.addEventListener('click', () => opts.onPick(cls.id));
+    row.append(chip);
+  }
+  box.append(row);
+  if (opts.onSkip) {
+    const skip = el('button', 'text-btn class-choice-skip', '先不选');
+    skip.type = 'button';
+    skip.addEventListener('click', opts.onSkip);
+    box.append(skip);
+  }
+  return box;
+}
+
+/** The course header's class line — a STATEMENT she can tap, never a question.
+ * `assumed` marks the one-class case, where the binding may not be stored yet. */
+export function renderClassHeader(line, opts = {}) {
+  const box = el('div', 'class-header');
+  box.dataset.classId = line?.id ?? '';
+  box.append(el('span', 'class-header-label', '这门课是'));
+  const name = el('span', 'class-header-name', line?.name ?? '');
+  box.append(name);
+  box.append(el('span', 'class-header-label', '的'));
+  if (opts.onChange) {
+    const change = el('button', 'text-btn class-header-change', '换一个班');
+    change.type = 'button';
+    change.addEventListener('click', opts.onChange);
+    box.append(change);
+  }
+  return box;
+}
+
+// ------------------------------------------------ interaction-axis handles
+
+/**
+ * The six handles, in 教师档案 where 回应风格 used to sit alone.
+ *
+ * Every row opens showing WHERE the value is and WHERE IT CAME FROM, which is
+ * the whole difference between this pane and a settings form: she is correcting
+ * a stated belief, not completing an empty field (ADR-0009 §4). The seven named
+ * presets stay above as a shortcut, so a teacher already on 极简速览 behaves
+ * identically until she touches a handle.
+ * @param {ReturnType<import('./memory-view.mjs').axisHandleRows>} rows
+ * @param {{onSet: (axis: string, value: number) => void,
+ *   onUnpin?: (axis: string) => void}} opts
+ * @returns {HTMLElement} .axis-handles
+ */
+export function renderAxisHandles(rows, opts) {
+  const box = el('div', 'axis-handles');
+  for (const row of rows) {
+    const item = el('div', 'axis-row');
+    item.dataset.axis = row.axis;
+    if (row.pinned) item.dataset.pinned = '1';
+
+    const head = el('div', 'axis-head');
+    head.append(el('span', 'axis-name', row.zh));
+    head.append(el('span', 'axis-band', row.bandLabel));
+    item.append(head);
+
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.className = 'axis-slider';
+    slider.min = '1';
+    slider.max = '5';
+    slider.step = '1';
+    slider.value = String(row.value);
+    slider.id = `axis-${row.axis}`;
+    slider.setAttribute('aria-label', `${row.zh}：${row.bandLabel}`);
+    // `change`, not `input`: a drag across three values must write once, or the
+    // session log fills with moves she never meant to make.
+    slider.addEventListener('change', () => opts.onSet(row.axis, Number(slider.value)));
+    item.append(slider);
+
+    const scale = el('div', 'axis-scale');
+    scale.append(el('span', '', row.low), el('span', '', row.mid), el('span', '', row.high));
+    item.append(scale);
+
+    // WHERE THIS VALUE CAME FROM. Without it a handle is a setting; with it the
+    // pane is the agent showing its work.
+    const why = el('div', 'axis-why');
+    why.append(el('span', 'axis-source', [row.sourceLabel, row.confidenceLabel].filter(Boolean).join(' · ')));
+    if (row.signal) why.append(el('span', 'axis-signal', `（看到的：${row.signal}）`));
+    if (row.pinned && opts.onUnpin) {
+      const unpin = el('button', 'text-btn axis-unpin', '交回给我判断');
+      unpin.type = 'button';
+      unpin.title = '这一项不再钉住，我会根据你之后的操作继续调整';
+      unpin.addEventListener('click', () => opts.onUnpin(row.axis));
+      why.append(unpin);
+    }
+    item.append(why);
+
+    // The exact sentence the model is told (DESIGN.md §4: 回应风格 is a promise,
+    // not a label) — six times over instead of once.
+    if (row.directive) item.append(el('div', 'axis-directive', `会这样要求陪跑智能体：${row.directive}`));
+    box.append(item);
+  }
+  return box;
+}
+
+// ---------------------------------------------------- landing by course state
+
+/**
+ * The headline for the two modes that do not compute one.
+ *
+ * `plan` is deliberately absent: its headline comes from `landingHeadline`,
+ * where 「今天没有安排」 and 「今天没有活动」 are held apart by a test, because they
+ * say different things about a plan with undated activities in it.
+ */
+const LANDING_HEADLINE = Object.freeze({
+  fork: '我在，随时可以开始。',
+  step_zero: '这门课还在起头',
+});
+
+const LANDING_LEAD = Object.freeze({
+  fork: '还没有课程。想做什么都可以先说一句，剩下的我们一起理。',
+  step_zero: '还差这几件事，说清楚了，计划就会长出来：',
+  plan: '点一项就能只聊那一项，整门课的对话还在。',
+});
+
+/** One dated activity row. A PROJECTION of a plan node — id, number, title,
+ * date — and nothing about children: a landing card that summarised what
+ * children had done would be non-negotiable #1 in a UI costume. */
+function landingRow(item, opts, extraClass) {
+  const li = el('li', `landing-item${extraClass ? ` ${extraClass}` : ''}`);
+  const btn = el('button', 'landing-node', `${item.number} ${item.title || '未命名'}`);
+  btn.type = 'button';
+  btn.dataset.nodeId = item.id ?? '';
+  if (opts.onOpenNode) btn.addEventListener('click', () => opts.onOpenNode(item.id));
+  li.append(btn);
+  if (item.stale) li.append(el('span', 'plan-badge plan-badge-stale', '待复查'));
+  return li;
+}
+
+/**
+ * The landing card. WHAT IT SHOWS IS DECIDED BY WHERE THE COURSE IS
+ * (landing-view.landingModel), and every branch STATES that position and offers
+ * the next move — nothing on it asks her to declare a stage, confirm a phase, or
+ * tell the app something it could have read off the state it already holds.
+ *
+ * The headline and lead come from the model, not from here: they are copy with
+ * a meaning (「今天没有安排」 says something different from 「今天没有活动」) and they
+ * are pinned by tests where they can be defended.
+ * @param {ReturnType<import('./landing-view.mjs').landingModel>} landing
+ * @param {{onStart?: (choice: string) => void, onOpenNode?: (id: string) => void,
+ *   onContinue?: () => void, onOpenPanel?: () => void, onDismiss?: () => void}} [opts]
+ * @returns {HTMLElement} .landing-card
+ */
+export function renderLanding(landing, opts = {}) {
+  const card = el('div', 'landing-card');
+  const mode = landing?.mode ?? '';
+  card.dataset.mode = mode;
+  card.append(el('h2', 'landing-headline', LANDING_HEADLINE[mode] ?? landingHeadline(landing)));
+  const lead = mode === 'step_zero' && !(opts.missing ?? []).length
+    ? '你说的已经够我动手了，接着说下去就会有计划。'
+    : LANDING_LEAD[mode];
+  if (lead) card.append(el('p', 'landing-lead', lead));
+
+  if (mode === 'fork' && opts.onStart) {
+    const fork = el('div', 'entry-fork landing-fork');
+    for (const [choice, label] of [['help_me_think', '帮我想想做什么'], ['have_idea', '我已经有想法了']]) {
+      const btn = el('button', 'entry-fork-btn', label);
+      btn.type = 'button';
+      btn.addEventListener('click', () => opts.onStart(choice));
+      fork.append(btn);
+    }
+    card.append(fork);
+  }
+
+  if (mode === 'step_zero') {
+    const missing = opts.missing ?? [];
+    if (missing.length) {
+      const list = el('ul', 'landing-missing');
+      for (const item of missing) {
+        const li = el('li', 'landing-missing-item');
+        li.dataset.key = item.key ?? '';
+        li.append(el('span', 'checklist-mark', '待聊'));
+        li.append(el('span', 'checklist-label', item.label ?? item.key ?? ''));
+        list.append(li);
+      }
+      card.append(list);
+    }
+    if (opts.onContinue) {
+      const go = el('button', 'text-btn landing-go', '接着聊');
+      go.type = 'button';
+      go.addEventListener('click', opts.onContinue);
+      card.append(go);
+    }
+  }
+
+  if (mode === 'plan') {
+    if (landing.today.length) {
+      const list = el('ul', 'landing-list landing-today');
+      for (const item of landing.today) list.append(landingRow(item, opts));
+      card.append(list);
+    }
+
+    // OVERDUE IS SHOWN, never quietly dropped: a plan that hides a missed day
+    // is a plan that has stopped matching the room.
+    if (landing.overdue.length) {
+      card.append(el('div', 'landing-section-label', '前几天没来得及的'));
+      const list = el('ul', 'landing-list landing-overdue');
+      for (const item of landing.overdue) {
+        const li = landingRow(item, opts, 'is-overdue');
+        li.append(el('span', 'landing-when', item.date));
+        list.append(li);
+      }
+      card.append(list);
+    }
+
+    if (!landing.today.length && landing.next) {
+      card.append(el('div', 'landing-section-label', `${landing.next.label}（${landing.next.date}）`));
+      const list = el('ul', 'landing-list landing-next');
+      for (const item of landing.next.items) list.append(landingRow(item, opts));
+      card.append(list);
+    }
+
+    const recent = opts.recent ?? [];
+    if (recent.length) {
+      const row = el('div', 'landing-recent');
+      row.append(el('span', 'landing-recent-label', '最近处理'));
+      for (const item of recent) {
+        const chip = el('button', 'chip landing-recent-chip', `${item.number} ${item.title || '未命名'}`);
+        chip.type = 'button';
+        chip.dataset.nodeId = item.id ?? '';
+        if (opts.onOpenNode) chip.addEventListener('click', () => opts.onOpenNode(item.id));
+        row.append(chip);
+      }
+      card.append(row);
+    }
+
+    if (landing.undated) {
+      const note = el('p', 'landing-undated', `还有 ${landing.undated} 项没有定日子。`);
+      if (opts.onOpenPanel) {
+        const open = el('button', 'text-btn landing-go', '打开工作台');
+        open.type = 'button';
+        open.addEventListener('click', opts.onOpenPanel);
+        note.append(document.createTextNode(' '), open);
+      }
+      card.append(note);
+    }
+  }
+
+  if (opts.onDismiss) {
+    const close = el('button', 'landing-dismiss', '✕');
+    close.type = 'button';
+    close.setAttribute('aria-label', '收起');
+    close.addEventListener('click', opts.onDismiss);
+    card.append(close);
+  }
+  return card;
+}// -------------------------------------------------------------- debug drawer
 
 function debugSection(heading, node, { span = false } = {}) {
   const section = el('div', 'debug-section' + (span ? ' debug-span' : ''));
@@ -1750,9 +2213,11 @@ function apiAttemptBlock(a) {
 
 /**
  * Repaint the debug drawer body: stage, gate report, last state_delta,
- * full course_state (collapsible), provider + usage.
+ * full course_state (collapsible), the six interaction axes, the memory
+ * snapshot, provider + usage.
  * @param {HTMLElement} container
- * @param {{lastEvent: Object|null, state: Object|null}} info
+ * @param {{lastEvent: Object|null, state: Object|null,
+ *   axes?: Array<Object>|null, memory?: Object|null}} info
  */
 export function renderDebug(container, info) {
   container.replaceChildren();
@@ -1854,6 +2319,35 @@ export function renderDebug(container, info) {
     promptDetails.append(promptPre);
     box.append(promptDetails);
     container.append(debugSection('提示词（本轮）', box, { span: true }));
+  }
+
+  // 互动画像 — the six axes as ROWS, not the raw vector. ADR-0009 §4: an agent
+  // that profiles its user and cannot show its work is a trust defect, and a
+  // nested blob a reader has to decode is not showing the work. Absent when
+  // nothing has written a vector, which is itself the honest reading.
+  if (info?.axes?.length) {
+    const box = el('div', 'axis-debug');
+    for (const row of info.axes) {
+      const line = el('div', 'axis-debug-row');
+      line.append(el('span', 'v-kind', row.axis));
+      const bits = [
+        `${row.value}/5 ${row.band_label ?? row.bandLabel ?? ''}`,
+        row.source,
+        `conf ${Number(row.confidence ?? 0).toFixed(2)}`,
+        row.pinned ? 'pinned' : '',
+        row.signal ? `signal=${row.signal}` : '',
+      ].filter(Boolean).join(' · ');
+      line.append(document.createTextNode(` ${row.zh ?? ''} ${bits}`));
+      box.append(line);
+    }
+    container.append(debugSection('互动画像（六轴）', box, { span: true }));
+  }
+
+  // 记忆 — counts and archive reasons. Bodies deliberately stay out: the
+  // session-log events already carry the text, and repeating every fact body
+  // here would duplicate teacher content for no extra diagnostic power.
+  if (info?.memory) {
+    container.append(debugSection('记忆（本课程可见）', pre(info.memory), { span: true }));
   }
 
   if (ev) {

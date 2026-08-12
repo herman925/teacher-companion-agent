@@ -13,6 +13,15 @@ import { fileURLToPath } from 'node:url';
 
 import { createInitialState } from '../engine.mjs';
 import { hashPassword, verifyPassword, tempPassword, sessionToken, sessionSid } from '../auth-util.mjs';
+// The closed fact taxonomy is imported, never re-declared: it is the same five
+// values as the `facts.kind` CHECK in 001_schema.sql, and a second copy is a
+// second thing to drift. ADR-0013 §9 calls that CHECK a safety control — the
+// JSON tier has no CHECK, so this list IS the JSON tier's copy of it.
+import { FACT_KINDS } from '../memory-scopes.mjs';
+// `clipSignal` is imported for the same reason: it counts CODE POINTS, and a
+// second copy would drift from `SIGNAL_MAX` (interaction-axes.mjs says why at
+// the line itself).
+import { clipSignal, resolveAxisId } from '../interaction-axes.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_BASE = path.join(HERE, '..', '..', '.data');
@@ -71,6 +80,303 @@ export const MATERIAL_MIME_TYPES = Object.freeze([
 export const USER_SCOPED_FILES = Object.freeze([
   'materials.json', 'facts.json', 'interaction-signals.json', 'classes.json',
 ]);
+
+// ===========================================================================
+// MEMORY, CLASSES AND SIGNALS — the shape both tiers share
+// ===========================================================================
+// Everything from here to `signalRow` is PURE and is imported by pg-store.mjs
+// rather than copied. That is the whole defence against the failure ADR-0013
+// warns about: the two tiers must not disagree about a closed set, a column
+// name or a provenance mapping, and the only way to guarantee that is for
+// there to be one copy of each.
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A non-uuid id is 「not found」, never a mid-transaction cast error. */
+export const isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);
+
+/** Tabs and newlines would break the memory TSV block; facts are short display
+ * strings, so flattening them is safe in a way it never is for a node body. */
+const flat = (v) => String(v ?? '').replace(/[\t\r\n]+/g, ' ').trim();
+
+/** timestamptz arrives as a Date from node-postgres and as an ISO string from a
+ * JSON file. The interface promises the string. */
+const toISO = (v) => (v instanceof Date ? v.toISOString() : (v == null ? null : String(v)));
+
+/**
+ * The three storable scopes (`facts.scope` CHECK, 001_schema.sql:202).
+ *
+ * `node` is absent on purpose and is NOT an oversight: node memory is
+ * GENERATED — the rationale plus the revision log already inside the tree — so
+ * there is nothing to persist here and a node-scoped write is refused rather
+ * than filed somewhere its owner will never look.
+ */
+export const FACT_SCOPES = Object.freeze(['course', 'class', 'teacher']);
+
+/**
+ * `facts.source` CHECK (001_schema.sql:214). THE STORAGE VOCABULARY, which is
+ * NOT memory-scopes' vocabulary — that module emits `'auto' | 'teacher'`. The
+ * mapping lives in `storedFactSource` and `factRow`, in one place, because a
+ * mismatch raises 23514 on PostgreSQL and succeeds silently on JSON.
+ */
+export const FACT_SOURCES = Object.freeze(['extracted', 'teacher', 'widened']);
+
+/** NOT a truncation point — a refusal point. memory-scopes deliberately renders
+ * over-length rows WHOLE (silent truncation is barred by AGENTS.md, and a fact
+ * ending 「…这一条是我的猜测」 loses precisely that qualifier at a cut), so the
+ * store cannot clip. It refuses instead, loudly, far above any real fact. */
+export const FACT_TEXT_MAX = 500;
+export const FACT_QUOTE_MAX = 500;
+/** A class identity （中三班）, not a sentence. */
+export const CLASS_NAME_MAX = 40;
+const CLASS_BAND_MAX = 20;
+
+/** memory-scopes' `'auto' | 'teacher'` → the column's `'extracted' | 'teacher'
+ * | 'widened'`. ANYTHING UNRECOGNISED BECOMES `'extracted'`, which is the
+ * least-trusted value: provenance is engine-set (ADR-0011), so a store that
+ * accepted an unknown label and guessed upward would be exactly the laundering
+ * path memory-scopes closes at line 238.
+ * @param {unknown} source @param {{widened?: boolean}} [opts]
+ */
+export function storedFactSource(source, { widened = false } = {}) {
+  if (widened) return 'widened';
+  return source === 'teacher' ? 'teacher' : 'extracted';
+}
+
+/**
+ * One stored fact row → the shape memory-scopes.mjs reads, so the result of
+ * `listFacts` can be handed straight to `buildPromptParts({facts})`.
+ *
+ * The two renames that would otherwise be a silent divergence between the tiers
+ * happen here and nowhere else: column `body` → `text`, column `created_at` →
+ * `at`. `source` comes back in memory-scopes' vocabulary, and a `'widened'` row
+ * also carries `widened_at` — without that stamp `normalizeFacts` rewrites the
+ * row back down to `'auto'` and clamps its scope to `course` on every reload,
+ * which would undo her deliberate tap invisibly.
+ * @param {Object|null|undefined} r
+ */
+export function factRow(r) {
+  if (!r) return null;
+  return {
+    id: r.id,
+    user_id: r.user_id,
+    course_id: r.course_id ?? null,
+    class_id: r.class_id ?? null,
+    kind: r.kind,
+    scope: r.scope,
+    text: r.body ?? '',
+    quote: r.quote ?? '',
+    source: (r.source === 'teacher' || r.source === 'widened') ? 'teacher' : 'auto',
+    widened_from: r.widened_from ?? null,
+    widened_at: toISO(r.widened_at),
+    used_at: toISO(r.used_at),
+    // Derived, never stored twice: `archived_at` is the fact of the matter and
+    // a second boolean would be a second thing to keep in step.
+    archived: r.archived_at != null,
+    archived_at: toISO(r.archived_at),
+    archive_reason: r.archive_reason ?? null,
+    superseded_by: r.superseded_by ?? null,
+    at: toISO(r.created_at),
+  };
+}
+
+/** @param {Object|null|undefined} r */
+export function classRow(r) {
+  if (!r) return null;
+  return {
+    id: r.id,
+    name: r.name,
+    age_band: r.age_band ?? null,
+    class_size: r.class_size == null ? null : Number(r.class_size),
+    is_default: Boolean(r.is_default),
+    created_at: toISO(r.created_at),
+  };
+}
+
+/** @param {Object|null|undefined} r */
+export function signalRow(r) {
+  if (!r) return null;
+  return {
+    id: typeof r.id === 'string' ? Number(r.id) : r.id,
+    user_id: r.user_id,
+    axis: r.axis,
+    signal: r.signal,
+    // `numeric` crosses from node-postgres as a STRING (it keeps the exact
+    // value); the interface promises a number on both tiers.
+    delta: Number(r.delta),
+    course_id: r.course_id ?? null,
+    message_id: r.message_id == null ? null : Number(r.message_id),
+    created_at: toISO(r.created_at),
+  };
+}
+
+/**
+ * Screen one incoming fact before either tier touches storage.
+ *
+ * THE STORE PERSISTS; IT DOES NOT CURATE. The caller has already run
+ * `screenFacts` / `mergeFact` from memory-scopes.mjs, so this refuses only what
+ * the DATABASE would refuse — and it refuses it identically in both tiers,
+ * which is the point: `kind` carries a CHECK on PostgreSQL and nothing at all
+ * on a JSON file, so without this the closed taxonomy would be a safety control
+ * in production and a suggestion in the demo tier.
+ *
+ * THE SCOPE DECIDES THE KEY COLUMNS, and that is a deliberate decision worth
+ * reading twice. A class fact keeps NO `course_id`, because `facts.course_id` is
+ * ON DELETE CASCADE (001_schema.sql:203): a widened class constraint that kept
+ * a pointer at the course it came from would be destroyed, silently and with no
+ * archive row, the day she deleted that course — her deliberate tap undone by a
+ * foreign key. `widened_from` records where it came from instead.
+ *
+ * @param {Object} fact @param {{now?: string}} [opts]
+ * @returns {{scope: string, courseId: string|null, classId: string|null,
+ *   kind: string, body: string, quote: string, source: string,
+ *   archivedAt: string|null, archiveReason: string|null, supersededBy: string|null}}
+ */
+export function screenFactInput(fact = {}, { now = null } = {}) {
+  const f = fact && typeof fact === 'object' ? fact : {};
+
+  // THE STRUCTURAL GUARD (ADR-0013 §9). A child observation has no kind to be
+  // filed under, so it cannot enter memory and ride every future prompt.
+  const kind = flat(f.kind);
+  if (!FACT_KINDS.includes(kind)) throw err(400, '这条记不进记忆：没有可以归档的类别');
+
+  const scope = flat(f.scope) || 'course';
+  if (!FACT_SCOPES.includes(scope)) throw err(400, '记忆的范围只有课程、班级和老师三种');
+
+  const body = flat(f.text ?? f.body);
+  if (!body) throw err(400, '记忆内容不能为空');
+  if (body.length > FACT_TEXT_MAX) throw err(400, `记忆内容不能超过 ${FACT_TEXT_MAX} 个字`);
+  const quote = flat(f.quote);
+  if (quote.length > FACT_QUOTE_MAX) throw err(400, `原话不能超过 ${FACT_QUOTE_MAX} 个字`);
+
+  const courseId = scope === 'course' ? (f.courseId ?? f.course_id ?? null) : null;
+  const classId = scope === 'class' ? (f.classId ?? f.class_id ?? null) : null;
+  if (scope === 'course' && !isUuid(courseId)) throw err(400, '课程范围的记忆必须挂在一门课程上');
+  if (scope === 'class' && !isUuid(classId)) throw err(400, '班级范围的记忆必须挂在一个班上');
+
+  // Provenance is ENGINE-SET. `'widened'` is unreachable from here on purpose:
+  // widening is her tap, and `widenFact` is the only method that writes it.
+  const source = storedFactSource(f.source);
+
+  const archiveReason = flat(f.archiveReason ?? f.archive_reason);
+  const archivedRaw = f.archivedAt ?? f.archived_at ?? null;
+  const archived = Boolean(archivedRaw) || Boolean(archiveReason);
+  const archivedAt = archived
+    ? (typeof archivedRaw === 'string' && archivedRaw ? archivedRaw : (now ?? new Date().toISOString()))
+    : null;
+
+  const supersededByRaw = f.supersededBy ?? f.superseded_by ?? null;
+  // `facts.superseded_by` is a self-referencing uuid FK. A memory-scopes id such
+  // as `f-course-1a2b3c` raises 22P02 there and is stored happily here, so it is
+  // refused in one place instead — with a status the endpoint can render.
+  if (supersededByRaw != null && !isUuid(supersededByRaw)) {
+    throw err(400, '指向的记忆编号不是有效的编号');
+  }
+
+  return {
+    scope,
+    courseId: courseId ?? null,
+    classId: classId ?? null,
+    kind,
+    body,
+    quote,
+    source,
+    archivedAt,
+    archiveReason: archived ? (archiveReason || 'unknown') : null,
+    supersededBy: supersededByRaw ?? null,
+  };
+}
+
+/** The only legal widenings, one rung at a time. Mirrors `WIDEN_STEPS` in
+ * memory-scopes.mjs, which owns the reasoning. */
+const WIDEN_LADDER = new Map([['course', 'class'], ['class', 'teacher']]);
+
+/**
+ * Refuse a widening the pure module would refuse, so the two can never
+ * disagree about the ladder. Throws; returns the target scope on success.
+ * @param {{scope: string, archived: boolean}} current
+ * @param {string} toScope
+ * @param {string|null} classId
+ */
+export function screenWiden(current, toScope, classId) {
+  if (current.archived) throw err(400, '已归档的记忆不再扩大范围');
+  if (current.scope === toScope) throw err(400, '这条记忆已经是这个范围了');
+  if (WIDEN_LADDER.get(current.scope) !== toScope) {
+    // Skipping a rung, narrowing, and node scope are all the same refusal: the
+    // ladder simply has no such step. 「这对我带的每个班都成立」 is a much bigger
+    // claim than 「这个班就是这样」, and one tap must not assert both.
+    throw err(400, '范围一次只能扩大一级');
+  }
+  if (toScope === 'class' && !isUuid(classId)) throw err(400, '扩大到班级要先说清楚是哪个班');
+  return toScope;
+}
+
+/**
+ * Normalize a class payload. `is_default` is deliberately absent — the
+ * at-most-one-default invariant has exactly one owner (`setDefaultClass`),
+ * because `idx_classes_one_default` is a partial UNIQUE index and a second
+ * writer is a second chance to raise 23505 in production while the JSON tier
+ * happily holds two defaults forever.
+ * @param {Object} input @param {{partial?: boolean}} [opts]
+ */
+export function screenClassInput(input = {}, { partial = false } = {}) {
+  const c = input && typeof input === 'object' ? input : {};
+  const out = {};
+  const hasName = c.name !== undefined;
+  if (hasName || !partial) {
+    const name = flat(c.name);
+    if (!name) throw err(400, '班级要有名字');
+    if (name.length > CLASS_NAME_MAX) throw err(400, `班级名不能超过 ${CLASS_NAME_MAX} 个字`);
+    out.name = name;
+  }
+  const band = c.ageBand ?? c.age_band;
+  if (band !== undefined) {
+    const v = flat(band);
+    if (v.length > CLASS_BAND_MAX) throw err(400, '年龄段写得太长了');
+    out.age_band = v || null;
+  } else if (!partial) {
+    out.age_band = null;
+  }
+  const size = c.classSize ?? c.class_size;
+  if (size !== undefined) {
+    if (size === null || size === '') out.class_size = null;
+    else {
+      const n = Number(size);
+      if (!Number.isInteger(n) || n < 0) throw err(400, '班级人数要是不小于 0 的整数');
+      out.class_size = n;
+    }
+  } else if (!partial) {
+    out.class_size = null;
+  }
+  return out;
+}
+
+/**
+ * Screen one interaction signal (ADR-0009 §3).
+ *
+ * The axis is resolved against the six named axes rather than stored as
+ * whatever arrived: `interaction_signals.axis` carries no CHECK, so a typo
+ * would produce an audit trail nobody can query — and an agent that profiles
+ * its user and cannot show its work is a trust defect.
+ * @param {Object} input
+ */
+export function screenSignalInput(input = {}) {
+  const s = input && typeof input === 'object' ? input : {};
+  const axis = resolveAxisId(s.axis);
+  if (!axis) throw err(400, '未知的互动维度');
+  // A LABEL, not a sentence: an uncapped signal would put teacher conversation
+  // into a table with no retention story of its own. Trimmed BEFORE the clip,
+  // so 60 code points is 60 code points of label.
+  const signal = clipSignal(flat(s.signal));
+  if (!signal) throw err(400, '要说清楚观察到了什么');
+  const delta = Number(s.delta);
+  if (!Number.isFinite(delta)) throw err(400, '幅度要是一个数');
+  const courseId = s.courseId ?? s.course_id ?? null;
+  if (courseId != null && !isUuid(courseId)) throw err(400, '课程编号不是有效的编号');
+  const messageRaw = s.messageId ?? s.message_id ?? null;
+  const messageId = messageRaw == null ? null : Number(messageRaw);
+  if (messageId != null && !Number.isInteger(messageId)) throw err(400, '消息编号不是有效的编号');
+  return { axis, signal, delta, courseId: courseId ?? null, messageId };
+}
 
 /**
  * Epoch milliseconds from a Date, a number, or an ISO string; NaN when the
@@ -198,6 +504,30 @@ export function createJsonStore(opts = {}) {
     try { return JSON.parse(await readFile(file, 'utf8')); } catch { return fallback; }
   }
 
+  /**
+   * Read one row collection, and FAIL LOUDLY when it cannot be read.
+   *
+   * `readJson` above swallows every error into its fallback, which is right for
+   * a rate-limit blob and wrong for memory: an unreadable facts file returning
+   * `[]` tells the model 「this class has no constraints」 and it offers
+   * 敲鼓感受节奏 to the class with no drums — 「我早就跟你说过」, caused by an
+   * infrastructure fault rather than a missing feature. A missing file is the
+   * one benign case （nothing has been written yet）and is the only one caught.
+   * @param {string} file @returns {Promise<Array<Object>>}
+   */
+  async function readRows(file) {
+    let text;
+    try {
+      text = await readFile(file, 'utf8');
+    } catch (e) {
+      if (e?.code === 'ENOENT') return [];
+      throw e;
+    }
+    const parsed = JSON.parse(text);       // a corrupt file throws, and must
+    if (!Array.isArray(parsed)) throw new Error(`${file} is not a row collection`);
+    return parsed;
+  }
+
   // ---- courses ----
   const coursePath = (id) => path.join(COURSE_DIR, `${encodeURIComponent(id)}.json`);
   const readCourse = (id) => readJson(coursePath(id), null);
@@ -322,6 +652,26 @@ export function createJsonStore(opts = {}) {
       const all = await readJson(materialsFile, []);
       const kept = (Array.isArray(all) ? all : []).filter((m) => m?.course_id !== courseId);
       if (kept.length !== (Array.isArray(all) ? all.length : 0)) await writeAtomic(materialsFile, kept);
+
+      // THE CASCADES THE OTHER TIER GETS FROM THE SCHEMA, written out here so
+      // the two agree. `facts.course_id` is ON DELETE CASCADE and
+      // `interaction_signals.course_id` is ON DELETE SET NULL (001_schema.sql
+      // :203, :239); without these two sweeps a JSON instance would keep facts
+      // pointing at a course that no longer exists and a PostgreSQL instance
+      // would not, on the same call.
+      //
+      // Only COURSE-scope facts carry a course_id (see screenFactInput), so a
+      // class or teacher fact she widened survives its origin course — which is
+      // the whole reason the scope decides the key columns.
+      const facts = await readRows(factsFile);
+      const factsKept = facts.filter((f) => f?.course_id !== courseId);
+      if (factsKept.length !== facts.length) await writeAtomic(factsFile, factsKept);
+
+      const signals = await readRows(signalsFile);
+      let nulled = 0;
+      for (const s of signals) if (s?.course_id === courseId) { s.course_id = null; nulled += 1; }
+      if (nulled) await writeAtomic(signalsFile, signals);
+
       await unlink(coursePath(courseId)).catch(() => {});
       return { deleted: true, cos_keys: cosKeys, objects_deleted: typeof deleteObject === 'function' };
     });
@@ -475,6 +825,11 @@ export function createJsonStore(opts = {}) {
         if (!c || c.user_id !== userId) return null;
         return {
           id: c.id, title: c.title, course_state: c.course_state,
+          // Which class this course is for (ADR-0011 §3). Reported, never
+          // asked: the header states 中三班, and the one question she is asked
+          // is the one the system genuinely cannot answer （more than one class
+          // and no binding yet）.
+          class_id: c.class_id ?? null,
           state_version: c.state_version, created_at: c.created_at, updated_at: c.updated_at,
         };
       });
@@ -940,6 +1295,329 @@ export function createJsonStore(opts = {}) {
       });
     },
 
+    /**
+     * One owned upload, by id. Returns null — never throws — for a foreign or a
+     * missing id, so the endpoint behind it answers 404 either way and cannot
+     * be used to tell 「not yours」 apart from 「not there」.
+     */
+    async getMaterial(userId, materialId) {
+      if (!isUuid(materialId)) return null;
+      return withLock(async () => {
+        const rows = await readJson(materialsFile, []);
+        const m = (Array.isArray(rows) ? rows : []).find((x) => x?.id === materialId);
+        return m && m.user_id === userId ? m : null;
+      });
+    },
+
+    /**
+     * The ids of every material this teacher owns ON THIS COURSE, loaded once
+     * per turn so `resolveUploadRef` can be the SYNCHRONOUS predicate
+     * `engine.evidenceIsGrounded` requires (applyDelta and validateTurn are
+     * pure and must stay so).
+     *
+     * Scoped by BOTH user and course on purpose: an `upload_ref` naming her own
+     * material on a DIFFERENT course must not ground evidence here either.
+     */
+    async listMaterialIds(userId, courseId) {
+      if (!isUuid(courseId)) return [];
+      return withLock(async () => {
+        const rows = await readJson(materialsFile, []);
+        return (Array.isArray(rows) ? rows : [])
+          .filter((m) => m?.user_id === userId && m?.course_id === courseId)
+          .map((m) => String(m.id));
+      });
+    },
+
+    // ================= memory facts (ADR-0011 / ADR-0013 §9) =================
+    // The store PERSISTS; it never curates. Screening, merging, superseding and
+    // capping are memory-scopes.mjs's — pure, testable, and called by the turn
+    // path before anything reaches these methods.
+
+    /**
+     * THE ALWAYS-ON MEMORY READ. Every scope this turn can see, in one call:
+     * teacher-scope rows, class-scope rows for the course's class, and
+     * course-scope rows for this course — in memory-scopes' shape, so the
+     * result goes straight to `buildPromptParts({facts})`.
+     *
+     * IT THROWS ON FAILURE AND NEVER RETURNS `[]` INSTEAD. `memoryBandText`
+     * omits the band for `null` and renders the headers for `[]`, and that
+     * distinction is security-relevant rather than decorative: coercing a read
+     * failure into an empty list tells the model this class has no constraints.
+     *
+     * `includeArchived` is for the memory viewer only. The prompt path never
+     * asks for it — not sending archived facts is the entire point of archiving.
+     */
+    async listFacts(userId, { courseId = null, classId = null, includeArchived = false } = {}) {
+      return withLock(async () => {
+        // The class is resolved THROUGH the course when it was not named. That
+        // resolution is what makes class memory reachable at all: without the
+        // binding (`setCourseClass`) it is written and never read.
+        let cls = classId ?? null;
+        if (!cls && isUuid(courseId)) {
+          const c = await readCourse(courseId);
+          if (c && c.user_id === userId) cls = c.class_id ?? null;
+        }
+        const rows = await readRows(factsFile);
+        const mine = rows.filter((f) => f?.user_id === userId
+          && (includeArchived || f.archived_at == null)
+          && (f.scope === 'teacher'
+            || (f.scope === 'class' && cls != null && f.class_id === cls)
+            || (f.scope === 'course' && courseId != null && f.course_id === courseId)));
+        mine.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+        return mine.map(factRow);
+      });
+    },
+
+    /**
+     * Insert ONE already-screened fact. Returns the row with the STORAGE id,
+     * which is what every later pointer (`superseded_by`, `touchFactsUsed`, the
+     * viewer's 忘掉 button) uses — memory-scopes' derived `f-course-…` ids are
+     * not uuids and cannot be that pointer.
+     */
+    async recordFact(userId, fact) {
+      const input = screenFactInput(fact, { now: nowISO() });
+      return withLock(async () => {
+        // The referenced course and class must be HERS. The Postgres tier gets
+        // this from `facts_owner`'s WITH CHECK, which refuses with a bare 42501
+        // — asked here so both tiers answer 404 and neither can file a fact
+        // against another teacher's course, where it would be read back into
+        // her model context.
+        if (input.courseId) {
+          const c = await readCourse(input.courseId);
+          if (!c || c.user_id !== userId) throw err(404, '课程不存在');
+        }
+        const classes = await readRows(classesFile);
+        if (input.classId && !classes.some((k) => k?.id === input.classId && k.user_id === userId)) {
+          throw err(404, '班级不存在');
+        }
+        const rows = await readRows(factsFile);
+        if (input.supersededBy && !rows.some((f) => f?.id === input.supersededBy && f.user_id === userId)) {
+          throw err(400, '指向的记忆不存在');
+        }
+        const row = {
+          id: randomUUID(), user_id: userId,
+          scope: input.scope, course_id: input.courseId, class_id: input.classId,
+          kind: input.kind, body: input.body, quote: input.quote || null,
+          source: input.source, widened_from: null, widened_at: null, used_at: null,
+          archived_at: input.archivedAt, archive_reason: input.archiveReason,
+          superseded_by: input.supersededBy, created_at: nowISO(),
+        };
+        rows.push(row);
+        await writeAtomic(factsFile, rows);
+        return factRow(row);
+      });
+    },
+
+    /**
+     * THE ONLY WAY A FACT LEAVES THE PROMPT. Archiving is not deleting: the
+     * record of what was believed when survives, stays visible in the viewer's
+     * 已归档 section with its reason, and keeps its pointer.
+     *
+     * There is deliberately no `deleteFact` anywhere in this interface —
+     * `app_rw` holds no DELETE on `facts` (002_roles.sql), so one would pass
+     * every JSON test and fail with 42501 in production.
+     */
+    async archiveFact(userId, factId, { reason = 'unknown', supersededBy = null } = {}) {
+      if (supersededBy != null && !isUuid(supersededBy)) throw err(400, '指向的记忆编号不是有效的编号');
+      if (!isUuid(factId)) return null;
+      return withLock(async () => {
+        const rows = await readRows(factsFile);
+        const f = rows.find((x) => x?.id === factId && x.user_id === userId);
+        if (!f) return null;
+        if (supersededBy && !rows.some((x) => x?.id === supersededBy && x.user_id === userId)) {
+          throw err(400, '指向的记忆不存在');
+        }
+        // Idempotent on the stamp, for the same reason revocation is: a second
+        // archive must not move the moment a belief was retired.
+        if (f.archived_at) return factRow(f);
+        f.archived_at = nowISO();
+        f.archive_reason = flat(reason) || 'unknown';
+        if (supersededBy) f.superseded_by = supersededBy;
+        await writeAtomic(factsFile, rows);
+        return factRow(f);
+      });
+    },
+
+    /**
+     * Persist her deliberate tap: one rung up the ladder, never two.
+     *
+     * The key columns move with the scope. A class fact keeps no `course_id`
+     * and a teacher fact keeps neither, so nothing she widened dies with the
+     * course it happened to be said in — the cascade in 001_schema.sql:203 is
+     * exactly how a deliberate act gets undone invisibly.
+     */
+    async widenFact(userId, factId, toScope, { classId = null } = {}) {
+      if (!isUuid(factId)) return null;
+      return withLock(async () => {
+        const rows = await readRows(factsFile);
+        const f = rows.find((x) => x?.id === factId && x.user_id === userId);
+        if (!f) return null;
+        screenWiden({ scope: f.scope, archived: f.archived_at != null }, toScope, classId);
+        if (toScope === 'class') {
+          const classes = await readRows(classesFile);
+          if (!classes.some((k) => k?.id === classId && k.user_id === userId)) throw err(404, '班级不存在');
+        }
+        // `widened_from` records where the fact ORIGINALLY sat, not the previous
+        // rung, so one that climbed all the way to teacher scope still shows it
+        // began as one course's fact.
+        f.widened_from = f.widened_from ?? f.scope;
+        f.scope = toScope;
+        f.source = 'widened';
+        f.widened_at = nowISO();
+        f.class_id = toScope === 'class' ? classId : null;
+        f.course_id = null;
+        await writeAtomic(factsFile, rows);
+        return factRow(f);
+      });
+    },
+
+    /**
+     * Stamp `used_at` on the facts that just rode a prompt, in one pass.
+     *
+     * `capFacts` archives oldest-UNUSED rather than oldest, so without this the
+     * cap evicts the constraints she hits most often — 「我早就跟你说过」 arriving
+     * through the eviction policy. Bookkeeping, so the caller swallows failures
+     * and never fails a teacher's turn over a stamp.
+     * @returns {Promise<number>} how many rows were stamped
+     */
+    async touchFactsUsed(userId, factIds) {
+      const ids = new Set((Array.isArray(factIds) ? factIds : []).filter(isUuid));
+      if (!ids.size) return 0;
+      return withLock(async () => {
+        const rows = await readRows(factsFile);
+        const at = nowISO();
+        let n = 0;
+        for (const f of rows) {
+          if (f?.user_id === userId && ids.has(f.id)) { f.used_at = at; n += 1; }
+        }
+        if (n) await writeAtomic(factsFile, rows);
+        return n;
+      });
+    },
+
+    // ================= classes (ADR-0011 §3) =================
+    // A class OUTLIVES a course: 「班上没有鼓」 must still apply when the same
+    // children start a different theme in September. This is an identity
+    // （中三班）, not the age band already in 教师档案 — and it comes into being
+    // by her naming one in conversation, never through a management screen.
+
+    async listClasses(userId) {
+      return withLock(async () => (await readRows(classesFile))
+        .filter((k) => k?.user_id === userId)
+        .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+        .map(classRow));
+    },
+
+    async createClass(userId, input = {}) {
+      const fields = screenClassInput(input);
+      const wantDefault = Boolean(input?.isDefault ?? input?.is_default);
+      return withLock(async () => {
+        const rows = await readRows(classesFile);
+        // CLEAR THEN SET, in one write. `idx_classes_one_default` is a partial
+        // UNIQUE index, so insert-then-clear raises 23505 on PostgreSQL while
+        // this tier would hold two defaults forever and nothing would say so.
+        if (wantDefault) {
+          for (const k of rows) if (k?.user_id === userId) k.is_default = false;
+        }
+        const row = {
+          id: randomUUID(), user_id: userId, ...fields,
+          is_default: wantDefault, created_at: nowISO(),
+        };
+        rows.push(row);
+        await writeAtomic(classesFile, rows);
+        return classRow(row);
+      });
+    },
+
+    /** Correct a class's name, band or size. Deliberately CANNOT set
+     * `is_default` — that invariant has one owner. */
+    async updateClass(userId, classId, patch = {}) {
+      const fields = screenClassInput(patch, { partial: true });
+      if (!isUuid(classId)) return null;
+      return withLock(async () => {
+        const rows = await readRows(classesFile);
+        const k = rows.find((x) => x?.id === classId && x.user_id === userId);
+        if (!k) return null;
+        Object.assign(k, fields);
+        await writeAtomic(classesFile, rows);
+        return classRow(k);
+      });
+    },
+
+    /** Mark one class default, clearing the previous one. The single owner of
+     * the at-most-one-default invariant. */
+    async setDefaultClass(userId, classId) {
+      if (!isUuid(classId)) return null;
+      return withLock(async () => {
+        const rows = await readRows(classesFile);
+        const k = rows.find((x) => x?.id === classId && x.user_id === userId);
+        if (!k) return null;
+        for (const other of rows) if (other?.user_id === userId) other.is_default = false;
+        k.is_default = true;
+        await writeAtomic(classesFile, rows);
+        return classRow(k);
+      });
+    },
+
+    /**
+     * Bind a course to a class — what makes class-scope facts reachable from a
+     * course at all. `null` unbinds.
+     *
+     * The class is verified to be hers before the write, in both tiers: no
+     * policy checks it, because foreign keys bypass row-level security.
+     */
+    async setCourseClass(userId, courseId, classId) {
+      if (classId != null && !isUuid(classId)) throw err(404, '班级不存在');
+      return withLock(async () => {
+        const c = await readCourse(courseId);
+        if (!c || c.user_id !== userId) throw err(404, '课程不存在');
+        if (classId != null) {
+          const rows = await readRows(classesFile);
+          if (!rows.some((k) => k?.id === classId && k.user_id === userId)) throw err(404, '班级不存在');
+        }
+        c.class_id = classId ?? null;
+        await writeCourse(c);
+        return { id: c.id, class_id: c.class_id };
+      });
+    },
+
+    // ================= interaction signals (ADR-0009 §3) =================
+    // APPEND-ONLY, and in the Postgres tier that is enforced by the absence of
+    // an UPDATE or DELETE grant. There is no edit path here either, on purpose:
+    // the vector is a singleton in users.settings, and this is the audit trail
+    // behind it.
+
+    async recordSignal(userId, input = {}) {
+      const s = screenSignalInput(input);
+      return withLock(async () => {
+        if (s.courseId) {
+          const c = await readCourse(s.courseId);
+          if (!c || c.user_id !== userId) throw err(404, '课程不存在');
+        }
+        const rows = await readRows(signalsFile);
+        const row = {
+          id: rows.reduce((m, r) => Math.max(m, Number(r?.id) || 0), 0) + 1,
+          user_id: userId, axis: s.axis, signal: s.signal, delta: s.delta,
+          course_id: s.courseId, message_id: s.messageId, created_at: nowISO(),
+        };
+        rows.push(row);
+        await writeAtomic(signalsFile, rows);
+        return signalRow(row);
+      });
+    },
+
+    /** 「为什么这个把手动了」 — the profile pane, the debug drawer and the
+     * export all read this. Newest first. */
+    async listSignals(userId, { limit = 100, axis = null } = {}) {
+      const want = axis == null ? null : resolveAxisId(axis);
+      if (axis != null && !want) throw err(400, '未知的互动维度');
+      return withLock(async () => (await readRows(signalsFile))
+        .filter((r) => r?.user_id === userId && (want == null || r.axis === want))
+        .sort((a, b) => (String(b.created_at).localeCompare(String(a.created_at)) || (Number(b.id) - Number(a.id))))
+        .slice(0, Math.max(0, Number(limit) || 0))
+        .map(signalRow));
+    },
+
     // ============ per-account model-key vault (ciphertext only) ============
     // The store never sees plaintext keys: serve.mjs encrypts/decrypts via
     // key-vault.mjs. These rows are excluded from every export path — the
@@ -1130,6 +1808,28 @@ export function createJsonStore(opts = {}) {
      * console delete must not be the path that orphans a child photo. */
     async adminDelete(courseId, { deleteObject = null } = {}) {
       return deleteCourseInternal(courseId, deleteObject);
+    },
+
+    /**
+     * Every fact, across teachers, INCLUDING archived rows and their reasons.
+     *
+     * The observability duty for memory (AGENTS.md; ADR-0011's consequences
+     * name it): the console and the export must be able to show WHICH utterance
+     * produced WHICH fact, or a wrong extraction is mysterious rather than
+     * diagnosable. `quote` is why the column exists.
+     *
+     * This is a deliberate cross-teacher read (ADR-0013 §7), so the endpoint in
+     * front of it appends an access-log line. A console read without one is not
+     * the design.
+     */
+    async adminListFacts({ userId = null, courseId = null, limit = 200 } = {}) {
+      const cap = Math.min(1000, Math.max(1, Number(limit) || 200));
+      return withLock(async () => (await readRows(factsFile))
+        .filter((f) => (userId == null || f?.user_id === userId)
+          && (courseId == null || f?.course_id === courseId))
+        .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+        .slice(0, cap)
+        .map(factRow));
     },
 
     async adminExportAll() {

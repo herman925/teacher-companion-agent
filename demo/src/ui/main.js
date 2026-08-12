@@ -17,7 +17,16 @@ import {
   renderPlanTree, renderPlanTally, renderPlanLegend, renderRecentStrip,
   renderNodeDetail, renderStepZero, renderTurnReceipt, renderReceiptToast,
   pickGreeting,
+  renderMemoryView, renderClassChoice, renderClassHeader, renderAxisHandles, renderLanding,
 } from './render.js';
+import {
+  groupMemory, shouldAskClass, silentClassBinding, correctionPrompt,
+  axisHandleRows, axisChangeEvent, memorySnapshot,
+} from './memory-view.mjs';
+import { landingModel } from './landing-view.mjs';
+import {
+  PRESET_VECTORS, vectorFromPreset, pinAxis, unpinAxis, defaultVector, isReadableVector,
+} from '../interaction-axes.mjs';
 import {
   planViewModel, planRenderKey, toggleFold,
   messageCountsBySubject, recentNodes, mergeRecent, summarizeTurnReceipt,
@@ -260,6 +269,33 @@ function saveProfile() {
     }, 800);
   }
 }
+// ---------------------------------------------- 记忆 + 班级 (ADR-0011, server-owned)
+//
+// DELIBERATELY NOT CACHED IN localStorage, unlike course_state and the
+// transcript. A fact is a sentence about a real class of real children, and
+// this app runs on shared staffroom machines; keeping a copy on disk here would
+// be a retention decision nobody made, in a browser that has no erasure path.
+// The server holds them, this holds what the last read returned, and a reload
+// asks again.
+//
+// `null` IS NOT `[]`, and the difference is load-bearing all the way down. The
+// store's listFacts THROWS rather than returning an empty list precisely so a
+// read failure stays distinguishable from a teacher who has said nothing
+// memorable; if this coerced a failure into `[]` the viewer would tell her the
+// agent remembers nothing, which is the 「我早就跟你说过」 failure produced by an
+// outage instead of by a missing feature.
+/** @type {Array<Object>|null} last successful read, or null (未读到 / 没读) */
+let memoryFacts = null;
+/** Teacher-readable reason the last read failed; '' when it did not. */
+let memoryError = '';
+/** @type {Array<Object>} her named classes (server-owned, same custody). */
+let myClasses = [];
+/** The class the ACTIVE course is bound to, off the course record. */
+let courseClassId = null;
+/** Her explicit 「先不选」 for this course — session-only on purpose: it is a
+ * dismissal, not a decision, and persisting it would silently stop asking. */
+const classAskDismissed = new Set();
+
 function profileIsEmpty() {
   // autoTitle is harness config, not 档案 content — it never counts as "filled".
   return !Object.entries(profile).some(([k, v]) => k !== 'autoTitle'
@@ -633,7 +669,16 @@ function beginTurnMeta() {
 }
 
 function refreshDebug() {
-  renderDebug(debugBody, { lastEvent, state: courseState });
+  // The drawer sees the memory and the six axes too (AGENTS.md observability
+  // duty): both are state the agent carries into every prompt, and state that a
+  // developer cannot see live is state nobody can diagnose.
+  const ctx = memoryContext();
+  renderDebug(debugBody, {
+    lastEvent,
+    state: courseState,
+    axes: axisHandleRows(currentVector()),
+    memory: { ...ctx.memory, classes: ctx.classes, vector_readable: ctx.interaction_vector.readable },
+  });
 }
 
 /** Dev instruments (the debug spanner + Ctrl+`) are role-gated, not channel-forked:
@@ -849,8 +894,11 @@ function replayTranscript() {
   cardViewSyncs.clear(); // stale DOM renderers must not receive sync nudges
   refreshBlueprintPanel(); // any path that re-renders the chat re-syncs the living plan
   messagesEl.replaceChildren();
+  refreshClassHeader();
+  refreshLanding();
   if (!transcript.length) {
     renderWelcome();
+    maybeAskClass();
     showRescuedComments();
     return;
   }
@@ -888,6 +936,9 @@ function replayTranscript() {
   for (const set of messagesEl.querySelectorAll('.qcards')) {
     if (!lastIsOpenAgentTurn || !lastGroup || !lastGroup.contains(set)) freezeQuestionCards(set);
   }
+  // The class question sits at the END of the conversation, where the next turn
+  // is, rather than at the top where it would read as a gate on entry.
+  maybeAskClass();
   showRescuedComments();
 }
 
@@ -1013,6 +1064,7 @@ async function send(message, opts = {}) {
     else if (name === 'phase') liveMeta.phase();
     else if (name === 'guard') liveMeta.guard(data);
     else if (name === 'turn') { gotTurn = true; handleTurn(text, data); }
+    else if (name === 'memory') handleMemoryEvent(data);
     else if (name === 'course') {
       // server auto-titled the course (theme extracted) — update the rail row
       const hit = coursesCache.find((c) => c.id === data.id);
@@ -1203,6 +1255,70 @@ function handleTurn(userText, ev) {
   updateHeader();
   refreshDebug();
   scrollToEnd();
+}
+
+/**
+ * The `memory` SSE event: what this turn filed, refused and archived.
+ *
+ * WHAT SHE SEES, AND WHY IT IS NOT EVERYTHING. A capture gets a receipt with
+ * 撤销 in the same tap, because undo at the moment of capture is what makes
+ * automatic extraction safe — a wrong fact has to die while she is still looking
+ * at it. An archive is STATED, never silent: a child-claim archive says why in
+ * the agent's own words, a cap archive shows capFacts' own notice.
+ *
+ * REFUSALS GO TO THE LOG, NOT TO A TOAST, and that is a deliberate line. A
+ * refusal here is the server declining something the MODEL proposed and she
+ * never asked for; she holds no belief about it that could go wrong, so a toast
+ * would be teaching her our internals instead of answering a question she has.
+ * Every one is logged (category 「记忆与画像」) and counted in the drawer, so
+ * nothing is swallowed — it is just not shouted.
+ * @param {{recorded?: Array, refused?: Array, archived?: Array, notice?: string}} memory
+ */
+function handleMemoryEvent(memory) {
+  const recorded = memory?.recorded ?? [];
+  const refused = memory?.refused ?? [];
+  const archived = memory?.archived ?? [];
+  logEvent('memory', 'memory_turn', {
+    recorded: recorded.map((r) => ({ id: r.id, kind: r.kind, text: r.text, action: r.action })),
+    refused: refused.map((r) => ({ reason: r.reason, text: r.text })),
+    archived: archived.map((r) => ({ id: r.id, kind: r.kind, text: r.text, reason: r.reason })),
+    notice: memory?.notice ?? '',
+  });
+  for (const row of recorded) {
+    if (row.action !== 'added' || !row.id) continue;
+    memoryToast(`记住了：${row.text}`, {
+      onUndo: () => forgetFact({ id: row.id, kind: row.kind, text: row.text, scope: 'course' }, { via: 'receipt_undo', repaint: false }),
+    });
+  }
+  for (const row of archived) {
+    memoryToast(row.message || '这一条记下了，但没有进记忆');
+  }
+  // The server just changed what it is carrying — re-read rather than patch a
+  // local copy, so the pane and the export show the record.
+  loadMemory().then(() => { buildMemoryPane(); refreshDebug(); });
+}
+
+/** A memory receipt as a toast. Uses the receipt renderer so 记住了 looks like
+ * every other 「this turn wrote something」 line (ADR-0010 §7), with `label`
+ * carrying the sentence. */
+function memoryToast(label, opts = {}) {
+  const host = $('#toast-host');
+  if (!host) return;
+  const receipt = {
+    id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    parts: [{ kind: 'memory', label }],
+    undoable: Boolean(opts.onUndo),
+  };
+  const toast = renderReceiptToast(receipt, {
+    timeoutMs: TOAST_MS,
+    onUndo: opts.onUndo ? () => { opts.onUndo(); toast.remove(); } : undefined,
+    onDismiss: () => toast.remove(),
+  });
+  host.append(toast);
+  setTimeout(() => {
+    toast.classList.add('leaving');
+    setTimeout(() => toast.remove(), 200);
+  }, TOAST_MS);
 }
 
 function showSimulatedNotice() {
@@ -1829,10 +1945,63 @@ function buildProfilePane(target) {
   });
   pane.append(sizeField);
 
-  pane.append(selectField('回应风格', 'profile-style', RESPONSE_STYLES, profile.stylePref ?? '', (v) => { profile.stylePref = v; saveProfile(); }, {
+  // ---- 回应风格: the seven presets as a SHORTCUT, then the six handles ----
+  //
+  // The presets are a migration promise, not a mode (ADR-0009 §1): a teacher
+  // already on 极简速览 must behave identically until she touches a handle. So
+  // picking one still writes `stylePref` — the legacy prompt line and the
+  // harness's style proxies both read it — AND pins all six axes at once, which
+  // is what a named choice actually is.
+  pane.append(selectField('回应风格（先选个大方向）', 'profile-style', RESPONSE_STYLES, profile.stylePref ?? '', (v) => {
+    const before = currentVector();
+    profile.stylePref = v;
+    const next = v ? vectorFromPreset(v) : null;
+    if (next) profile.interaction_vector = next;
+    saveProfile();
+    logEvent('memory', 'axis_preset', {
+      preset: v,
+      axes: next ? Object.keys(PRESET_VECTORS[v].axes).map((a) => axisChangeEvent(a, before, next, { signal: 'preset_chosen' })) : [],
+    });
+    buildProfilePane(pane);
+    refreshDebug();
+  }, {
     titles: STYLE_DIRECTIVES,
-    describe: (v) => (v ? `会这样要求陪跑智能体：${STYLE_DIRECTIVES[v]}` : '选一个风格，陪跑智能体会按它回应你；下方会显示给模型的原话。'),
+    describe: (v) => (v ? `会这样要求陪跑智能体：${STYLE_DIRECTIVES[v]}` : '选一个大方向，下面六项会跟着动；也可以只调下面某一项。'),
   }));
+
+  // The six handles. THE PANE OPENS SHOWING WHAT THE AGENT ALREADY BELIEVES AND
+  // WHY — that is what makes moving one a correction of a stated belief rather
+  // than the completion of an empty form (ADR-0009 §4). Nothing is written until
+  // she moves something: see currentVector() for why the derived value stays
+  // derived.
+  const axisField = el('div', 'settings-field');
+  axisField.append(el('label', 'settings-label', '细调：六项互动偏好'));
+  axisField.append(el('p', 'settings-note',
+    '下面每一项都写着现在是什么、这个判断是哪来的。看着不对就拨一下——拨过的那一项我不再自己改，除非你交回给我。'));
+  axisField.append(renderAxisHandles(axisHandleRows(currentVector()), {
+    onSet: (axis, value) => {
+      const before = currentVector();
+      const after = pinAxis(before, axis, value);
+      profile.interaction_vector = after;
+      saveProfile();
+      // The audit trail behind the profiling: axis, from, to, source,
+      // confidence and the signal. An agent that profiles its user and cannot
+      // show its work is a trust defect regardless of accuracy.
+      logEvent('memory', 'axis_pinned', axisChangeEvent(axis, before, after, { signal: 'teacher_set_handle' }));
+      buildProfilePane(pane);
+      refreshDebug();
+    },
+    onUnpin: (axis) => {
+      const before = currentVector();
+      const after = unpinAxis(before, axis);
+      profile.interaction_vector = after;
+      saveProfile();
+      logEvent('memory', 'axis_unpinned', axisChangeEvent(axis, before, after, { signal: 'teacher_released_handle' }));
+      buildProfilePane(pane);
+      refreshDebug();
+    },
+  }));
+  pane.append(axisField);
 
   // 自动更新课程名 (title-agent harness): default off; every N teacher prompts
   // a side-channel model call renames the course (human rename always wins).
@@ -2273,6 +2442,12 @@ async function serverDeleteCourse(id) {
 async function loadCourseFromServer(id) {
   const [course, msgs] = await Promise.all([serverGetCourse(id), serverGetMessages(id)]);
   if (course?.course_state) courseState = course.course_state;
+  // WHICH CLASS THIS COURSE IS FOR comes off the course record, never off a
+  // cached guess: it decides which class-scope memory the turn can see, so a
+  // stale value would show her constraints that are not in this course's prompt.
+  courseClassId = course?.class_id ?? null;
+  landingDismissed = false;   // a different course is a different landing
+  await loadMemory();
   transcript = messagesToTranscript(msgs || []);
   lastEvent = null;
   lastTurnHadQuestion = Boolean(transcript[transcript.length - 1]?.ev?.turn?.question);
@@ -2319,6 +2494,290 @@ async function switchCourse(id) {
   renderRail();
   if (!railPinned) closeRail();
   scrollToEnd();
+}
+
+// ------------------------------------------- 记忆 + 班级 wiring (ADR-0011)
+//
+// EVERY NETWORK CALL FOR THIS FEATURE LIVES IN THIS BLOCK. The renderers are
+// DOM-pure and memory-view.mjs is pure logic; one place that talks to the server
+// is what keeps the 「null is not []」 rule enforceable, because there is exactly
+// one place that could break it.
+
+/** The vector the pane and the prompt both read.
+ *
+ * DERIVED FOR DISPLAY, NOT WRITTEN. Nothing persists a vector until she moves a
+ * handle: the seven presets are a migration promise (ADR-0009 §1 — a teacher on
+ * 极简速览 must behave identically until she touches something), and writing a
+ * vector on first paint would quietly convert every stored profile into a new
+ * representation whose failure mode nobody has seen yet. */
+function currentVector() {
+  if (isReadableVector(profile.interaction_vector)) return profile.interaction_vector;
+  return (profile.stylePref && vectorFromPreset(profile.stylePref)) || defaultVector();
+}
+
+/** Everything the debug drawer and the export need to say what the agent is
+ * carrying right now — counts and provenance, never fact bodies (the session-log
+ * events already carry those). */
+function memoryContext() {
+  return memorySnapshot({
+    facts: memoryFacts,
+    vector: currentVector(),
+    classes: myClasses,
+    courseClassId,
+  });
+}
+
+/**
+ * Read this course's memory and her class list.
+ *
+ * A FAILURE LEAVES `memoryFacts` NULL AND SAYS SO. It is never set to `[]` on
+ * any path in this function — see the state declaration for why that is a
+ * security property rather than an assertion aid.
+ */
+/** Said in one place so the pane, the drawer and the log cannot disagree about
+ * what the no-backend tier actually offers. */
+const MEMORY_NEEDS_ACCOUNT = '记忆要有账号才存得住。现在是演示模式，对话只留在这台机器上，我不会记住班里的条件。';
+
+async function loadMemory() {
+  if (!persistenceActive() || !activeCourseId) {
+    memoryFacts = null;
+    memoryError = '';   // not a failure: buildMemoryPane states the tier instead
+    myClasses = [];
+    return;
+  }
+  try {
+    const res = await fetch(apiUrl(`/api/memory?course_id=${encodeURIComponent(activeCourseId)}&include_archived=1`), { credentials: 'include' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.message || `服务返回 ${res.status}`);
+    memoryFacts = Array.isArray(data.facts) ? data.facts : null;
+    myClasses = Array.isArray(data.classes) ? data.classes : [];
+    memoryError = memoryFacts ? '' : '这次没读到记忆（不是没有，是没读到）。';
+    logEvent('memory', 'memory_loaded', memoryContext());
+  } catch (err) {
+    memoryFacts = null;
+    memoryError = '这次没读到记忆。不是「没有记住什么」，是没读到——过一会儿再看看。';
+    logEvent('error', 'memory_load_failed', { course_id: activeCourseId, message: err?.message ?? String(err) });
+  }
+}
+
+/** POST one memory mutation; reload afterwards so the page shows the record
+ * rather than an optimistic guess about it. */
+async function memoryPost(path, body) {
+  const res = await fetch(apiUrl(path), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body ?? {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.message || `服务返回 ${res.status}`);
+  return data;
+}
+
+/** 忘掉 — an archive, never a delete (there is no delete grant, by design), so
+ * the row stays visible in 已归档 with 「你让我忘掉的」 beside it. */
+async function forgetFact(fact, opts = {}) {
+  try {
+    const data = await memoryPost(`/api/memory/${encodeURIComponent(fact.id)}/archive`);
+    logEvent('memory', 'memory_forgotten', {
+      fact_id: fact.id, kind: fact.kind, scope: fact.scope, text: fact.text, via: opts.via ?? 'viewer',
+    });
+    await loadMemory();
+    if (opts.repaint !== false) buildMemoryPane();
+    return data.fact ?? null;
+  } catch (err) {
+    logEvent('error', 'memory_forget_failed', { fact_id: fact?.id ?? null, message: err?.message ?? String(err) });
+    if (opts.repaint !== false) buildMemoryPane(String(err?.message ?? '这一下没成功，稍后再试。'));
+    return null;
+  }
+}
+
+/** 扩大 — one rung, and the rung came from `widenOffer`, so the button that
+ * exists and the step the server accepts cannot disagree. */
+async function widenFactTo(fact, offer) {
+  try {
+    await memoryPost(`/api/memory/${encodeURIComponent(fact.id)}/widen`, {
+      to_scope: offer.to, class_id: offer.classId,
+    });
+    logEvent('memory', 'memory_widened', {
+      fact_id: fact.id, from: fact.scope, to: offer.to, class_id: offer.classId, text: fact.text,
+    });
+    await loadMemory();
+    buildMemoryPane();
+  } catch (err) {
+    logEvent('error', 'memory_widen_failed', { fact_id: fact?.id ?? null, to: offer?.to ?? '', message: err?.message ?? String(err) });
+    buildMemoryPane(String(err?.message ?? '这一下没成功，稍后再试。'));
+  }
+}
+
+/** 改一下 — hands a sentence to the composer and gets out of the way. There is
+ * no update method behind this and there must not be one: a fact carries her own
+ * words as its quote, so a correction has to be said, not typed into a field
+ * (memory-view.mjs records the full reasoning). */
+function startFactCorrection(fact) {
+  closeDrawers();
+  fillComposer(correctionPrompt(fact));
+  logEvent('memory', 'memory_correction_started', { fact_id: fact.id, kind: fact.kind, text: fact.text });
+}
+
+/** The 记忆 pane. Rebuilt on every open and after every mutation, because it
+ * shows a server record and a stale copy of a record is a claim. */
+function buildMemoryPane(errorOverride) {
+  const pane = $('#pane-memory');
+  if (!pane) return;
+  const bound = myClasses.find((k) => k.id === courseClassId) ?? null;
+  const grouped = groupMemory(memoryFacts);
+  pane.replaceChildren(renderMemoryView(grouped, {
+    classId: courseClassId,
+    className: bound?.name ?? '',
+    // On the no-backend tier there is no memory to fail at reading. Saying
+    // 「没读到」 there would report a fault that did not happen and would send her
+    // looking for a problem she cannot fix; this states the tier instead.
+    unavailable: persistenceActive() ? '' : MEMORY_NEEDS_ACCOUNT,
+    error: errorOverride || memoryError || '',
+    onForget: (fact) => forgetFact(fact),
+    onWiden: (fact, offer) => widenFactTo(fact, offer),
+    onCorrect: startFactCorrection,
+    note: bound
+      ? `这门课记在「${bound.name}」名下。扩大到班级的条目，这个班的其他课程也会带上。`
+      : '这门课还没有认到某个班上。认了之后，班上的条件换一门课也还算数。',
+  }));
+}
+
+// ---- classes: bound silently at one, asked only at two or more ----
+
+/** PUT the binding and mirror it locally. Returns true on success. */
+async function bindCourseClass(classId, via) {
+  if (!persistenceActive() || !activeCourseId) return false;
+  try {
+    const res = await fetch(apiUrl(`/api/courses/${activeCourseId}/class`), {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ class_id: classId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.message || `服务返回 ${res.status}`);
+    courseClassId = data.course?.class_id ?? classId;
+    logEvent('memory', 'course_class_bound', { course_id: activeCourseId, class_id: courseClassId, via });
+    await loadMemory();   // class-scope memory only becomes readable once bound
+    return true;
+  } catch (err) {
+    logEvent('error', 'course_class_bind_failed', { course_id: activeCourseId, class_id: classId, message: err?.message ?? String(err) });
+    return false;
+  }
+}
+
+/**
+ * The class question, asked ONLY when it is a real question.
+ *
+ * One class binds silently — a teacher with one class being asked which class
+ * this is would be filling in a field the system already knows, which is the
+ * form-filling this product exists not to do (non-negotiable #2). Zero classes
+ * is silent too: there is nothing to pick, and there is deliberately no
+ * 新建班级 control, because a class comes into being by her NAMING one in
+ * conversation (ADR-0011 §3).
+ */
+function maybeAskClass() {
+  if (!persistenceActive() || !activeCourseId) return;
+  const course = { class_id: courseClassId };
+  const silent = silentClassBinding(myClasses, course);
+  if (silent) { bindCourseClass(silent, 'silent_single_class').then(() => refreshClassHeader()); return; }
+  if (!shouldAskClass(myClasses, course)) return;
+  if (classAskDismissed.has(courseKey())) return;
+  if (activeSubject() !== COURSE_SUBJECT) return;   // a node conversation is not where a course gets its class
+  messagesEl.append(renderClassChoice(myClasses, {
+    onPick: async (classId) => {
+      const ok = await bindCourseClass(classId, 'picker');
+      if (ok) { refreshClassHeader(); replayTranscript(); }
+    },
+    onSkip: () => {
+      classAskDismissed.add(courseKey());
+      logEvent('memory', 'course_class_skipped', { course_id: activeCourseId });
+      replayTranscript();
+    },
+  }));
+}
+
+/** The header states which class this course is for — a fact she can tap, never
+ * a question. Hidden when there is nothing true to say. */
+function refreshClassHeader() {
+  const host = $('#class-header-slot');
+  if (!host) return;
+  const bound = courseClassId ? myClasses.find((k) => k.id === courseClassId) : null;
+  if (!bound) { host.replaceChildren(); host.hidden = true; return; }
+  host.replaceChildren(renderClassHeader({ id: bound.id, name: bound.name }, {
+    onChange: myClasses.length > 1 ? () => {
+      classAskDismissed.delete(courseKey());
+      courseClassId = null;
+      replayTranscript();
+    } : undefined,
+  }));
+  host.hidden = false;
+}
+
+// ---- the landing (mobile): what she sees depends on where the course is ----
+
+const LANDING_MQ = window.matchMedia('(max-width: 1099px)');
+/** Session-only, deliberately: a dismissal is not a decision, and persisting it
+ * would silently stop answering 「今天要做什么」 for good. */
+let landingDismissed = false;
+let lastLandingSig = '';
+
+/**
+ * Paint the landing card.
+ *
+ * MOBILE ONLY, and only for a course that has actually started. On desktop the
+ * 工作台 already sits beside the conversation, so a second copy of the same
+ * information would be noise; and `fork` mode is not drawn here at all because
+ * renderWelcome() already IS the entry fork — two forks on one screen is the app
+ * asking the same question twice.
+ */
+function refreshLanding() {
+  const host = $('#landing');
+  if (!host) return;
+  const landing = landingModel(courseState, { transcript });
+  const hide = landingDismissed
+    || !LANDING_MQ.matches
+    || landing.mode === 'fork'
+    || activeSubject() !== COURSE_SUBJECT;
+  if (hide) { host.hidden = true; host.replaceChildren(); return; }
+  // The step-zero rows come from the SAME derivation the 工作台 checklist uses,
+  // so the phone and the panel can never disagree about what is still unknown —
+  // and 已知 still means the teacher said it, because that gate lives inside
+  // stepZeroStatus rather than in either renderer.
+  const missing = landing.mode === 'step_zero'
+    ? stepZeroStatus(courseState).items.filter((i) => !i.known).map((i) => ({ key: i.key, label: i.label }))
+    : [];
+  host.replaceChildren(renderLanding(landing, {
+    missing,
+    recent: landing.mode === 'plan' ? recentStripEntries() : [],
+    onOpenNode: (id) => setSubject(id, { from: 'landing' }),
+    onContinue: () => inputEl.focus(),
+    onOpenPanel: () => openBlueprintPanel(),
+    onDismiss: () => {
+      landingDismissed = true;
+      logEvent('workflow', 'landing_dismissed', { mode: landing.mode });
+      refreshLanding();
+    },
+  }));
+  host.hidden = false;
+  // One line per real change — the observability duty for a surface that is
+  // screen furniture and is stored nowhere else.
+  const sig = [landing.mode, landing.today.length, landing.overdue.length, landing.undated,
+    missing.map((m) => m.key).join(',')].join('|');
+  if (sig !== lastLandingSig) {
+    lastLandingSig = sig;
+    logEvent('workflow', 'landing_shown', {
+      mode: landing.mode,
+      today: landing.today.length,
+      overdue: landing.overdue.length,
+      next_in_days: landing.next?.days ?? null,
+      undated: landing.undated,
+      missing: missing.map((m) => m.key),
+      plan_version: landing.version,
+    });
+  }
 }
 
 // ------------------------------------------------ 工作台 (ADR-0010, Workflow v2)
@@ -3352,6 +3811,11 @@ function activateUserPane(key) {
 function openUserModal(startPane, notice) {
   const accountPane = $('#pane-account');
   accountPane.replaceChildren();
+  // 记忆 shows a SERVER record, so it is re-read on every open — a stale copy of
+  // a record is a claim, and this is the one page whose whole job is to be
+  // checkable against what the agent actually carries.
+  buildMemoryPane();
+  if (persistenceActive()) loadMemory().then(() => buildMemoryPane());
 
   const authAvailable = backendOnline && authRequired;
   const navAccount = $('#nav-account');
@@ -3681,6 +4145,12 @@ function wire() {
     }
   });
 
+  // The landing is a mobile surface: rotating a tablet across the breakpoint
+  // must add or remove it, not leave a card from the other layout on screen.
+  const onLandingMq = () => refreshLanding();
+  if (LANDING_MQ.addEventListener) LANDING_MQ.addEventListener('change', onLandingMq);
+  else LANDING_MQ.addListener(onLandingMq); // older WebKit (mainland Android browsers)
+
   // model-card + 线路 change handlers live in buildModelsPane (built there)
 }
 
@@ -3744,6 +4214,13 @@ function boot() {
       // out: view state, no teacher decision in it, reconstructible from the
       // tree (same class as cst.bpW, which has never been exported either).
       workbench: workbenchSnapshot(),
+      // 记忆 + 六轴画像 (AGENTS.md export duty). Counts, scopes and archive
+      // reasons — never fact bodies: the `memory` category's own events already
+      // carry the text, and repeating every body here would duplicate teacher
+      // content for no extra diagnostic power. `memory.loaded: false` is stated
+      // rather than omitted, because an absent key reads as 「the feature is
+      // off」 and this is 「it ran and could not read」.
+      memory: memoryContext(),
     }),
   });
   logEvent('session', 'boot', {

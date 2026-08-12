@@ -5,8 +5,14 @@
 // a dev-facing wf_trace annotation (developer mode UI). Every canned turn MUST
 // pass validateTurn + the stage gates: the mock goes through the same
 // L2/L3 pipeline as real providers — no special casing.
+//
+// The planning flows also emit `plan_delta`, so a key-less demo run builds the
+// real 课程计划树 and the 导图 renders from it instead of staying empty. Those
+// ops go through engine.applyPlanDelta exactly like a vendor's would — see the
+// 课程计划树 section below for the three-level shape and the citation rule.
 
 import { WF_NODES } from './wf-nodes.mjs';
+import { walkPlan, ancestorsOf, blastRadius } from './plan-tsv.mjs';
 
 /** Teacher-mode labels used in wf_trace. */
 const MODE_LABELS = {
@@ -83,6 +89,391 @@ function detectResource(message) {
   return /龙舟/.test(message) ? '龙舟' : /趁墟/.test(message) ? '趁墟' : /祠堂/.test(message) ? '祠堂' : '醒狮';
 }
 
+// ================================================ 课程计划树 course_plan（ADR-0010 §5/§9）
+//
+// 树只有三层：月计划（一个 2–5 周的阶段，不是自然月）→ 周计划 → 活动。
+// 「日」是活动上的一个日期字段，永远不是树的一层——演示里也不许多长一层出来。
+//
+// 这些节点走的是 plan_delta，和真实模型唯一的写入通道一模一样
+// （engine.applyPlanDelta）：节点出生一律不是 confirmed；要升成 confirmed，op 上
+// 必须带一句老师本轮真的说过的话（ADR-0010 §6 的引用契约）。脚本不给自己开后门
+// ——一个会自封 confirmed 的演示，等于把一条假的确认规则教给每个看演示的人。
+//
+// 两根状态轴互相独立：status 说这句话有多可信（confirmed / teacher_preset /
+// ai_suggestion / hypothesis / pending_validation）；work_status 说她走到哪一步
+// （draft / adjusting / needs_review / settled）。出生一律 draft——没人看过的东西
+// 不能一上来就是 settled；needs_review 由引擎的 markNeedsReview 产生，不是出生值。
+//
+// 可观察与可导出（AGENTS.md 的观察与导出义务）：节点写进 course_state.course_plan，
+// 而调试抽屉、会话日志导出、服务端导出本来就整份带 course_state，所以不需要新的
+// 存储或导出管道；plan_delta 的原文还留在 api_debug 的 response_raw 里。
+
+const ISO_OF = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/**
+ * 演示用日期：从「下一个周一」往后数 offsetDays 天。日子永远排在前面，打开演示
+ * 不会看到一整棵已经过期的计划树（plan-tsv 的 retireStale 会把过期节点的待复查
+ * 标撤掉，那时连动关系就演示不出来了）。
+ */
+function planDay(offsetDays) {
+  const now = new Date();
+  const base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const toMonday = ((8 - base.getDay()) % 7) || 7;
+  return ISO_OF(new Date(base.getFullYear(), base.getMonth(), base.getDate() + toMonday + offsetDays));
+}
+
+/** 把一个 ISO 日期挪到它所在那一周的第 offset 天（0=周一）。 */
+function sameWeekDay(iso, offset) {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  if (!y || !m || !d) return planDay(offset);
+  const dt = new Date(y, m - 1, d);
+  return ISO_OF(new Date(y, m - 1, d - ((dt.getDay() + 6) % 7) + offset));
+}
+
+/** 计划节点速写。出生一律 ai_suggestion + draft，除非显式指定。 */
+function planNode(kind, title, body, opts = {}) {
+  const node = {
+    kind,
+    title,
+    body,
+    status: opts.status || 'ai_suggestion',
+    work_status: opts.work_status || 'draft',
+  };
+  // 摘要是祖先节点唯一会进到后代焦点带的那一行——不写，后代就只看得到「（尚无摘要）」。
+  if (opts.summary) node.summary = opts.summary;
+  if (opts.org) node.org_type = opts.org;
+  if (opts.dates) node.dates = opts.dates;
+  // 后一周建立在前一周的经验上：写成引用，前一周一改，后一周就落进 blast radius。
+  if (opts.refs) node.blueprint_refs = opts.refs;
+  return node;
+}
+
+/** 一条 set 操作。没有 parent_id 就是新建一个根月计划。 */
+function setOp(id, parentId, node, reason) {
+  return { op: 'set', id, parent_id: parentId ?? null, node, reason };
+}
+
+/** 从零陪跑的阶段一计划：一个阶段、三到四周、七到九个活动，五类组织形式都占到位。 */
+function fromZeroPlanOps(resource, { month, groupNote }) {
+  const ops = [
+    setOp('p1', null, planNode('phase', `阶段一：走近${resource}（${month ? '4 周' : '2–3 周'}）`,
+      '五步都在这一段里：预先计划、建立共同经验、发掘已有知识、发展想探究的问题、布置探索环境。五步不分先后，走完这一段再看要不要往下长。', {
+        summary: '阶段一的落点是共同经验和一面问题墙，不追成品。',
+      }), '按主题新建阶段计划'),
+
+    setOp('p1.w1', 'p1', planNode('week', '第 1 周：建立共同经验',
+      `集体看一场真实的${resource}，教室里同时开体验角。${groupNote}`, {
+        summary: '这一周只做一件事：让全班有同一段真实经验可以谈。',
+      }), '第 1 周'),
+    setOp('p1.w1.a1', 'p1.w1', planNode('activity', `看一场真实的${resource}`,
+      `目的：建立共同经验。流程约 20 分钟：3 分钟入场，先抛一个悬念——「等下看的时候，找一样你最想摸一摸的东西」；8 分钟看片段或看现场；7 分钟围坐说说看到了什么、哪里最想试试；2 分钟把想不明白的记到问题墙。材料：${resource}影像片段（有现场更好）、问题墙便签。安全：观看区用坐垫定位，避免起身拥挤。`, {
+        org: '集体教学', dates: [planDay(0)],
+      }), '第 1 周的集体活动'),
+    setOp('p1.w1.a2', 'p1.w1', planNode('activity', `${resource}体验角`,
+      `目的：让兴趣自己长出来。体验角在教室里持续开放，材料只放半成品，不给成品。${groupNote}观察点：停留时长、自发的动作和说出口的话。`, {
+        org: '自主游戏·环创', dates: [planDay(1), planDay(4)],
+      }), '第 1 周的环创'),
+    setOp('p1.w1.a3', 'p1.w1', planNode('activity', '给家长的一封信与周末小任务',
+      `目的：把经验连到家庭和社区。信里请家长做两件小事：家里有和${resource}有关的物件或照片，让孩子带来分享；周末路过相关场景停两分钟，把听到的一句话记在联系本上。不需要提前教知识。`, {
+        org: '亲子活动', dates: [planDay(5)],
+      }), '第 1 周的亲子任务'),
+
+    setOp('p1.w2', 'p1', planNode('week', '第 2 周：发掘已知与问题墙',
+      '「我们已经知道的」不止靠说：讨论记录清单，加上自选表征——画纸、积木、角色区三个通道同时开放。', {
+        summary: '把已经知道的摊开，把问题贴上墙——这一周的产物是一面墙。',
+        refs: ['p1.w1'],
+      }), '第 2 周'),
+    setOp('p1.w2.a1', 'p1.w2', planNode('activity', '「我们已经知道的」',
+      '目的：把已有经验摊到桌面上，避免重教。流程：先集体说一轮，再分头用画、搭、演三个通道表征；记录清单和作品一起上墙。材料：大画纸、积木、角色区道具、粗头笔。', {
+        org: '集体教学', dates: [planDay(7)],
+      }), '第 2 周的集体活动'),
+    setOp('p1.w2.a2', 'p1.w2', planNode('activity', '问题墙上墙',
+      '问题墙随时开放，游戏里随手记，一句一张便签。预计这一周会冒出一批「为什么」和「我能不能自己试」类的问题——具体会问出什么要等现场，待现场验证，先不预写结论。', {
+        org: '自主游戏·环创', dates: [planDay(8), planDay(11)], status: 'hypothesis',
+      }), '第 2 周的问题墙'),
+
+    setOp('p1.w3', 'p1', planNode('week', '第 3 周：聚焦与调整',
+      '这一周不加新内容，只做减法：把问题墙上反复出现的问题挑出来，活动重心跟着挪。', {
+        summary: '按问题墙最密的地方收口，为下一段留接口。',
+        refs: ['p1.w2'],
+      }), '第 3 周'),
+    setOp('p1.w3.a1', 'p1.w3', planNode('activity', resource === '醒狮' ? '狮头狮尾配合走' : '齐心协力小任务',
+      '目的：在主题里面练配合与节奏，不做泛化的合作游戏。流程每组约 10 分钟：两人一前一后披一块布，前面带路后面跟，走过 3 个小障碍，走完换位。材料：大块软布每组一块、地面障碍垫。安全：软布只到腰高、不遮脸；地面清空；教师全程在侧。', {
+        org: '小组教学', dates: [planDay(14)],
+      }), '第 3 周的小组活动'),
+    setOp('p1.w3.a2', 'p1.w3', planNode('activity', '一对一跟随记录',
+      '目的：看见个体差异。对特别着迷的和还在观望的各跟一个，各记十分钟。观望的那一个可能只是在用眼睛参与，也可能是材料不趁手——待现场看过再判断，先不下结论。', {
+        org: '个别指导', dates: [planDay(15)], status: 'hypothesis',
+      }), '第 3 周的个别指导'),
+  ];
+  if (month) {
+    ops.push(
+      setOp('p1.w4', 'p1', planNode('week', '第 4 周：小结与回望',
+        '和大家一起回看问题墙的 KWHL：知道了什么、还想知道什么、怎么去知道、学会了什么——最后一栏这时候才填。', {
+          summary: '回看问题墙，给下一段留好接口。',
+          refs: ['p1.w3'],
+        }), '第 4 周'),
+      setOp('p1.w4.a1', 'p1.w4', planNode('activity', '把问题墙搬给家长看',
+        '目的：让这一段的过程被看见。开放半小时，请家长来读问题墙，在便签上回一句话贴上去。', {
+          org: '亲子活动', dates: [planDay(21)],
+        }), '第 4 周的亲子活动'),
+    );
+  }
+  return ops;
+}
+
+/** 已有主题优化：驱动问题定下来之后的两周行动计划。 */
+function optimizePlanOps(drum) {
+  return [
+    setOp('p1', null, planNode('phase', '行动阶段：把驱动问题做出来（2 周）',
+      '两周里跑完一轮完整的试—看—改。证据三件套每轮固定回收：一句原话、一张作品或现场照片、一条行为观察。', {
+        summary: '这一段的落点是一版做得出来、检验得了的东西，不是一份更漂亮的方案。',
+      }), '驱动问题定稿后新建行动阶段'),
+    setOp('p1.w1', 'p1', planNode('week', '第 1 周：收想法，试第一版',
+      '把驱动问题抛回去，所有办法都记下来不筛选，再让各组选一个先试。', {
+        summary: '先收办法，不评价——成人的办法排在后面。',
+      }), '第 1 周'),
+    setOp('p1.w1.a1', 'p1.w1', planNode('activity', '把问题抛回去',
+      '目的：收办法，不评价。流程：读一遍问题、贴纸投票、记下每个办法是谁提的。材料：大画纸、投票贴纸、粗头笔。', {
+        org: '集体教学', dates: [planDay(0)],
+      }), '第 1 周的集体活动'),
+    setOp('p1.w1.a2', 'p1.w1', planNode('activity', '试第一版',
+      '目的：让办法落地。每组按自己选的办法做第一版，做完拍一张照留证。材料：按各组的办法准备，前一天问一次要用什么。', {
+        org: '小组教学', dates: [planDay(2), planDay(3)],
+      }), '第 1 周的小组活动'),
+    setOp('p1.w2', 'p1', planNode('week', '第 2 周：检验和改',
+      '把第一版放进真实的检验里，记下失败的那一刻，再改一版重试。', {
+        summary: '让作品自己说话：失败的那一刻最值得记。',
+        refs: ['p1.w1'],
+      }), '第 2 周'),
+    setOp('p1.w2.a1', 'p1.w2', planNode('activity', drum ? '跟着鼓点合一次' : '放进水里试一次',
+      drum
+        ? '目的：检验共同信号。流程：先各组自己数拍子，再合一次，录一段回放让大家自己看哪里对上了。材料：鼓或塑料桶、手机。'
+        : '目的：检验能不能浮、会不会翻。流程：一组一组放进水盆，记下翻的那一刻是怎么翻的，再改一版。材料：大水盆、毛巾、记录便签。安全：水盆只装到三分之一，全程有人在侧。', {
+        org: '小组教学', dates: [planDay(7)],
+      }), '第 2 周的检验活动'),
+    setOp('p1.w2.a2', 'p1.w2', planNode('activity', '跟一个还在观望的',
+      '目的：差异不靠印象靠记录。跟一个还在观望的，记十分钟。观望可能是材料不趁手，也可能是还在用眼睛参与——待现场看过再判断。', {
+        org: '个别指导', dates: [planDay(9)], status: 'hypothesis',
+      }), '第 2 周的个别指导'),
+  ];
+}
+
+// ---------------------------------------------------- v2 主循环：改一个节点
+
+/** 树上真有东西才谈得上改。 */
+function planOf(state) {
+  const plan = state && state.course_plan;
+  return plan && Array.isArray(plan.roots) && plan.roots.length ? plan : null;
+}
+
+const WEEK_NUM = { 一: 1, 二: 2, 三: 3, 四: 4 };
+const DAY_NUM = { 一: 0, 二: 1, 三: 2, 四: 3, 五: 4 };
+const PLAN_EDIT_VERB = /(改|换|挪|调整|去掉|删掉|删|不做|提前|推后|移到)/;
+const PLAN_OK_RE = /(就这样|就按这个|定了|可以了|没问题|确认)/;
+const PLAN_DATE_RE = /(周[一二三四五]|提前|推后|挪到|移到|改到|日子|日期|时间)/;
+const PLAN_DROP_RE = /(去掉|删掉|删|不做)/;
+/** 活动的口头称呼——她说的是「体验角」，不是节点 id。 */
+const ACTIVITY_WORDS = ['体验角', '问题墙', '一封信', '家长', '小组', '个别', '已经知道', '集体'];
+
+/** 她这句话点的是树上哪个节点。先认「第 N 周」，再在那一周里认活动的口头称呼。 */
+function findPlanNode(plan, message) {
+  const all = [...walkPlan(plan)].map(({ node }) => node);
+  const wm = String(message).match(/第\s*([一二三四1-4])\s*周/);
+  const weeks = all.filter((n) => n.kind === 'week');
+  const week = wm ? weeks[(WEEK_NUM[wm[1]] ?? Number(wm[1])) - 1] : null;
+  const scope = week ? [...walkPlan({ roots: [week] })].map(({ node }) => node) : all;
+  for (const word of ACTIVITY_WORDS) {
+    if (!String(message).includes(word)) continue;
+    // org_type counts as a name: she says 「个别指导」 and that IS what the node is
+    // called on screen, even though its title reads 一对一跟随记录.
+    const hit = scope.find((n) => n.kind === 'activity'
+      && (n.title.includes(word) || String(n.org_type || '').includes(word) || String(n.body).includes(word)));
+    if (hit) return hit;
+  }
+  return week || null;
+}
+
+/**
+ * 她点名一个节点要改、要定，还是要去掉。点不到具体节点就返回 null——绝不猜：
+ * 猜错的那一下，改的是她已经在用的计划。
+ */
+function matchPlanMove(state, message) {
+  const plan = planOf(state);
+  if (!plan) return null;
+  const node = findPlanNode(plan, message);
+  if (!node) return null;
+  const text = String(message);
+  if (PLAN_OK_RE.test(text) && !PLAN_EDIT_VERB.test(text)) return { plan, node, act: 'confirm' };
+  if (!PLAN_EDIT_VERB.test(text)) return null;
+  if (PLAN_DROP_RE.test(text) && node.kind === 'activity') return { plan, node, act: 'drop' };
+  if (PLAN_DATE_RE.test(text)) return { plan, node, act: 'date' };
+  return { plan, node, act: 'open' };
+}
+
+/** 一次改动会波及到的下游节点——用 plan-tsv 的真算法算，不是编出来吓人的。 */
+function staleNodes(plan, nodeId) {
+  const byId = new Map([...walkPlan(plan)].map(({ node }) => [node.id, node]));
+  return blastRadius(plan, nodeId).map((id) => ({ id, title: byId.get(id)?.title || id }));
+}
+
+/** 节点名加引号，标题本来就带「」的不再套一层。 */
+const nameOf = (title) => `「${String(title ?? '').replace(/^「|」$/g, '')}」`;
+
+/** 待复查这件事只说一次，措辞统一：它不改出处，只是提醒回头看一眼。 */
+function staleLine(touched) {
+  if (!touched.length) return '这个节点下面没有别的东西，也没有别的节点靠着它——所以没有连带的待复查。\n\n';
+  return `一改就有连带：${touched.map((t) => nameOf(t.title)).join('、')} 都挂上了「待复查」。这只是提醒你回头看一眼，不是说它们错了；出处那根轴我一个字也没动。你在节点上点「跟着改」「我自己改」或者「这样就行」，标就摘掉。\n\n`;
+}
+
+/** 计划轮的前进抓手：三个都能真的路由到下一个动作，不给假抓手。 */
+function planNextCard(id) {
+  return {
+    id,
+    text: '接下来动哪一块',
+    why: '你点名，我改；没点名的地方我不动',
+    examples: ['把体验角挪到周三', '第 3 周的个别指导先去掉', '第 1 周就这样定了'],
+  };
+}
+
+function planTrace(state, apply) {
+  return trace(state.teacher_mode || 'from_zero', state.stage ?? 1, [
+    { id: 'WF08', name: '布置探索环境与时间（环创·材料·周月计划）', apply },
+  ], ['状态机优先', '先给完整方案再一起改'], '本轮不写 course_state 字段——改动全部走 plan_delta 落进课程计划树');
+}
+
+/** 节点进入调整：work_status 动，出处不动，下游按 blast radius 挂待复查。 */
+function turnPlanAdjust(state, move) {
+  const { plan, node } = move;
+  const touched = staleNodes(plan, node.id);
+  const mark = '【调整中】';
+  const body = String(node.body || '').includes(mark)
+    ? String(node.body || '')
+    : `${node.body || ''}\n\n${mark}这一块正在改。具体改哪里，下面卡片点一个，或者直接写一句。`;
+  const card = planNextCard('q-plan-adjust');
+  return {
+    reply_markdown:
+      `好，${nameOf(node.title)} 标成调整中了（work_status: adjusting）。它的出处没动——出处只有你确认、或者现场证据说话才会动，我改不了。\n\n${staleLine(touched)}具体怎么改，下面卡片点一个。`,
+    question: card,
+    questions: [card],
+    artifacts: [],
+    closure_loop: null,
+    plan_delta: [{
+      op: 'update',
+      id: node.id,
+      node: { body, work_status: 'adjusting' },
+      reason: `上游节点${nameOf(node.title)}正在调整`,
+    }],
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: planTrace(state, `节点${nameOf(node.title)}进入 adjusting；下游按 blast radius 挂待复查`),
+  };
+}
+
+/** 挪日子：日期是活动上的字段，改的永远是一个活动，不是一整周。 */
+function turnPlanReschedule(state, message, move) {
+  const { plan } = move;
+  const activity = move.node.kind === 'activity'
+    ? move.node
+    : [...walkPlan({ roots: [move.node] })].map(({ node }) => node).find((n) => n.kind === 'activity');
+  if (!activity) return turnPlanAdjust(state, move);
+  const dayHit = String(message).match(/周([一二三四五])/);
+  const offset = dayHit ? DAY_NUM[dayHit[1]] : 1;
+  const day = sameWeekDay((activity.dates || [])[0] || planDay(0), offset);
+  const touched = staleNodes(plan, activity.id);
+  const card = planNextCard('q-plan-date');
+  return {
+    reply_markdown:
+      `${nameOf(activity.title)}改到 ${day}。\n\n日子挂在活动上，不挂在周上——所以我动的是这一个活动，那一周本身没有变，树也没有因此多长出一层「日计划」。\n\n${staleLine(touched)}还要动别的就点名。`,
+    question: card,
+    questions: [card],
+    artifacts: [],
+    closure_loop: null,
+    plan_delta: [{
+      op: 'update',
+      id: activity.id,
+      node: { dates: [day], work_status: 'adjusting' },
+      reason: `活动${nameOf(activity.title)}改了日期`,
+    }],
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: planTrace(state, `活动${nameOf(activity.title)}改期到 ${day}（日期是活动的字段，不是树的一层）`),
+  };
+}
+
+/** 去掉一个活动：remove 一条，再把它所在的那一周标成调整中。 */
+function turnPlanDrop(state, move) {
+  const { plan, node } = move;
+  const chain = ancestorsOf(plan, node.id);
+  const parent = chain.length ? chain[chain.length - 1] : null;
+  const gone = new Set([...walkPlan({ roots: [node] })].map(({ node: n }) => n.id));
+  const ops = [{ op: 'remove', id: node.id, reason: `活动${nameOf(node.title)}按你的要求去掉了` }];
+  let touched = [];
+  if (parent) {
+    ops.push({
+      op: 'update',
+      id: parent.id,
+      node: { work_status: 'adjusting' },
+      reason: `${nameOf(parent.title)}少了一个活动`,
+    });
+    touched = staleNodes(plan, parent.id).filter((t) => !gone.has(t.id));
+  }
+  const card = planNextCard('q-plan-drop');
+  return {
+    reply_markdown:
+      `${nameOf(node.title)}去掉了。${parent ? `${nameOf(parent.title)}跟着标成调整中。` : ''}\n\n删掉的是节点，不是记录：这一步进了计划树的修订日志，什么时候删的、为什么删，回头都查得到。\n\n${staleLine(touched)}要把它加回来，说一声就行。`,
+    question: card,
+    questions: [card],
+    artifacts: [],
+    closure_loop: null,
+    plan_delta: ops,
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: planTrace(state, `活动${nameOf(node.title)}remove；${parent ? `${nameOf(parent.title)}转 adjusting` : '无父节点'}`),
+  };
+}
+
+/**
+ * 她说「就这样定了」——引用她这句原话，把节点升成 confirmed。
+ * 引的是她刚才真的打出来的字（原文前 30 个字符），所以 engine.citedNodeOf 一定
+ * 查得到；查不到的话引擎会把它退回原出处，那才是这条规则该有的样子。
+ */
+function turnPlanConfirm(state, message, move) {
+  const { plan, node } = move;
+  const quote = String(message).trim().slice(0, 30);
+  const touched = staleNodes(plan, node.id);
+  const card = planNextCard('q-plan-confirm');
+  return {
+    reply_markdown:
+      `记下了：${nameOf(node.title)}按你这句话定了下来——出处 confirmed，work_status settled。\n\n我引的是你刚才的原话「${quote}」。没有你的原话，我不能把任何一个节点标成已确认：那是一句关于你的断言，得由你说了算。\n\n${staleLine(touched)}接着动哪一块，你说。`,
+    question: card,
+    questions: [card],
+    artifacts: [],
+    closure_loop: null,
+    plan_delta: [{
+      op: 'update',
+      id: node.id,
+      node: { status: 'confirmed', work_status: 'settled' },
+      confirmed_by_quote: quote,
+      reason: `${nameOf(node.title)}已由你确认`,
+    }],
+    state_delta: {},
+    evidence_refs: [],
+    round_complete: false,
+    wf_trace: planTrace(state, `节点${nameOf(node.title)}凭教师原话升为 confirmed（引用契约 ADR-0010 §6）`),
+  };
+}
+
+function turnPlanMove(state, message, move) {
+  if (move.act === 'confirm') return turnPlanConfirm(state, message, move);
+  if (move.act === 'date') return turnPlanReschedule(state, message, move);
+  if (move.act === 'drop') return turnPlanDrop(state, move);
+  return turnPlanAdjust(state, move);
+}
+
 // ---------------------------------------------- awaiting-phase discrimination
 
 /** Strong field-feedback signal; hard evidence markers bypass the length check. */
@@ -127,6 +518,9 @@ function mergeTurns(a, b, { reply, stage, note }) {
     question: b.question ?? null,
     ...(b.questions ? { questions: b.questions } : {}),
     artifacts: [...(a.artifacts || []), ...(b.artifacts || [])],
+    // Plan ops concat like artifacts do: a merged turn that dropped one side's
+    // tree edits would apply half a plan and say nothing about the other half.
+    plan_delta: [...(a.plan_delta || []), ...(b.plan_delta || [])],
     closure_loop: b.closure_loop ?? null,
     state_delta: delta,
     evidence_refs: [...new Set([...(a.evidence_refs || []), ...(b.evidence_refs || [])])],
@@ -166,6 +560,11 @@ const MAX_NUDGES = 2;
 // ======================================================== 从零陪跑 from_zero
 
 function fromZeroFlow(state, history, message) {
+  // v2 主循环第二步：计划树已经立起来之后，她点名某一周或某个活动要改、要定。
+  // 放在最前面，因为点名了节点的话没有歧义——「第 1 周的材料改一下」是在改计划，
+  // 不是在选网络图方向。树还没立起来时这个分支是死的（planOf 返回 null）。
+  const move = matchPlanMove(state, message);
+  if (move) return turnPlanMove(state, message, move);
   // Blueprint round 2: round 1 delivered the maps (marker in history), the
   // teacher has replied (confirmation or card answers) → full 预设包.
   if (!state.resource_entry_card && priorTurnsMatching(history, BLUEPRINT_MARKER) >= 1) {
@@ -383,13 +782,16 @@ function turnBlueprintRound2(state, history, message) {
     why: '这是你的教育价值筛选——选了，网络图才算你的',
     examples: ['来源与故事＋真实场景', '制作与材料——孩子最爱动手', '先看孩子的问题再定'],
   };
+  // 计划树的第一版：预设包同一轮就长成 月计划→周计划→活动 三层，走 plan_delta。
+  const planTail = `\n\n右边的课程计划树也一起立起来了：一个${month ? ' 4 ' : '两到三'}周的阶段，下面${month ? '四' : '三'}周、每周两三个活动，日期挂在活动上（周计划不背日子，树也不会多长出一层「日」）。所有节点都是「预设·待细化」，出处没有一个是已确认的——要确认，得你说一句话我引着才算。想改哪一块，直接点名：「第 1 周的体验角挪到周三」这样说就行。`;
   return {
-    reply_markdown: pickedDirections
+    reply_markdown: (pickedDirections
       ? `收到。对照上一版：网络图按你点选的方向收拢，你补充的信息我并进了计划${month ? '（按一个月排成 4 周）' : ''}。第 1 周的两个活动展开成了完整教案，家长信全文和${resource}专用材料清单可以直接取用。\n\n先按第 1 周做起来，不用等一切都齐。`
-      : `收到，你补充的信息我并进了计划${month ? '（按一个月排成 4 周）' : ''}。第 1 周的两个活动展开成了完整教案，家长信全文和${resource}专用材料清单可以直接取用。\n\n还差一个只有你能做的判断：网络图先聚焦哪几个方向——下面的卡片选一下，选了它才算你的计划。`,
+      : `收到，你补充的信息我并进了计划${month ? '（按一个月排成 4 周）' : ''}。第 1 周的两个活动展开成了完整教案，家长信全文和${resource}专用材料清单可以直接取用。\n\n还差一个只有你能做的判断：网络图先聚焦哪几个方向——下面的卡片选一下，选了它才算你的计划。`) + planTail,
     question: directionCard,
     questions: directionCard ? [directionCard] : [],
     artifacts: [blueprint],
+    plan_delta: fromZeroPlanOps(resource, { month, groupNote }),
     closure_loop: {
       do_now: '按第 1 周安排开展 1–2 个建立共同经验的活动',
       materials: '材料清单与给家长的一封信（草稿）都在预设包里，可直接取用',
@@ -399,7 +801,7 @@ function turnBlueprintRound2(state, history, message) {
     state_delta: {
       stage: 1, // proposal — this same delta supplies the gate's prerequisites
       theme_fit_level: 'theme_inquiry',
-      completed_nodes: ['WF02b', 'WF03b', 'WF04', 'WF04b'],
+      completed_nodes: ['WF02b', 'WF03b', 'WF04', 'WF04b', 'WF08'],
       resource_entry_card: {
         original_theme: resource,
         initial_goal: '先做一轮主题探究，观察孩子被什么抓住',
@@ -417,7 +819,8 @@ function turnBlueprintRound2(state, history, message) {
       { id: 'WF03b', name: '资源意图确认', apply: '教师回复即确认——三问静默亮灯，不逐轮追问' },
       { id: 'WF04', name: '主题网络', apply: pickedDirections ? '教师点选方向，网络图升级 confirmed' : '网络图停在 teacher_preset——方向未选，不代教师确认' },
       { id: 'WF04b', name: '资源深度网络', apply: '四层并入预设包，意义层保持待验证' },
-    ], ['先给完整方案再一起改', '回传为了优化不为解锁'], '完整预设包 v0.2；备课期收轮，无儿童证据，引擎不置 awaiting_feedback'),
+      { id: 'WF08', name: '布置探索环境与时间（环创·材料·周月计划）', apply: '课程计划树 v1 走 plan_delta 落库：月计划→周计划→活动三层，日期在活动上' },
+    ], ['先给完整方案再一起改', '回传为了优化不为解锁'], '完整预设包 v0.2 + 课程计划树首版（plan_delta）；备课期收轮，无儿童证据，引擎不置 awaiting_feedback'),
   };
 }
 
@@ -689,6 +1092,9 @@ function turnStoryFragment(state) {
 // ================================================ 已有主题优化 optimize_existing
 
 function optimizeFlow(state, history, message) {
+  // 同一个计划树主循环——树是在 turnOptimizePick 那一轮立起来的，之前这里是死分支。
+  const move = matchPlanMove(state, message);
+  if (move) return turnPlanMove(state, message, move);
   if (!state.resource_entry_card) {
     // Batch fast path: the entry's two question cards answered together —
     // 家底 AND 原话 in one packaged reply — backfill and evidence land in one turn.
@@ -1606,9 +2012,10 @@ function turnOptimizePick(state, message) {
     : '幼儿能够逐渐理解：让一个东西浮起来又不翻，需要试、观察、再调整';
   return {
     reply_markdown:
-      `好，核心驱动问题就定这个：「${chosen}」\n\n目标与评估轴心先立一根轴——**核心理解**：${core}。四维目标和 GRASPS 评估可以边做边补，不用一次写全。\n\n但**过程性证据计划**现在就要立起来，这是优化线最容易漏的一块：从下一轮开始，每轮固定带回三件东西——一句原话、一张作品或现场照片、一条行为观察。这就是以后目标回看和课程故事的底账。`,
+      `好，核心驱动问题就定这个：「${chosen}」\n\n目标与评估轴心先立一根轴——**核心理解**：${core}。四维目标和 GRASPS 评估可以边做边补，不用一次写全。\n\n但**过程性证据计划**现在就要立起来，这是优化线最容易漏的一块：从下一轮开始，每轮固定带回三件东西——一句原话、一张作品或现场照片、一条行为观察。这就是以后目标回看和课程故事的底账。\n\n右边同时给你排了一棵两周的课程计划树：一个行动阶段，下面两周、四个活动，日期挂在活动上。都是预设，出处一个都不是已确认——想改哪一块直接点名，比如「第 2 周的个别指导先去掉」。`,
     question: null,
     artifacts: [],
+    plan_delta: optimizePlanOps(drum),
     closure_loop: {
       do_now: '把定下来的驱动问题抛回给孩子，听他们的第一批想法',
       materials: '证据三件套提醒卡：原话、作品或照片、行为观察（下轮可给打印版）',
@@ -1628,7 +2035,7 @@ function turnOptimizePick(state, message) {
           ? { audience: '全班和运动会上的观众', product: '一段桨随鼓点整齐动作的合练', standards: ['信号大家都听得懂吗', '有没有人跟不上', '我们自己想再改哪里'] }
           : { audience: '全班同伴和家长', product: '一条孩子自己做的能浮不翻的小龙舟', standards: ['放进水里浮不浮', '翻了之后孩子怎么改', '我们自己想再改哪里'] },
       },
-      completed_nodes: ['WF10', 'WF16'],
+      completed_nodes: ['WF10', 'WF16', 'WF08'],
       stage: 3,
     },
     evidence_refs: drum ? ['ev-lz-1'] : ['ev-lz-2'],
@@ -1636,7 +2043,8 @@ function turnOptimizePick(state, message) {
     wf_trace: trace('optimize_existing', 2, [
       { id: 'WF10', name: '核心概念性理解目标', apply: '以儿童证据为底，先立核心理解一根轴' },
       { id: 'WF16', name: '过程性证据计划', apply: '每轮三件证据固定回收——优化线的底账' },
-    ], ['阶段判断优先', '证据优先'], '写入 driving_question 定稿与目标轴心；stage 提议 2→3（核心理解同轮写入，门槛满足）'),
+      { id: 'WF08', name: '布置探索环境与时间（环创·材料·周月计划）', apply: '两周行动计划走 plan_delta 落进课程计划树' },
+    ], ['阶段判断优先', '证据优先'], '写入 driving_question 定稿与目标轴心；两周计划树走 plan_delta；stage 提议 2→3（核心理解同轮写入，门槛满足）'),
   };
 }
 

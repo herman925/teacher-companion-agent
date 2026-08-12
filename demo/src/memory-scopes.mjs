@@ -46,6 +46,29 @@ import { CHILD_CLAIM_RE } from './harness.mjs';
  */
 export const SCOPES = ['node', 'course', 'class', 'teacher'];
 
+/**
+ * The scopes that ride the prompt, WIDEST FIRST, and the whole list of them.
+ *
+ * Two decisions live here rather than in the assembler, because both are this
+ * module's doctrine and an assembler that re-derived them could drift:
+ *
+ * NODE IS EXCLUDED. Node memory is generated, not extracted (see the header),
+ * and it reaches the model through the focus band as ordinary text. Rendering it
+ * here would ship it twice and under the wrong header.
+ *
+ * TEACHER IS INCLUDED, and that is not cosmetic. `widenScope` lets her promote a
+ * class fact to teacher scope — 「这对我带的每个班都成立」 — and a band that
+ * rendered only class and course would answer that deliberate tap by dropping
+ * the fact out of every future prompt. 「我早就跟你说过」, caused by the widen
+ * button.
+ *
+ * WIDEST FIRST for the same reason `capFacts` archives oldest-unused: if
+ * anything is ever lost at a tail, it must be the narrowest claim, not the one
+ * that binds every class she teaches.
+ * @type {ReadonlyArray<string>}
+ */
+export const PROMPT_SCOPES = Object.freeze(['teacher', 'class', 'course']);
+
 /** Narrow → broad. Used to stop an automatic judgement from retiring a
  * deliberate one; see `supersedeFact`. */
 const SCOPE_RANK = Object.fromEntries(SCOPES.map((s, i) => [s, i]));

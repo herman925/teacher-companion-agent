@@ -1570,13 +1570,17 @@ body.rail-pinned .composer { left: 260px; }
 }
 /* Desktop: panel reflows the column; chat centers in the remaining space. */
 @media (min-width: 1100px) {
-  body.has-bp .chat-main {
+  body.has-bp .chat-main,
+  body.has-bp .class-header-slot,
+  body.has-bp .landing {
     margin-left: max(16px, calc((100vw - var(--bp-w) - var(--col)) / 2));
     margin-right: calc(var(--bp-w) + 16px);
   }
   body.has-bp .composer { right: var(--bp-w); }
   body.has-bp .bp-fab { display: none; }
-  body.has-bp.rail-pinned .chat-main { margin-left: max(276px, calc((100vw - var(--bp-w) - var(--col)) / 2)); }
+  body.has-bp.rail-pinned .chat-main,
+  body.has-bp.rail-pinned .class-header-slot,
+  body.has-bp.rail-pinned .landing { margin-left: max(276px, calc((100vw - var(--bp-w) - var(--col)) / 2)); }
 }
 /* Below desktop: the panel exists only as a full-height sheet the 蓝图 button
    opens; 导图 tab hides under 880px (mobile keeps the list forever). */
@@ -2612,4 +2616,221 @@ body.has-bp .toast-host { right: var(--bp-w); }
      gains the room to carry it. */
   .qcards-seg::after { width: 100%; }
   .qcards-segs { gap: 6px; }
+}
+
+/* ========================================= Workflow v2 · 记忆 / 班级 / 六轴 / 落地
+   Four surfaces, added 2026-08-13. Every one of them REPORTS: the memory page
+   shows what was heard, the class line states which class this course is for,
+   the axis handles state what the agent believes about her, and the landing
+   states where the course stands. None of them is a form, and the styling says
+   so — no field wells, no required marks, no submit bars. ------------------- */
+
+/* ---- 记忆 viewer (用户中心 · 记忆) ---- */
+.memory-view { display: flex; flex-direction: column; gap: calc(var(--sp) * 2); }
+.memory-lead { font-size: 13.5px; line-height: 1.8; color: var(--ink-faded); margin: 0; }
+.memory-counts { font-size: 12.5px; color: var(--ink-faded); }
+.memory-error {
+  /* Brick, like every other 「it did not go through」 surface (§4). A failed read
+     is an error, not an empty state, and it must not look like one. */
+  border-left: 3px solid var(--brick); background: var(--surface);
+  border-radius: 8px; padding: 10px 14px;
+  font-size: 13.5px; line-height: 1.8; color: var(--ink);
+}
+.memory-empty { font-size: 13.5px; line-height: 1.8; color: var(--ink-faded); margin: 0; }
+
+.memory-group { display: flex; flex-direction: column; gap: 6px; }
+.memory-group-head { display: flex; align-items: baseline; gap: 8px; }
+.memory-scope-tag {
+  font-family: var(--font-serif); font-size: 14px; font-weight: 600;
+  color: var(--green); letter-spacing: 0.02em;
+}
+.memory-group-count { font-size: 12px; color: var(--ink-faded); }
+.memory-group-hint { font-size: 12.5px; line-height: 1.7; color: var(--ink-faded); margin: 0; }
+
+.memory-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.memory-item {
+  /* Cream stock: an artifact of the conversation, like the cards it came from,
+     never a settings row. */
+  background: var(--cream); border: 1px solid var(--border-warm);
+  border-radius: var(--radius-card); padding: 10px 14px;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.memory-fact { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.memory-kind {
+  flex: none; font-size: 11.5px; line-height: 1.6;
+  padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--persimmon); color: var(--persimmon); background: var(--surface);
+}
+.memory-text { font-size: 14.5px; line-height: 1.7; color: var(--ink); overflow-wrap: anywhere; }
+.memory-quote {
+  /* Her own words, set apart the way a quotation is — this is the line that
+     makes a remembered constraint checkable rather than an assertion. */
+  font-family: var(--font-serif); font-size: 13px; line-height: 1.8;
+  color: var(--ink-faded); border-left: 2px solid var(--border-warm);
+  padding-left: 10px; overflow-wrap: anywhere;
+}
+.memory-meta { font-size: 11.5px; color: var(--ink-faded); }
+.memory-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.memory-act {
+  font-family: inherit; font-size: 12.5px; line-height: 1.6;
+  padding: 4px 12px; min-height: 32px;
+  border-radius: 999px; border: 1px solid var(--border-warm);
+  background: var(--surface); color: var(--ink); cursor: pointer;
+  transition: background-color 140ms ease-out, border-color 140ms ease-out, color 140ms ease-out;
+}
+.memory-act:hover { border-color: var(--green); color: var(--green); }
+.memory-act:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.memory-act.danger { color: var(--brick); }
+.memory-act.danger:hover { border-color: var(--brick); color: var(--brick); }
+.memory-act.widen:hover { border-color: var(--persimmon); color: var(--persimmon); }
+/* Armed: the second tap is where she notices what she is asserting, so it must
+   not look like the first one. */
+.memory-act.confirming { background: var(--brick); color: var(--on-accent); border-color: var(--brick); }
+.memory-act.widen.confirming { background: var(--persimmon); border-color: var(--persimmon); }
+
+.memory-archived {
+  border: 1px solid var(--border-warm); border-radius: var(--radius-card);
+  background: var(--surface); padding: 10px 14px;
+}
+.memory-archived > summary { cursor: pointer; list-style: none; font-size: 13px; color: var(--ink-faded); }
+.memory-archived > summary::-webkit-details-marker { display: none; }
+.memory-archived > summary::before { content: '▸ '; }
+.memory-archived[open] > summary::before { content: '▾ '; }
+.memory-archived[open] > summary { margin-bottom: 8px; color: var(--green); }
+.memory-list-archived { margin-top: 8px; }
+.memory-item.is-archived { background: var(--surface); border-style: dashed; }
+.memory-item.is-archived .memory-text { color: var(--ink-faded); }
+.memory-archive-reason {
+  font-size: 12.5px; line-height: 1.8; color: var(--ink);
+  border-left: 3px solid var(--ink-faded); padding-left: 10px;
+}
+/* A child claim is the one archive reason that is about the product's reason to
+   exist, so it reads in the refusal colour rather than in faded ink. */
+.memory-item.is-archived[data-reason="child_claim"] .memory-archive-reason { border-left-color: var(--brick); }
+
+/* ---- 记忆 nav glyph: a page with two written lines ---- */
+.g-mem::before {
+  content: ""; position: absolute; left: 3px; top: 3px; width: 16px; height: 16px;
+  border: 2px solid var(--ink-faded); border-radius: 3px;
+}
+.g-mem::after {
+  content: ""; position: absolute; left: 7px; top: 8px; width: 8px; height: 2px;
+  background: var(--ink-faded); box-shadow: 0 4px 0 var(--ink-faded);
+}
+.modal-nav button.on .g-mem::before { border-color: var(--green); }
+.modal-nav button.on .g-mem::after { background: var(--persimmon); box-shadow: 0 4px 0 var(--persimmon); }
+
+/* ---- class picker: FORM category (§4b) — persimmon left rule, full column ---- */
+.class-choice {
+  max-width: var(--col); margin: calc(var(--sp) * 3) auto;
+  background: var(--surface); border: 1px solid var(--border-warm);
+  border-left: 3px solid var(--persimmon); border-radius: var(--radius-card);
+  padding: 16px 20px; box-shadow: var(--shadow-card);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.class-choice-q { font-family: var(--font-serif); font-size: 16px; font-weight: 600; color: var(--ink); }
+.class-choice-why { font-size: 13px; line-height: 1.8; color: var(--ink-faded); margin: 0; }
+.class-choice-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.class-chip { min-height: 44px; }
+.class-choice-skip { align-self: flex-start; font-size: 12.5px; }
+
+/* ---- the class line: a statement, sitting quietly above the transcript ---- */
+.class-header-slot { max-width: var(--col); margin: 0 auto; padding: 0 16px; }
+.class-header {
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  font-size: 12.5px; color: var(--ink-faded);
+}
+.class-header-name { font-family: var(--font-serif); font-size: 14px; font-weight: 600; color: var(--green); }
+.class-header-change { font-size: 12px; }
+
+/* ---- six interaction handles (教师档案) ---- */
+.axis-handles { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
+.axis-row {
+  border: 1px solid var(--border-warm); border-radius: var(--radius-card);
+  background: var(--surface); padding: 10px 14px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+/* A pinned axis is HER word and stops inference moving it, so it carries the
+   trust channel's green rather than a lock icon. */
+.axis-row[data-pinned="1"] { border-left: 3px solid var(--green); }
+.axis-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.axis-name { font-family: var(--font-serif); font-size: 14.5px; font-weight: 600; color: var(--ink); }
+.axis-band { font-size: 13px; color: var(--green); }
+.axis-slider { width: 100%; accent-color: var(--green); min-height: 32px; cursor: pointer; }
+.axis-slider:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.axis-scale { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--ink-faded); }
+.axis-scale span:nth-child(2) { text-align: center; }
+.axis-scale span:last-child { text-align: right; }
+.axis-why { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--ink-faded); }
+.axis-signal { opacity: 0.85; }
+.axis-unpin { font-size: 12px; }
+.axis-directive {
+  font-family: var(--font-serif); font-size: 12.5px; line-height: 1.8;
+  color: var(--ink-faded); border-left: 2px solid var(--border-warm); padding-left: 10px;
+}
+
+/* ---- landing by course state (mobile) ---- */
+.landing { max-width: var(--col); margin: 0 auto calc(var(--sp) * 2); padding: 0 16px; }
+.landing-card {
+  position: relative;
+  background: var(--cream); border: 1px solid var(--border-warm);
+  border-radius: var(--radius-card); padding: 16px 20px;
+  box-shadow: var(--shadow-card);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.landing-headline { font-family: var(--font-serif); font-size: 17px; font-weight: 600; margin: 0; color: var(--ink); }
+.landing-lead { font-size: 13px; line-height: 1.8; color: var(--ink-faded); margin: 0; }
+.landing-section-label { font-size: 12px; color: var(--ink-faded); }
+.landing-list, .landing-missing { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.landing-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.landing-node {
+  flex: 1 1 auto; text-align: left; font-family: inherit;
+  font-size: 14px; line-height: 1.7; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--border-warm);
+  border-radius: 8px; padding: 8px 12px; min-height: 44px; cursor: pointer;
+  transition: border-color 140ms ease-out, color 140ms ease-out;
+}
+.landing-node:hover { border-color: var(--green); color: var(--green); }
+.landing-node:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+/* A missed day is the one row on this card that asks her to decide something. */
+.landing-item.is-overdue .landing-node { border-left: 3px solid var(--brick); }
+.landing-when { font-size: 11.5px; color: var(--ink-faded); flex: none; }
+.landing-missing-item {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 13.5px; line-height: 1.7;
+  padding: 5px 10px; border-radius: 8px;
+  border: 1px dashed var(--border-warm); background: transparent;
+}
+.landing-missing-item .checklist-mark { flex: none; font-size: 11.5px; color: var(--ink-faded); }
+.landing-recent { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.landing-recent-label { font-size: 12px; color: var(--ink-faded); flex: none; }
+.landing-recent-chip { font-size: 12.5px; min-height: 36px; }
+.landing-undated { font-size: 12.5px; line-height: 1.8; color: var(--ink-faded); margin: 0; }
+.landing-go { font-size: 13px; align-self: flex-start; }
+.landing-fork { margin: 4px 0 0; }
+.landing-dismiss {
+  position: absolute; top: 8px; right: 10px;
+  background: none; border: none; cursor: pointer;
+  font-size: 14px; line-height: 1; color: var(--ink-faded);
+  width: 32px; height: 32px; border-radius: 50%;
+}
+.landing-dismiss:hover { color: var(--ink); background: var(--persimmon-wash); }
+.landing-dismiss:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+/* The landing exists because the phone has no panel beside the conversation. On
+   desktop the 工作台 already answers the same question, and main.js hides the
+   card there too — this is the belt to that braces. */
+@media (min-width: 1100px) { .landing { display: none; } }
+
+/* ---- debug drawer: the six axes (slate, like the rest of the drawer) ---- */
+.axis-debug { display: flex; flex-direction: column; gap: 2px; }
+.axis-debug-row { font-family: var(--font-mono); font-size: 12px; line-height: 1.7; color: var(--slate-text); }
+
+@media (pointer: coarse) {
+  .memory-act, .class-chip, .landing-node { min-height: 44px; }
+  .axis-slider { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .memory-act, .landing-node { transition: none; }
 }

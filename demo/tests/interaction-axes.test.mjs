@@ -14,6 +14,7 @@ import {
   defaultVector, normalizeVector, vectorFromPreset, applyOnboarding,
   nudge, pinAxis, unpinAxis, turnOverride,
   vectorToDirectives, axisDirective, describeVector, bandOf, sourceRank, resolveAxisId,
+  isReadableVector,
 } from '../src/interaction-axes.mjs';
 
 // prompt-builder is READ here only — the legacy style table is the migration
@@ -414,4 +415,40 @@ test('signal: the cap bites on reload too, not only on the write', () => {
     version: VECTOR_VERSION, flavor: '', axes: { depth: { value: 4, confidence: 0.5, source: 'inferred', signal: '很长的一句话'.repeat(20) } },
   };
   assert.equal(Array.from(normalizeVector(stored).axes.depth.signal).length, SIGNAL_MAX);
+});
+
+// ---------- the prompt boundary （isReadableVector） ----------
+//
+// `normalizeVector` is deliberately forgiving so a mutator never crashes on a
+// half-written profile. That is the wrong behaviour at the prompt boundary,
+// where junk would render as the DEFAULT vector — steering a teacher by
+// 蓝图共创's directives while her profile pane showed something else. Both
+// directions matter equally here: refusing a good vector strands her handles,
+// accepting a bad one lies about them.
+
+test('readable: a vector this build produced is readable, whatever is on the handles', () => {
+  assert.equal(isReadableVector(defaultVector()), true);
+  for (const name of Object.keys(PRESET_VECTORS)) {
+    assert.equal(isReadableVector(vectorFromPreset(name)), true, name);
+  }
+  assert.equal(isReadableVector(pinAxis(defaultVector(), 'depth', 5)), true);
+  assert.equal(isReadableVector(turnOverride(defaultVector(), 'depth', 1)), true, '本轮临时向量也要能读');
+  assert.equal(isReadableVector(normalizeVector({})), true, 'normalizeVector always stamps a readable shape');
+});
+
+test('readable: a vector from an older build is REFUSED rather than read one axis short', () => {
+  // Exactly what VECTOR_VERSION was declared for, and nothing was calling it.
+  assert.equal(isReadableVector({ version: 'v0', axes: { guidance: { value: 5 } } }), false);
+  assert.equal(isReadableVector({ axes: { guidance: { value: 5 } } }), false, 'no version at all is not v1');
+});
+
+test('readable: a half-written or absent vector is REFUSED, not defaulted', () => {
+  for (const bad of [null, undefined, '', 0, 42, 'v1', [], { version: VECTOR_VERSION },
+    { version: VECTOR_VERSION, axes: {} }, { version: VECTOR_VERSION, axes: null },
+    { version: VECTOR_VERSION, axes: { nonsense: { value: 3 } } }]) {
+    assert.equal(isReadableVector(bad), false, JSON.stringify(bad) ?? String(bad));
+  }
+  // MUST PASS: one real axis is enough — a teacher may legitimately hold
+  // defaults everywhere else, and `normalizeVector` fills those in.
+  assert.equal(isReadableVector({ version: VECTOR_VERSION, axes: { guidance: { value: 2 } } }), true);
 });

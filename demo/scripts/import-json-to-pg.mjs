@@ -3,7 +3,9 @@
 //
 // ADR-0013 §5 moves teacher data off disk files into Postgres. There are 24 real
 // course files on the public instance and 9 on dev, all written before subjects,
-// the plan tree and typed facts existed. This script carries them across.
+// the plan tree and typed facts existed. This script carries them across, along
+// with the accounts, the uploaded materials, the admin audit trail and the
+// per-account key vault.
 //
 // ============================================================================
 // THE TWO DECISIONS DATABASE.md OPEN QUESTION 4d MAKES, AND WHY
@@ -55,21 +57,120 @@
 // BEFORE she edited 周2」 (ADR-0010 §1); losing it would lose that proof.
 //
 // ============================================================================
+// THE AUDIT TRAIL AND THE KEY VAULT — THE KEY CHOSEN FOR EACH, AND WHY
+// ============================================================================
+// Both travel. Leaving either behind is loss nobody would notice until it
+// mattered: an admin action with no record, or a teacher whose model access
+// silently stopped existing.
+//
+// auth/keys.json → user_keys. NATURAL KEY: (user_id, provider), which is the
+//   table's own PRIMARY KEY. `ON CONFLICT (user_id, provider) DO NOTHING`, and
+//   DO NOTHING rather than DO UPDATE on purpose: a row already in the database
+//   was written by the running server and is NEWER than the file, so overwriting
+//   it would undo a key the teacher rotated after this file was last written.
+//   The ciphertext is carried VERBATIM — not decrypted, not re-encrypted, not
+//   trimmed, never logged. It is AES-256-GCM (`v1$iv$tag$ct`, key-vault.mjs), so
+//   a single changed byte fails the auth tag and reads as 未配置 — and the
+//   teacher finds out when a turn fails, not now. That is why the reconciliation
+//   below re-reads every row and compares the string byte for byte.
+//   NOT CARRIED: `updated_at`. The JSON vault records no timestamp at all, so
+//   the column takes its DEFAULT now() — the honest value for 「when this row was
+//   written here」. Nothing reads it; contrast admin_audit.created_at below,
+//   where the timestamp IS the record.
+//
+// auth/audit.json → admin_audit. NO NATURAL KEY EXISTS. The file's `id` is a
+//   per-file counter (json-store: `rows.length + 1`) and `admin_audit.id` is
+//   GENERATED ALWAYS AS IDENTITY, so audit rows are renumbered exactly as
+//   messages are. Nothing points at an audit row, so that is safe.
+//   Re-running stays safe WITHOUT a key: rows are grouped by the tuple that is
+//   actually imported — (admin_id, action, target_user, detail, created_at) —
+//   and each group inserts only the SHORTFALL between the rows the file holds
+//   and the rows the database already holds. One identical row already present
+//   inserts nothing; two identical rows in the file and one in the database
+//   inserts one. So a second run writes nothing, and a genuine repeated action
+//   is not swallowed as if it were a re-import. `detail` is compared as jsonb,
+//   which is key-order-independent, and grouping canonicalizes it the same way
+//   so the two agree.
+//   The ASSUMPTION this rests on, stated rather than hidden: two rows are 「the
+//   same row」 only if all five fields match, and created_at is compared as
+//   written. One writer at millisecond precision (json-store's nowISO) makes a
+//   collision between two different actions effectively impossible; if one ever
+//   happened the reconciliation reports a mismatch and stops, which is loud
+//   rather than silent.
+//   TIMESTAMPS AND ACTORS ARE PRESERVED EXACTLY. `created_at` is never
+//   defaulted — a row with no usable timestamp is a REFUSAL, not a row stamped
+//   with the import time, because an audit trail that says everything happened
+//   during the migration is worthless. `admin_id` and `target_user` travel as
+//   they are, including when they name somebody who is no longer in `users`:
+//   005_auth_plane.sql puts NO foreign key on either column precisely so
+//   accountability outlives the admin's own erasure. Unknown ids are REPORTED,
+//   never dropped.
+//
+// ----------------------------------------------------------------------------
+// THE 'console' ACTOR — admin_id NULL, and the label kept in `detail`
+// ----------------------------------------------------------------------------
+// The real trail does not hold a uuid in every `admin_id`. serve.mjs writes the
+// literal string 'console' for every action taken through the shared
+// ADMIN_TOKEN path (`store.audit('console', …)`, a dozen call sites), and the
+// first real dry-run refused all 27 rows on exactly that.
+//
+// The refusal was right and it stays. What changes is that ONE known sentinel
+// now has a decided meaning:
+//
+//   * 'console' is NOT A PERSON. It is an operator holding a shared token, with
+//     no named admin account behind it. ADR-0013 §8 says this in as many words:
+//     the console 「is gated by a shared password today (adminAuthorized compares
+//     a token, RESOLVING NO USER)」, and until that becomes session + role,
+//     「attribution is impossible」. demo/tests/admin-access.test.mjs asserts the
+//     same thing from the other side.
+//   * So the honest uuid is NULL. Minting a synthetic uuid for it would
+//     FABRICATE accountability — the trail would assert a named actor that never
+//     existed. That is the same class of error as fabricating child evidence,
+//     pointed at us instead of at a teacher, and it is worse than a null because
+//     a null is visibly unknown while a uuid looks like an answer.
+//   * NULL is already in this column's vocabulary. 005_auth_plane.sql declares
+//     `admin_id uuid` with no NOT NULL and no foreign key, and eraseUser nulls
+//     `target_user` on the same principle — the migration's own comment calls
+//     that 「the same rule read from the other side」. No migration is needed for
+//     any of this, and none is added: the column already permits NULL and
+//     `detail` is already jsonb.
+//   * The label is NOT LOST. `{"actor_label": "console"}` is merged into the
+//     row's existing `detail`, so a reader sees both facts: no named admin, and
+//     the actor was the console token. That is more true than a coerced uuid and
+//     more true than a dropped row.
+//
+// NAMED EXCEPTION, NOT A COERCION RULE. Only the exact string 'console' maps to
+// NULL. Every other non-uuid `admin_id` still REFUSES with the original message.
+// The moment this became general, a corrupt value would import silently as
+// 「actor unknown」 — which is precisely the failure the refusal exists to catch.
+// `target_user` gets NO exception at all: 'console' is a thing that acts, never
+// a thing that is acted upon, so a console in that column is a corrupt row.
+//
+// The merge happens INSIDE auditToRow, i.e. BEFORE grouping, so the tuple that
+// decides 「same row」 already contains the merged `detail` and a second run still
+// matches and inserts nothing. That ordering is load-bearing and is tested.
+//
+// ============================================================================
 // THE THREE PROPERTIES THIS SCRIPT PROMISES
 // ============================================================================
 // IDEMPOTENT — keyed on the ids that already exist. Users, courses and
 //   materials carry uuids from the JSON files and go in with
-//   `ON CONFLICT (id) DO NOTHING`. Messages and snapshots have no natural key,
-//   so they ride their course: one transaction per course inserts the course
-//   row and its children together, and a course that is already present is
-//   skipped whole. A second run therefore inserts nothing and reports so.
+//   `ON CONFLICT (id) DO NOTHING`; vault rows key on (user_id, provider).
+//   Messages and snapshots have no natural key, so they ride their course: one
+//   transaction per course inserts the course row and its children together, and
+//   a course that is already present is skipped whole. Audit rows have no key at
+//   all and use the shortfall rule above. A second run therefore inserts nothing
+//   and reports so.
 //
-// VERIFYING — users, courses and messages are counted before and after, and the
-//   deltas must equal what was inserted. Then every planned course is
-//   reconciled row by row: it must be present, with exactly the message and
-//   snapshot counts its file holds. If anything disagrees the script REFUSES to
-//   report success and exits non-zero. This is the reason it exists at all —
-//   「it ran without errors」 is not evidence that the data arrived.
+// VERIFYING — users, courses, messages, audit rows and vault rows are counted
+//   before and after, and the deltas must equal what was inserted. Then every
+//   planned course is reconciled row by row: it must be present, with exactly
+//   the message and snapshot counts its file holds. Every audit group must be
+//   present in at least the number the file holds, with its own timestamp. Every
+//   vault row must be present with byte-identical ciphertext. If anything
+//   disagrees the script REFUSES to report success and exits non-zero. This is
+//   the reason it exists at all — 「it ran without errors」 is not evidence that
+//   the data arrived.
 //
 // NON-DESTRUCTIVE — it never deletes or modifies the JSON files. THEY ARE THE
 //   BACKUP, and ADR-0013's open questions record that nothing else backs this
@@ -80,10 +181,10 @@
 // ============================================================================
 // PRECONDITIONS
 // ============================================================================
-//   * Migrations 001–004 applied, plus the auth-plane migration described under
-//     「REQUIRED SCHEMA」 in demo/src/store/pg-store.mjs. The script checks for
-//     the columns it needs and names the missing ones rather than failing on the
-//     first INSERT.
+//   * Migrations 001–005 applied. 005_auth_plane.sql is not optional here: it is
+//     what creates `admin_audit` and `user_keys`, and the account columns on
+//     `users`. The script checks for the columns it needs and names the missing
+//     ones rather than failing on the first INSERT.
 //   * A connection that may write across teachers: `postgres` (superuser) or
 //     `app_admin`. Under app_rw's policies a cross-teacher write is refused, and
 //     as `app_owner` FORCE ROW LEVEL SECURITY makes it match nothing at all —
@@ -107,6 +208,12 @@
 // covered by demo/tests/importer.test.mjs; the insertion tests there SKIP
 // without DATABASE_URL, so 「the tests pass」 on a laptop says nothing about the
 // SQL. Run --dry-run against the real database first, and read the report.
+//
+// That applies in full to the audit and vault statements added later: the
+// grouping, the shortfall arithmetic and the byte-for-byte comparison are
+// covered by tests that run everywhere, and the SQL underneath them is not. The
+// vault round trip in particular is only PROVEN once a real database has read a
+// ciphertext back — which is the first thing to look at in the real report.
 
 // READ-ONLY ON PURPOSE. No writeFile, no unlink, no rename, no mkdir: the JSON
 // files are the backup and this script must not be able to touch them even by
@@ -518,10 +625,222 @@ export function materialToRow(raw) {
   return { material, errors };
 }
 
+/** The one non-uuid `admin_id` with a decided meaning: the shared-token console
+ * path, which ADR-0013 §8 records as 「resolving no user」. Exact match only —
+ * see 「THE 'console' ACTOR」 in the header for why this is a named exception and
+ * must never become a general coercion rule. */
+export const CONSOLE_ACTOR = 'console';
+
+/** Where the console label goes inside `detail`. One constant, because the
+ * importer writes it and a reader has to know what to look for. */
+export const ACTOR_LABEL_KEY = 'actor_label';
+
+/**
+ * One JSON audit row → the `admin_audit` row.
+ *
+ * The timestamp and the two actor ids are the record. `created_at` is REQUIRED:
+ * a row imported with the column's DEFAULT would claim the action happened
+ * during the migration, and an audit trail that says that is worthless. So a
+ * missing or unparseable timestamp is an ERROR — a person decides, not this
+ * script.
+ *
+ * `admin_id` / `target_user` are carried as they are. A uuid naming somebody who
+ * is no longer in `users` is NOT a defect here: 005_auth_plane.sql puts no
+ * foreign key on either column so that accountability survives that admin's own
+ * erasure (ADR-0013 §11). Unknown ids are reported by importPlan, never dropped.
+ *
+ * The single exception is `admin_id === 'console'` → NULL, with
+ * `{actor_label: 'console'}` merged into `detail`. Everything else non-uuid
+ * still refuses. The merge happens HERE, before grouping, so the idempotency
+ * tuple already carries it.
+ *
+ * @param {Object} raw
+ * @param {{index?: number}} [opts]
+ * @returns {{row: Object|null, errors: Array<string>, notes: Array<string>}}
+ */
+export function auditToRow(raw, opts = {}) {
+  const errors = [];
+  const notes = [];
+  const at = `row ${opts.index != null ? opts.index + 1 : '?'}`;
+  if (!isPlainObject(raw)) return { row: null, errors: [`${at}: not a JSON object`], notes };
+
+  const action = String(raw.action ?? '').trim();
+  if (!action) errors.push(`${at}: no action (the column is NOT NULL). An audit row that does not `
+    + 'say what was done records nothing.');
+
+  // The console sentinel, and ONLY the console sentinel.
+  const isConsole = raw.admin_id === CONSOLE_ACTOR;
+  if (raw.admin_id != null && !isUuid(raw.admin_id) && !isConsole) {
+    errors.push(`${at}: admin_id is ${JSON.stringify(raw.admin_id)}, which is not a uuid and not `
+      + 'null. The column is uuid; no value is coerced, because the actor is the point of the row.');
+  }
+  // No exception on the other side: 'console' acts, it is never acted upon, so a
+  // console here is a corrupt row rather than a known sentinel.
+  if (raw.target_user != null && !isUuid(raw.target_user)) {
+    errors.push(`${at}: target_user is ${JSON.stringify(raw.target_user)}, which is not a uuid and `
+      + 'not null. The column is uuid; no value is coerced, because the subject is the point of the '
+      + 'row. There is no console exception here — the console acts, it is not acted upon.');
+  }
+
+  // detail, plus the actor label when the actor was the shared token. Merged
+  // rather than replaced: `detail` is what the action said about itself and this
+  // adds to it, never overwrites it.
+  let detail = raw.detail === undefined ? null : raw.detail;
+  if (isConsole) {
+    if (detail == null) {
+      detail = { [ACTOR_LABEL_KEY]: CONSOLE_ACTOR };
+    } else if (isPlainObject(detail)) {
+      const existing = detail[ACTOR_LABEL_KEY];
+      if (existing !== undefined && existing !== CONSOLE_ACTOR) {
+        // Overwriting a recorded actor would be the fabrication this whole
+        // exception exists to avoid, so it stops instead.
+        errors.push(`${at}: admin_id is 'console' but detail.${ACTOR_LABEL_KEY} already says `
+          + `${JSON.stringify(existing)}. The label is not overwritten — two claims about who acted `
+          + 'is something a person resolves.');
+      } else {
+        detail = { ...detail, [ACTOR_LABEL_KEY]: CONSOLE_ACTOR };
+      }
+    } else {
+      // jsonb accepts an array or a scalar, and there is no way to add a key to
+      // one without reshaping a record. Reshaping an audit row silently is worse
+      // than stopping, and json-store only ever writes an object or null here.
+      errors.push(`${at}: admin_id is 'console' but detail is ${Array.isArray(detail) ? 'an array' : typeof detail}, `
+        + `not an object, so the ${ACTOR_LABEL_KEY} has nowhere to go without reshaping the record. `
+        + 'Resolve this row by hand.');
+    }
+  }
+
+  const created = stamp(raw.created_at);
+  if (!created) {
+    errors.push(`${at} (action ${JSON.stringify(action || raw.action)}) has no created_at. It is NOT `
+      + 'imported with the current time: an audit trail that says every action happened during the '
+      + 'migration is worthless. Restore the timestamp in the file, or decide deliberately to drop '
+      + 'the row.');
+  } else if (!Number.isFinite(Date.parse(created))) {
+    errors.push(`${at}: created_at ${JSON.stringify(created)} is not a timestamp anything can parse`);
+  }
+
+  const row = errors.length ? null : {
+    source_id: raw.id ?? null,               // report only; admin_audit.id is an identity column
+    // NULL for the console: an operator with a shared token is not a person, and
+    // a minted uuid would look like an answer where there is none.
+    admin_id: isUuid(raw.admin_id) ? raw.admin_id : null,
+    action,
+    target_user: isUuid(raw.target_user) ? raw.target_user : null,
+    // `detail` is jsonb and nullable. Carried as it stands — plus the actor
+    // label above when there was no named admin — because it is what the
+    // action said about itself.
+    detail,
+    // Report only, like source_id: nothing writes this to a column. It is what
+    // lets the plan say how many rows arrived actor-less instead of leaving an
+    // operator to find that out from the table later.
+    actor_label: isConsole ? CONSOLE_ACTOR : null,
+    created_at: created,
+  };
+  return { row, errors, notes };
+}
+
+/** Stable JSON: object keys sorted, recursively. Used ONLY to group identical
+ * audit rows. jsonb equality in Postgres ignores key order, so the grouping has
+ * to as well, or one row would be planned as two and the reconciliation would
+ * report a mismatch that is not there. */
+function stableJson(v) {
+  if (v === null || v === undefined || typeof v !== 'object') return JSON.stringify(v ?? null);
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(',')}]`;
+  return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${stableJson(v[k])}`).join(',')}}`;
+}
+
+/** The tuple that decides whether two audit rows are the same row. The file's
+ * own `id` is deliberately absent: it is a per-file counter, not an identity. */
+export function auditGroupKey(row) {
+  return stableJson([row.admin_id ?? null, row.action, row.target_user ?? null,
+    row.detail ?? null, row.created_at]);
+}
+
+/**
+ * Group identical audit rows, keeping first-seen order.
+ *
+ * This is what makes an unkeyed table re-runnable: the insert writes the
+ * SHORTFALL per group, so a row already present is skipped and a genuinely
+ * repeated action is still written the number of times it happened.
+ *
+ * @param {Array<Object>} rows
+ * @returns {Array<{key: string, row: Object, count: number}>}
+ */
+export function groupAuditRows(rows) {
+  const groups = new Map();
+  for (const r of rows ?? []) {
+    const key = auditGroupKey(r);
+    const g = groups.get(key);
+    if (g) g.count += 1;
+    else groups.set(key, { key, row: r, count: 1 });
+  }
+  return [...groups.values()];
+}
+
+/**
+ * auth/keys.json → `user_keys` rows.
+ *
+ * The file is `{ userId: { provider: ciphertext } }` — id-keyed, not an array.
+ * The ciphertext is AES-256-GCM under KEYS_SECRET (ADR-0005) and this script is
+ * the wrong place to understand it: it is copied as a string, byte for byte, and
+ * never appears in a log line or an error message. A corrupted blob fails its
+ * auth tag and reads as 未配置, which the teacher discovers when a turn fails.
+ *
+ * @param {Object} parsed
+ * @returns {{rows: Array<Object>, errors: Array<string>, notes: Array<string>}}
+ */
+export function keysToRows(parsed) {
+  const errors = [];
+  const notes = [];
+  const rows = [];
+  if (parsed == null) return { rows, errors, notes };
+  if (!isPlainObject(parsed)) {
+    return { rows, errors: ['not an object keyed by user id (the vault file is `{ userId: { provider: ciphertext } }`)'], notes };
+  }
+
+  for (const [userId, providers] of Object.entries(parsed)) {
+    if (!isUuid(userId)) {
+      errors.push(`${JSON.stringify(userId)} is not a uuid, so the vault entry under it has no `
+        + 'account to attach to. Resolve it — a dropped entry logs a teacher out of her own model access.');
+      continue;
+    }
+    if (!isPlainObject(providers)) {
+      errors.push(`the vault entry for ${userId} is not an object of provider → ciphertext`);
+      continue;
+    }
+    for (const [provider, blob] of Object.entries(providers)) {
+      const name = String(provider ?? '').trim();
+      if (!name) { errors.push(`${userId}: a vault entry has no provider name`); continue; }
+      if (typeof blob !== 'string' || blob === '') {
+        // No value is printed here, and none is guessed at either.
+        errors.push(`${userId}/${name}: the stored value is not a non-empty string`);
+        continue;
+      }
+      // Shape check only — a NOTE, never an error. Refusing an unrecognised
+      // blob would strand it on disk; flagging it tells the operator that this
+      // one teacher will have to re-enter her key whatever we do.
+      const parts = blob.split('$');
+      if (parts.length !== 4 || parts[0] !== 'v1' || parts.some((p) => !p)) {
+        notes.push(`${userId}/${name}: the stored blob is not shaped like a v1 vault ciphertext `
+          + '(key-vault.mjs). Carried across verbatim — it is not this script\'s to repair — but it '
+          + 'will read as 未配置 and the teacher will have to save her key again.');
+      }
+      rows.push({ user_id: userId, provider: name, ciphertext: blob });
+    }
+  }
+  // Deterministic order, so the report reads the same way twice.
+  rows.sort((a, b) => (a.user_id === b.user_id
+    ? a.provider.localeCompare(b.provider)
+    : a.user_id.localeCompare(b.user_id)));
+  return { rows, errors, notes };
+}
+
 /**
  * Everything read from the data directory → one import plan.
  *
- * @param {{users?: Array<Object>, courses?: Array<{file: string, raw: Object}>, materials?: Array<Object>}} input
+ * @param {{users?: Array<Object>, courses?: Array<{file: string, raw: Object}>,
+ *          materials?: Array<Object>, audit?: Array<Object>, keys?: Object}} input
  * @returns {Object} the plan; `errors` non-empty means nothing should be written
  */
 export function buildPlan(input = {}) {
@@ -591,18 +910,86 @@ export function buildPlan(input = {}) {
     materials.push(material);
   }
 
+  // ---- admin audit ----
+  // Sorted by the file's own id first, exactly as messages are: admin_audit.id
+  // is an identity column, so insert order is the only thing that carries the
+  // reading order of the trail across.
+  const audit = [];
+  if (input.audit != null && !Array.isArray(input.audit)) {
+    errors.push('auth/audit.json: not an array of rows. It holds something, and this script will '
+      + 'not report 「0 rows」 for a file that is not empty.');
+  }
+  const rawAudit = Array.isArray(input.audit) ? input.audit : [];
+  const orderedAudit = rawAudit
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => {
+      const ai = Number(a.r?.id);
+      const bi = Number(b.r?.id);
+      if (Number.isFinite(ai) && Number.isFinite(bi) && ai !== bi) return ai - bi;
+      return a.i - b.i;
+    });
+  for (const { r, i } of orderedAudit) {
+    const { row, errors: e, notes: n } = auditToRow(r, { index: i });
+    for (const msg of e) errors.push(`auth/audit.json: ${msg}`);
+    for (const msg of n) notes.push(`auth/audit.json: ${msg}`);
+    if (row) audit.push(row);
+  }
+  const auditConsole = audit.filter((r) => r.actor_label === CONSOLE_ACTOR).length;
+  if (auditConsole) {
+    notes.push(`auth/audit.json: ${auditConsole} row(s) were taken through the shared-token console `
+      + `and name no admin account. They import with admin_id NULL and `
+      + `${JSON.stringify({ [ACTOR_LABEL_KEY]: CONSOLE_ACTOR })} merged into detail — ADR-0013 §8 `
+      + 'records that this path resolves no user, so a uuid here would be invented accountability.');
+  }
+  const auditGroups = groupAuditRows(audit);
+  const repeated = auditGroups.filter((g) => g.count > 1).length;
+  if (repeated) {
+    notes.push(`auth/audit.json: ${repeated} group(s) of rows are identical in every imported field. `
+      + 'They are imported the number of times they appear — the insert writes the shortfall against '
+      + 'what the database already holds, so a re-run is still a no-op.');
+  }
+  // Actors who are in no users.json. NOT an error and NOT dropped: admin_audit
+  // carries no foreign key precisely so a row outlives the person it names
+  // (005_auth_plane.sql §5). Reported here; importPlan checks the database too
+  // before saying anything out loud.
+  const auditUnknownUsers = [];
+  for (const row of audit) {
+    for (const [field, id] of [['admin_id', row.admin_id], ['target_user', row.target_user]]) {
+      if (id && !userIds.has(id)) auditUnknownUsers.push({ field, id, action: row.action });
+    }
+  }
+
+  // ---- key vault ----
+  const { rows: keys, errors: keyErrors, notes: keyNotes } = keysToRows(input.keys);
+  for (const msg of keyErrors) errors.push(`auth/keys.json: ${msg}`);
+  for (const msg of keyNotes) notes.push(`auth/keys.json: ${msg}`);
+  for (const k of keys) {
+    if (!userIds.has(k.user_id)) {
+      // Same treatment as an orphan course: not an error yet, because a re-run
+      // legitimately finds the account already in the database. user_keys.user_id
+      // IS a foreign key, so importPlan resolves this before writing anything.
+      orphanCourses.push({ kind: 'key', file: 'auth/keys.json', user_id: k.user_id, provider: k.provider });
+    }
+  }
+
   const counts = {
     users: users.length,
     courses: courses.length,
     messages: courses.reduce((n, c) => n + c.messages.length, 0),
     snapshots: courses.reduce((n, c) => n + c.snapshots.length, 0),
     materials: materials.length,
+    audit: audit.length,
+    audit_console_actor: auditConsole,
+    keys: keys.length,
     subjects_defaulted: courses.reduce((n, c) => n + c.stats.subjects_defaulted, 0),
     plan_husks_dropped: courses.filter((c) => c.stats.plan_dropped).length,
     courses_with_plan: courses.filter((c) => c.stats.has_plan).length,
   };
 
-  return { users, courses, materials, orphanCourses, errors, notes, counts };
+  return {
+    users, courses, materials, audit, auditGroups, auditUnknownUsers, keys,
+    orphanCourses, errors, notes, counts,
+  };
 }
 
 /**
@@ -610,14 +997,18 @@ export function buildPlan(input = {}) {
  * testable without a database — which matters, because this function is the
  * only thing standing between 「the import ran」 and 「the data arrived」.
  *
- * @param {{users:number,courses:number,messages:number}} before
- * @param {{users:number,courses:number,messages:number}} after
- * @param {{users:number,courses:number,messages:number}} inserted
+ * A count absent from all three objects reads as 0 on both sides and balances,
+ * which is how a caller that only knows about the original three keys keeps
+ * working.
+ *
+ * @param {{users:number,courses:number,messages:number,audit?:number,keys?:number}} before
+ * @param {{users:number,courses:number,messages:number,audit?:number,keys?:number}} after
+ * @param {{users:number,courses:number,messages:number,audit?:number,keys?:number}} inserted
  * @returns {{ok: boolean, problems: Array<string>}}
  */
 export function verifyTotals(before, after, inserted) {
   const problems = [];
-  for (const key of ['users', 'courses', 'messages']) {
+  for (const key of ['users', 'courses', 'messages', 'audit', 'keys']) {
     const expected = (before?.[key] ?? 0) + (inserted?.[key] ?? 0);
     const found = after?.[key] ?? 0;
     if (found !== expected) {
@@ -655,6 +1046,76 @@ export function verifyCourses(rows) {
   return { ok: problems.length === 0, problems };
 }
 
+/**
+ * Audit reconciliation: every group of identical rows must be represented in the
+ * database at least as many times as the file holds it, with its own timestamp.
+ *
+ * 「At least」 rather than 「exactly」 because the database may legitimately hold a
+ * matching row this import did not write. The no-extras side of the question is
+ * the count delta in verifyTotals; this is the did-it-arrive side.
+ *
+ * `created_at_found` is the timestamp the database actually holds for this
+ * action, and is null when there is nothing to report — either the instants
+ * agree or the row is not there at all. A non-null value that differs is the
+ * 「stamped at import time」 failure and is named before the count is.
+ *
+ * @param {Array<{action: string, created_at: string, found: number, expected: number,
+ *                created_at_found: string|null}>} rows
+ * @returns {{ok: boolean, problems: Array<string>}}
+ */
+export function verifyAudit(rows) {
+  const problems = [];
+  for (const r of rows ?? []) {
+    // The wrong timestamp is checked FIRST, because it is also a shortfall — the
+    // row is there and its instant is not — and 「it arrived stamped with the
+    // import time」 is the more useful of the two things to be told.
+    if (r.created_at_found != null && Date.parse(r.created_at_found) !== Date.parse(r.created_at)) {
+      problems.push(`auth/audit.json: the audit row 「${r.action}」 is in the database with `
+        + `created_at ${r.created_at_found}, the file says ${r.created_at}. A trail that says `
+        + 'every action happened during the migration is worthless.');
+      continue;
+    }
+    if (r.found < r.expected) {
+      problems.push(`auth/audit.json: the audit row 「${r.action}」 of ${r.created_at} is in the `
+        + `database ${r.found} time(s), the file has it ${r.expected}. An admin action with no `
+        + 'record is the thing this trail exists to prevent.');
+    }
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+/**
+ * Vault reconciliation: every row present, and its ciphertext byte-identical to
+ * the file's.
+ *
+ * NO CIPHERTEXT APPEARS IN A PROBLEM STRING — problems are printed to a console
+ * and copied into tickets. A byte-level difference is reported as a difference
+ * and nothing more; ADR-0005's whole point is that the value stays where it is.
+ *
+ * @param {Array<{user_id: string, provider: string, present: boolean,
+ *                matches: boolean, inserted: boolean}>} rows
+ * @returns {{ok: boolean, problems: Array<string>}}
+ */
+export function verifyKeys(rows) {
+  const problems = [];
+  for (const r of rows ?? []) {
+    if (!r.present) {
+      problems.push(`auth/keys.json: ${r.user_id}/${r.provider} is not in the database after the `
+        + 'import. That teacher silently loses her own model access.');
+      continue;
+    }
+    if (r.matches) continue;
+    problems.push(r.inserted
+      ? `auth/keys.json: ${r.user_id}/${r.provider} was written but does not read back byte for `
+        + 'byte. The blob is AES-256-GCM, so a changed byte fails its auth tag and reads as 未配置 '
+        + '— the teacher would only find out when a turn fails. (No value is printed here.)'
+      : `auth/keys.json: ${r.user_id}/${r.provider} was ALREADY in the database with different `
+        + 'ciphertext, so the database\'s value was kept — it is the newer one — and the file\'s was '
+        + 'not imported. Decide which one is meant to survive. (No value is printed here.)');
+  }
+  return { ok: problems.length === 0, problems };
+}
+
 // ===========================================================================
 // READING THE DATA DIRECTORY — reads only
 // ===========================================================================
@@ -669,10 +1130,11 @@ export const UNHANDLED_FILES = Object.freeze([
   ['facts.json', 'typed memory facts (ADR-0011). Pre-v2 data has none. If this has rows, extend the importer — do not lose a teacher\'s memory.'],
   ['classes.json', 'named classes (ADR-0011 §3). A class outlives a course, so losing one loses 「班上没有鼓」 for every future course.'],
   ['interaction-signals.json', 'the observations behind the interaction axes (ADR-0009 §3).'],
-  ['auth/audit.json', 'the admin audit trail. Accountability for what an admin did is supposed to outlive the storage it lived on.'],
-  ['auth/keys.json', 'the per-account key vault, ciphertext (ADR-0005). Leaving it behind silently logs every teacher out of her own model access.'],
   ['auth/scope-log.json', 'scope-shell verdicts (ADR-0012 §3). Warn-only mode is only worth running if these rows survive to be read.'],
 ]);
+// auth/audit.json and auth/keys.json used to be on that list. They are imported
+// now — see 「THE AUDIT TRAIL AND THE KEY VAULT」 in the header — so they are not
+// unhandled and must not make the script refuse.
 
 /**
  * Files deliberately left behind, with the reason stated rather than assumed.
@@ -735,6 +1197,9 @@ export async function readDataDir(baseDir) {
 
   const { value: users } = await readJson(path.join(baseDir, 'auth', 'users.json'), []);
   const { value: materials } = await readJson(path.join(baseDir, 'materials.json'), []);
+  const { value: audit } = await readJson(path.join(baseDir, 'auth', 'audit.json'), []);
+  // The vault file is keyed by user id, not an array — `{}` is its empty shape.
+  const { value: keys } = await readJson(path.join(baseDir, 'auth', 'keys.json'), {});
 
   const unhandled = [];
   for (const [rel, why] of UNHANDLED_FILES) {
@@ -754,6 +1219,12 @@ export async function readDataDir(baseDir) {
     users: Array.isArray(users) ? users : [],
     courses,
     materials: Array.isArray(materials) ? materials : [],
+    // Shape problems are NOT silently normalized away here: a non-array audit
+    // file or a non-object vault file reaches buildPlan, which names it. Turning
+    // either into an empty collection would report 「0 rows」 for a file that has
+    // rows in it, which is the one lie this script cannot afford.
+    audit,
+    keys,
     unhandled,
     skipped,
   };
@@ -772,7 +1243,31 @@ const REQUIRED_COLUMNS = Object.freeze([
   ['courses', 'title_locked'], ['courses', 'workbench'],
   ['messages', 'subject'], ['messages', 'provider_label'], ['messages', 'stage_name'],
   ['messages', 'cache'], ['messages', 'guards'],
+  // Both tables arrive with 005 too. A database without it has no `admin_audit`
+  // at all, and a missing TABLE shows up here as all of its columns missing —
+  // one message naming the migration, rather than a 42P01 after the users are in.
+  ['admin_audit', 'admin_id'], ['admin_audit', 'action'], ['admin_audit', 'target_user'],
+  ['admin_audit', 'detail'], ['admin_audit', 'created_at'],
+  ['user_keys', 'user_id'], ['user_keys', 'provider'], ['user_keys', 'ciphertext'],
 ]);
+
+/** The tuple that identifies an audit row, as SQL. IS NOT DISTINCT FROM, not `=`:
+ * `admin_id`, `target_user` and `detail` are all nullable, and `NULL = NULL` is
+ * NULL — which would make every row with a null actor look absent and insert a
+ * duplicate on every run. Bind order matches auditParams(). */
+const AUDIT_MATCH = `admin_id    IS NOT DISTINCT FROM $1::uuid
+                 AND action      = $2::text
+                 AND target_user IS NOT DISTINCT FROM $3::uuid
+                 AND detail      IS NOT DISTINCT FROM $4::jsonb
+                 AND created_at  = $5::timestamptz`;
+
+const auditParams = (r) => [r.admin_id, r.action, r.target_user, jsonb(r.detail), r.created_at];
+
+/** In-memory identity of one vault row, used to remember which rows THIS run
+ * wrote. One helper, called from both sides: two spellings of the same key would
+ * silently never match, and the reconciliation would then blame the file for a
+ * row it had just written itself. */
+const keyIdentity = (r) => `${r.user_id}:${r.provider}`;
 
 /**
  * May this connection write rows belonging to other people?
@@ -817,15 +1312,19 @@ async function missingColumns(client) {
 
 async function counts(client) {
   const { rows } = await client.query(`
-    SELECT (SELECT count(*) FROM users)    AS users,
-           (SELECT count(*) FROM courses)  AS courses,
-           (SELECT count(*) FROM messages) AS messages`);
+    SELECT (SELECT count(*) FROM users)       AS users,
+           (SELECT count(*) FROM courses)     AS courses,
+           (SELECT count(*) FROM messages)    AS messages,
+           (SELECT count(*) FROM admin_audit) AS audit_rows,
+           (SELECT count(*) FROM user_keys)   AS key_rows`);
   // count(*) is bigint and arrives as a string from node-postgres, which keeps
   // int8 exact. '10' > '9' is false, so every one crosses into JS as a number.
   return {
     users: Number(rows[0].users),
     courses: Number(rows[0].courses),
     messages: Number(rows[0].messages),
+    audit: Number(rows[0].audit_rows),
+    keys: Number(rows[0].key_rows),
   };
 }
 
@@ -850,11 +1349,17 @@ export async function importPlan(plan, opts) {
   const client = new pg.Client({ connectionString: opts.connectionString });
   await client.connect();
 
-  const inserted = { users: 0, courses: 0, messages: 0, snapshots: 0, materials: 0 };
-  const skipped = { users: 0, courses: 0, materials: 0 };
+  const inserted = { users: 0, courses: 0, messages: 0, snapshots: 0, materials: 0, audit: 0, keys: 0 };
+  const skipped = { users: 0, courses: 0, materials: 0, audit: 0, keys: 0 };
   const reconciled = [];
+  const reconciledAudit = [];
+  const reconciledKeys = [];
   let before = null;
   let after = null;
+  const fail = () => ({
+    ok: false, before, after: null, inserted, skipped, problems, reconciled,
+    reconciledAudit, reconciledKeys,
+  });
 
   try {
     const role = await checkRole(client);
@@ -863,7 +1368,7 @@ export async function importPlan(plan, opts) {
       problems.push(`${role.role} may not write rows belonging to other teachers. Run this as `
         + '`postgres` or as `app_admin` — as app_owner or app_rw the writes are refused or match '
         + 'nothing at all (demo/migrations/README.md, Operating notes).');
-      return { ok: false, before: null, after: null, inserted, skipped, problems, reconciled };
+      return fail();
     }
 
     const missing = await missingColumns(client);
@@ -871,7 +1376,7 @@ export async function importPlan(plan, opts) {
       problems.push(`the database is missing columns this script writes: ${missing.join(', ')}. `
         + 'Apply the auth-plane migration described under REQUIRED SCHEMA in '
         + 'demo/src/store/pg-store.mjs before importing.');
-      return { ok: false, before: null, after: null, inserted, skipped, problems, reconciled };
+      return fail();
     }
 
     before = await counts(client);
@@ -899,19 +1404,53 @@ export async function importPlan(plan, opts) {
           }
           continue;
         }
+        if (o.kind === 'key') {
+          // user_keys.user_id IS a foreign key, so this would fail at INSERT.
+          // Named here instead, before anything is written — and NOT dropped:
+          // an entry left behind is a teacher who quietly loses her model access.
+          if (!known.has(o.user_id)) {
+            problems.push(`auth/keys.json: the vault holds a ${o.provider} key for user ${o.user_id}, `
+              + 'who is in neither auth/users.json nor the database. user_keys.user_id references '
+              + 'users(id), so the ciphertext cannot travel without its account — restore the account '
+              + 'or decide deliberately to drop the key. Do not lose it silently.');
+          }
+          continue;
+        }
         if (!known.has(o.user_id)) {
           problems.push(`${o.file}: course ${o.course_id} belongs to user ${o.user_id}, who is in `
             + 'neither auth/users.json nor the database');
         }
       }
     }
+    // Audit actors who are in neither the files nor the database. NOT a problem
+    // and NOT a reason to drop the row: admin_audit carries no foreign key so
+    // that a row outlives the person it names (005_auth_plane.sql §5). Said out
+    // loud, because 「an id in the trail that resolves to nobody」 is something an
+    // operator should learn here rather than from a console screen later.
+    if (plan.auditUnknownUsers?.length) {
+      const wanted = [...new Set(plan.auditUnknownUsers.map((a) => a.id))];
+      const { rows } = await client.query('SELECT id FROM users WHERE id = ANY($1::uuid[])', [wanted]);
+      const known = new Set(rows.map((r) => r.id));
+      const unknown = plan.auditUnknownUsers.filter((a) => !known.has(a.id));
+      if (unknown.length) {
+        log(`note: ${unknown.length} audit reference(s) name a user who is in neither `
+          + 'auth/users.json nor the database (an erased admin, most likely). Imported unchanged — '
+          + 'admin_audit has no foreign key precisely so accountability outlives the person:');
+        for (const a of unknown.slice(0, 10)) log(`  ${a.field} ${a.id} (action ${a.action})`);
+        if (unknown.length > 10) log(`  … and ${unknown.length - 10} more`);
+      }
+    }
+
     if (problems.length) {
-      return { ok: false, before, after: null, inserted, skipped, problems, reconciled };
+      return fail();
     }
 
     if (dryRun) {
       log('--dry-run: nothing was written.');
-      return { ok: true, before, after: null, inserted, skipped, problems, reconciled, dryRun: true };
+      return {
+        ok: true, before, after: null, inserted, skipped, problems, reconciled,
+        reconciledAudit, reconciledKeys, dryRun: true,
+      };
     }
 
     // ---- users, one transaction ----
@@ -967,9 +1506,85 @@ export async function importPlan(plan, opts) {
       if (e?.code === '23505') {
         problems.push('users: a unique constraint rejected the batch and no user was imported '
           + `(${e.detail ?? e.message}). Reconcile the colliding accounts in the files, then re-run.`);
-        return { ok: false, before, after: null, inserted, skipped, problems, reconciled };
+        return fail();
       }
       throw e;
+    }
+
+    // ---- admin audit, one transaction ----
+    // AFTER users, though admin_audit references none of them: the trail reads
+    // in insert order, and a half-written trail is a trail with a hole in it, so
+    // all of it lands or none of it does.
+    const auditGroups = plan.auditGroups ?? groupAuditRows(plan.audit ?? []);
+    if (auditGroups.length) {
+      await client.query('BEGIN');
+      try {
+        for (const g of auditGroups) {
+          const params = auditParams(g.row);
+          // One scan per group, and admin_audit carries no index for this
+          // predicate. That is fine at the size this runs against (tens of rows,
+          // once) and would not be at a hundred thousand — if this script is ever
+          // pointed at a large trail, index it first rather than waiting.
+          const { rows } = await client.query(
+            `SELECT count(*)::int AS n FROM admin_audit WHERE ${AUDIT_MATCH}`, params,
+          );
+          const present = rows[0].n;
+          // The SHORTFALL, and only the shortfall. Present >= count is a re-run
+          // (or a row the live server already wrote) and writes nothing.
+          for (let i = present; i < g.count; i += 1) {
+            await client.query(
+              `INSERT INTO admin_audit (admin_id, action, target_user, detail, created_at)
+               VALUES ($1::uuid, $2::text, $3::uuid, $4::jsonb, $5::timestamptz)`,
+              // created_at is BOUND, never defaulted: this row's own instant is
+              // the thing being preserved.
+              params,
+            );
+            inserted.audit += 1;
+          }
+          skipped.audit += Math.min(present, g.count);
+        }
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        inserted.audit = 0;
+        skipped.audit = 0;
+        problems.push(`auth/audit.json: ${e.message}`);
+      }
+    }
+
+    // ---- key vault, one transaction ----
+    // AFTER users: user_keys.user_id references users(id). The ciphertext is
+    // bound as a string and never inspected, never trimmed, never logged.
+    const keysWritten = new Set();
+    if (plan.keys?.length) {
+      await client.query('BEGIN');
+      try {
+        for (const k of plan.keys) {
+          const r = await client.query(
+            `INSERT INTO user_keys (user_id, provider, ciphertext)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_id, provider) DO NOTHING`,
+            // updated_at takes its DEFAULT now(): the JSON vault records no
+            // timestamp, and inventing one would be a claim about when a teacher
+            // saved her key. DO NOTHING, not DO UPDATE — see the header.
+            [k.user_id, k.provider, k.ciphertext],
+          );
+          if (r.rowCount > 0) { inserted.keys += 1; keysWritten.add(keyIdentity(k)); }
+          else skipped.keys += 1;
+        }
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        inserted.keys = 0;
+        skipped.keys = 0;
+        keysWritten.clear();
+        // e.message on a user_keys failure can carry the row's values in the
+        // detail, which is the ciphertext. Only the code and the constraint are
+        // repeated here.
+        problems.push('auth/keys.json: the vault batch failed and no key was imported '
+          + `(SQLSTATE ${e.code ?? 'unknown'}${e.constraint ? `, constraint ${e.constraint}` : ''}). `
+          + 'The message is withheld on purpose — it can quote the ciphertext.');
+      }
     }
 
     // ---- courses, ONE TRANSACTION EACH ----
@@ -1096,11 +1711,70 @@ export async function importPlan(plan, opts) {
     }
     const perCourse = verifyCourses(reconciled);
     problems.push(...perCourse.problems);
+
+    // Audit: every group re-counted, and the row's own timestamp read back.
+    //
+    // DELIBERATELY NOT the insert's predicate. AUDIT_MATCH pins created_at, so
+    // asking it 「is this row here with this timestamp」 and then checking the
+    // timestamp it returned would be a tautology — a row stamped with the import
+    // time would simply not match, and would be reported as missing rather than
+    // as what it is. So the match here drops created_at and counts both ways:
+    // n_exact is how many carry the file's own instant, n_any how many are that
+    // action at all. n_any > n_exact is exactly 「it arrived with the wrong
+    // timestamp」, and `latest` is the timestamp to show a person.
+    for (const g of auditGroups) {
+      const params = auditParams(g.row);
+      const { rows } = await client.query(
+        `SELECT count(*) FILTER (WHERE created_at = $5::timestamptz)::int AS n_exact,
+                count(*)::int AS n_any,
+                max(created_at) AS latest
+           FROM admin_audit
+          WHERE admin_id    IS NOT DISTINCT FROM $1::uuid
+            AND action      = $2::text
+            AND target_user IS NOT DISTINCT FROM $3::uuid
+            AND detail      IS NOT DISTINCT FROM $4::jsonb`, params,
+      );
+      const { n_exact: exact, n_any: any, latest } = rows[0];
+      reconciledAudit.push({
+        action: g.row.action,
+        created_at: g.row.created_at,
+        // Only reported when it disagrees; when the instants match there is
+        // nothing to say and nothing to print.
+        created_at_found: exact < g.count && any > 0 && latest
+          ? new Date(latest).toISOString()
+          : null,
+        found: exact,
+        expected: g.count,
+      });
+    }
+    problems.push(...verifyAudit(reconciledAudit).problems);
+
+    // Vault: the round trip, byte for byte. This is the only check that would
+    // catch a blob that arrived truncated or re-encoded, and a truncated blob
+    // fails its GCM tag — which the teacher discovers when a turn fails.
+    for (const k of plan.keys ?? []) {
+      const { rows } = await client.query(
+        'SELECT ciphertext FROM user_keys WHERE user_id = $1 AND provider = $2',
+        [k.user_id, k.provider],
+      );
+      reconciledKeys.push({
+        user_id: k.user_id,
+        provider: k.provider,
+        present: rows.length > 0,
+        // Compared, never printed, never returned.
+        matches: rows.length > 0 && rows[0].ciphertext === k.ciphertext,
+        inserted: keysWritten.has(keyIdentity(k)),
+      });
+    }
+    problems.push(...verifyKeys(reconciledKeys).problems);
   } finally {
     await client.end().catch(() => {});
   }
 
-  return { ok: problems.length === 0, before, after, inserted, skipped, problems, reconciled };
+  return {
+    ok: problems.length === 0, before, after, inserted, skipped, problems,
+    reconciled, reconciledAudit, reconciledKeys,
+  };
 }
 
 // ===========================================================================
@@ -1162,7 +1836,10 @@ async function main(argv) {
 
   out(`reading ${args.dataDir} (read-only: this script never writes to it)`);
   const raw = await readDataDir(args.dataDir);
-  out(`found ${raw.courses.length} course files, ${raw.users.length} users, ${raw.materials.length} materials`);
+  out(`found ${raw.courses.length} course files, ${raw.users.length} users, ${raw.materials.length} materials, `
+    + `${Array.isArray(raw.audit) ? raw.audit.length : '?'} audit rows, `
+    + `${rowCount(raw.keys)} account(s) in the key vault (counts only — no key value is `
+    + 'printed or logged anywhere in this run)');
 
   for (const s of raw.skipped) {
     out(`skipped ${s.file} (${s.rows} rows): ${s.why}`);
@@ -1173,6 +1850,8 @@ async function main(argv) {
   out('plan:');
   for (const [k, v] of Object.entries(plan.counts)) out(`  ${k}: ${v}`);
   out(`  (subjects_defaulted = messages imported as '${COURSE_SUBJECT}' because they predate subjects)`);
+  out(`  (audit_console_actor = rows taken through the shared-token console: admin_id NULL, `
+    + `${ACTOR_LABEL_KEY} '${CONSOLE_ACTOR}' in detail — no named admin existed to record)`);
   for (const n of plan.notes) out(`  note: ${n}`);
 
   if (raw.unhandled.length) {
@@ -1201,6 +1880,17 @@ async function main(argv) {
   out('');
   out(`inserted: ${JSON.stringify(report.inserted)}`);
   out(`already present (skipped): ${JSON.stringify(report.skipped)}`);
+  if (report.reconciledKeys?.length) {
+    const matched = report.reconciledKeys.filter((k) => k.present && k.matches).length;
+    out(`vault round trip: ${matched}/${report.reconciledKeys.length} rows read back byte for byte`);
+  }
+  if (report.reconciledAudit?.length) {
+    const kept = report.reconciledAudit.filter(
+      (a) => a.found >= a.expected
+        && (a.created_at_found == null || Date.parse(a.created_at_found) === Date.parse(a.created_at)),
+    ).length;
+    out(`audit trail: ${kept}/${report.reconciledAudit.length} row groups present with their own timestamp`);
+  }
 
   if (!report.ok) {
     process.stderr.write('\nIMPORT NOT VERIFIED. Do not treat this as done.\n');
@@ -1209,7 +1899,8 @@ async function main(argv) {
   }
   out(report.dryRun
     ? '\ndry run clean: the plan maps, the role can write, the schema has the columns.'
-    : '\nverified: counts agree and every course reconciles row for row.');
+    : '\nverified: counts agree, every course reconciles row for row, every audit row kept its own '
+      + 'timestamp, and every vault ciphertext reads back byte for byte.');
   out('The JSON files are untouched. Keep them until a restore has actually been drilled.');
   return 0;
 }

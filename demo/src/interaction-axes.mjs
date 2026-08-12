@@ -191,7 +191,7 @@ export const SIGNAL_MAX = 60;
  * counts characters.
  * @param {unknown} raw
  */
-const clipSignal = (raw) => Array.from(String(raw ?? '')).slice(0, SIGNAL_MAX).join('');
+export const clipSignal = (raw) => Array.from(String(raw ?? '')).slice(0, SIGNAL_MAX).join('');
 
 /**
  * Numbers only, and NOT via bare Number(): `Number(null)` and `Number('')` are
@@ -493,21 +493,57 @@ export function vectorToDirectives(vector) {
 }
 
 /**
+ * Is this a STORED vector this build can read whole?
+ *
+ * `normalizeVector` is deliberately forgiving — it coerces junk into a complete
+ * vector so a mutator never crashes on a half-written profile. That is exactly
+ * the wrong behaviour at the prompt boundary: junk would there render as the
+ * DEFAULT vector, and a teacher whose stored axes failed to load would be
+ * steered by 蓝图共创's directives while the profile pane showed her something
+ * else. So the assembler asks this first, and renders no axis block at all when
+ * the answer is no.
+ *
+ * The version check is what `VECTOR_VERSION` was declared for （「so a stored
+ * profile from an older build fails loudly instead of being read one axis
+ * short」）and nothing was calling it. Loudly, here, means REFUSED rather than
+ * thrown: a stale vector must not take a teacher's turn down, and the caller's
+ * fallback — the legacy `stylePref` line — is a visible difference she and the
+ * drawer can both see, not a silently-wrong six-axis block.
+ *
+ * @param {any} data
+ * @returns {boolean}
+ */
+export function isReadableVector(data) {
+  if (!data || typeof data !== 'object') return false;
+  if (String(data.version ?? '') !== VECTOR_VERSION) return false;
+  const axes = data.axes;
+  if (!axes || typeof axes !== 'object') return false;
+  // At least one axis must actually be there. An `axes: {}` is a write that
+  // failed halfway, not a teacher who happens to hold every default.
+  return AXIS_IDS.some((id) => axes[id] && typeof axes[id] === 'object');
+}
+
+/**
  * Row-per-axis view for the debug drawer and the exports （ADR-0009 §4）. A
  * teacher must be able to see where the vector is AND why: an agent that
  * profiles its user and cannot show its work is a trust defect regardless of
  * accuracy.
  *
- * DORMANT AS OF 2026-08, and recorded here rather than left to be rediscovered:
- * nothing outside the tests calls this module at all. The vector is not stored,
- * no session-log event records a nudge （so `signal` — which observation moved
- * which axis, the entire audit trail of the profiling — is written into a
- * vector nobody keeps）, and no export carries it; the prompt is still steered
- * by the legacy `stylePref` string. The storage slot is already decided and
+ * HALF-WIRED AS OF 2026-08-13, and recorded here rather than left to be
+ * rediscovered. THE PROMPT PATH IS LIVE: `prompt-builder.mjs` reads
+ * `profile.interaction_vector`, renders `vectorToDirectives` into the
+ * cache-stable prefix, and renders a per-turn override into the volatile note —
+ * with the legacy `stylePref` line kept as the fallback for a profile that
+ * carries no vector, so nobody's behaviour changes until a vector is written.
+ *
+ * STILL MISSING: nothing WRITES a vector. No UI sets `interaction_vector`, no
+ * inference layer calls `nudge`, and no session-log event records one （so
+ * `signal` — which observation moved which axis, the entire audit trail of the
+ * profiling — is still written into a vector nobody keeps）. The storage slot
  * needs no new plumbing: `settings.profile.interaction_vector`, which
  * json-store's `saveUserProfile` persists wholesale and `sanitizeUser` returns
- * wholesale — so the missing half is the client writing it and the drawer
- * rendering these rows. See HANDOFF.md.
+ * wholesale. The missing halves are the client writing it, the drawer rendering
+ * these rows, and `interaction_signals` recording the nudges. See HANDOFF.md.
  * @param {any} vector
  * @returns {Array<{axis: string, zh: string, value: number, band: string,
  *   bandLabel: string, confidence: number, source: string, pinned: boolean,
