@@ -6,7 +6,7 @@ Latest session first. Keep entries short and factual; link instead of restating.
 
 **Read this before starting work, and update it when something ships.** It exists because on 2026-08-12 the harness, the data model and the persistence layer were all built while the prompts and the entire teacher-facing surface were not — so from a teacher's seat nothing had changed, and that only surfaced when Herman asked why the app was still a plain chat box. Per-run reports hid it; a standing list cannot.
 
-The design is **four layers** (UI + workflow + prompts + harness). Three are done; the UI is the one that is left, and it is the only one a teacher can see.
+The design is **four layers** (UI + workflow + prompts + harness). All four have now landed; what remains is the long tail listed under each heading, not a missing layer.
 
 ### Harness — done
 
@@ -47,30 +47,31 @@ All seven files rewritten for v2. Verified: every stage assembles (13–15KB, ~9
 - [x] Node-scoped turn behaviour
 - [ ] Retarget `prompt-lint` anchors — they still hard-require V1.3 literals (`WF03b`, `三问`, `切口卡`, `核心驱动问题`). The strings survive, but as traps: `核心驱动问题` now appears only inside its own prohibition, so a future edit that drops the sentence fails the lint for the wrong reason. Editing this needs a call on whether the corpus should carry V1.3 node labels at all ([harness/prompt-lint.mjs](harness/prompt-lint.mjs):71,73)
 
-### UI — NOT STARTED
+### UI — shell done (2026-08-12, `f7383b6`)
 
-Nothing in `demo/src/ui/` renders `course_plan`. The workbench is still blueprint-only.
+Browser-verified, not taken from agent reports. New modules: `demo/src/ui/plan-view.mjs` (pure logic, 46 tests) and the renderers in `render.js`.
 
-- [ ] Entry fork 「帮我想想做什么 / 我已经有想法了」
-- [ ] Step-zero panel: headline + live checklist + collapsed sample
-- [ ] `course_plan` rendered in the workbench, with the 课程资料 branch
-- [ ] Right panel READ-ONLY; all input on the left
-- [ ] Tap a node → left swaps to node mode
-- [ ] Node detail + rationale + static randomised greeting (never sent to the model)
-- [ ] Receipts: toast with undo, plus one compact line per turn
-- [ ] Tree badges + 最近处理 strip
+- [x] Entry fork 「帮我想想做什么 / 我已经有想法了」 — sets the opening only; paths converge by turn three
+- [x] Step-zero panel: headline + live checklist + collapsed sample. The checklist is DERIVED on every render and deliberately never stored — a cached checklist can claim the agent understood something it no longer has evidence for
+- [x] `course_plan` rendered in the workbench, with the 课程资料 branch
+- [x] Right panel READ-ONLY — verified zero input surfaces in the DOM
+- [x] Tap a node → left swaps to node mode
+- [x] Node detail + rationale + static randomised greeting (10 variants; reaches `#node-greeting.textContent` and nothing else)
+- [x] Receipts: toast with undo, plus one compact line per turn
+- [x] Tree badges + 最近处理 strip
+- [x] `subject` wired into the request body — the gap that made the focus band dead in production
+- [ ] **The mock never emits `plan_delta`** (0 occurrences in `mock.mjs`), so a key-less demo run still drives the blueprint path and never shows the plan tree. Only a real vendor turn populates it. Fix this before demoing to anyone without keys
 - [ ] Class selection when she has more than one
 - [ ] Memory viewer across the four scopes
 - [ ] Interaction-axis handles in the profile
 - [ ] Mobile landing by course state
 
-### Still present, and ADR-0010 says to remove
+### Superseded surfaces — removed (2026-08-12, same commit)
 
-Keeping both interaction models is worse than either. Remove in the same change that adds the new one.
-
-- [ ] 批注 staging — absorbed into node conversations (§3)
-- [ ] 问题卡 workbench tab — cards move into the conversation with a pending strip
-- [ ] ✓确认 button on the panel — replaced by citation-backed confirmation (§6)
+- [x] 批注 staging — removed. Unsent 批注 are NOT discarded: `cst.bpComments` is renamed to a rescued bucket and handed back in a notice
+- [x] 问题卡 workbench tab — cards live inline in the conversation with a pending strip
+- [x] ✓确认 button — replaced by citation-backed confirmation
+- [x] `setWorkbench` now MERGES. It replaced, and since a current client sends no `blueprint_comments`, the first turn after this build would have silently deleted the rescued text. An absent key means 「不知道」, not 「空的」
 
 ### Blocked on other people
 
@@ -84,7 +85,7 @@ Keeping both interaction models is worse than either. Remove in the same change 
 
 ### Suggested order
 
-**The UI shell is now the whole gap.** Prompts landed 2026-08-12, so the model behaves like v2 and writes a `course_plan` — into a workbench that renders none of it. Build the shell and remove the three superseded surfaces in the same change; keeping both interaction models is worse than either. Uploads, `revokeUser` and the axis wiring are independent and slot anywhere.
+**The mock is the next blocker.** It never emits `plan_delta`, so the shell that renders the plan tree cannot be demonstrated without live keys. Teach the mock to write a `course_plan` first. After that: class selection, the memory viewer, axis handles, mobile landing. Uploads and `revokeUser` are independent and slot anywhere.
 
 ## 2026-08-12 (latest) — the prompt corpus speaks v2, and the tree write channel was never open
 
