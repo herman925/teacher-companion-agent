@@ -906,6 +906,10 @@
       teacher_removed: '老师说不用记了',
       unknown: '已归档（原因未记录）',
     };
+    // id → 班级. A fact widened to 中三班 stores a uuid, and a console that shows
+    // the uuid has not answered 「which class is this constraint about」 — the
+    // scope is the whole point of widening, so the name has to be readable here.
+    let classById = new Map();
     async function loadMemory() {
       const rows = $('#memory-rows');
       try {
@@ -913,6 +917,9 @@
         if (res.status === 401) { showAdminGate(); return; }
         const data = await res.json();
         memoryRows = data.facts ?? [];
+        const kres = await af('/api/admin/classes?limit=1000');
+        const kdata = kres.ok ? await kres.json() : { classes: [] };
+        classById = new Map((kdata.classes ?? []).map((k) => [k.id, k]));
       } catch (e) { banner('读记忆失败：' + e.message); return; }
       banner('', false);
       renderMemory();
@@ -933,7 +940,14 @@
       for (const f of vis) {
         const tr = document.createElement('tr');
         tr.append(td(fmt(f.at)));
-        tr.append(td(FACT_SCOPE_LABEL[f.scope] ?? f.scope));
+        // 「这个班」 plus the class's own name when there is one. A class row the
+        // console could not load shows the short id rather than nothing, so a
+        // failed lookup reads as a failed lookup.
+        const scopeLabel = FACT_SCOPE_LABEL[f.scope] ?? f.scope;
+        const klass = f.class_id ? classById.get(f.class_id) : null;
+        tr.append(td(f.class_id
+          ? `${scopeLabel}（${klass ? klass.name : f.class_id.slice(0, 8)}）`
+          : scopeLabel));
         tr.append(td(FACT_KIND_LABEL[f.kind] ?? f.kind));
         tr.append(td(f.text ?? f.body ?? ''));
         // The teacher's own words. Empty is worth showing as 「—」 rather than

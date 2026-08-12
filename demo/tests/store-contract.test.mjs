@@ -1292,6 +1292,17 @@ export function runStoreContract(name, makeStore, { skip = false } = {}) {
     // that edited or removed a row would fail with 42501 in production.
     assert.equal(typeof store.updateSignal, 'undefined');
     assert.equal(typeof store.deleteSignal, 'undefined');
+
+    // The cross-teacher read, which is the export's half of the same duty:
+    // `listSignals` is scoped to one teacher by construction, so without this
+    // the audit trail behind every handle in the instance is unreachable.
+    const everyone = await store.adminListSignals({ limit: 200 });
+    const ids = everyone.filter((r) => r.user_id === a.id).map((r) => r.id);
+    assert.deepEqual(ids, [clipped.id, two.id, one.id], '最新的在前，一条不少');
+    assert.deepEqual(
+      (await store.adminListSignals({ userId: b.id })).map((r) => r.id), [],
+      '按老师筛就只有这位老师的',
+    );
   });
 
   // ==================== uploads: the two reads the endpoints need ==========
@@ -1368,6 +1379,39 @@ export function runStoreContract(name, makeStore, { skip = false } = {}) {
     // The cross-teacher read: app_rw cannot do this by construction.
     const everyone = await store.adminListFacts({ limit: 200 });
     assert.ok(everyone.some((f) => f.id === kept.id) && everyone.some((f) => f.id === hers.id));
+  });
+
+  t('adminListClasses: the class a widened fact points at has a name, not just a uuid', async (store) => {
+    const a = await newUser(store);
+    const b = await newUser(store);
+    const course = await store.createCourse(a.id, '醒狮');
+    const mine = await store.createClass(a.id, { name: '中三班', ageBand: '中班', classSize: 30 });
+    const theirs = await store.createClass(b.id, { name: '大一班' });
+    await store.setCourseClass(a.id, course.id, mine.id);
+    const fact = await store.recordFact(a.id, {
+      scope: 'course', courseId: course.id, kind: 'equipment',
+      text: '班上没有鼓', quote: '我们班没有鼓', source: 'auto',
+    });
+    const widened = await store.widenFact(a.id, fact.id, 'class', { classId: mine.id });
+    assert.equal(widened.class_id, mine.id);
+
+    // THE CROSS-TEACHER READ, which is the whole reason this method exists on
+    // the admin plane: `listClasses` cannot see both of these at once.
+    const all = await store.adminListClasses({});
+    const byId = new Map(all.map((k) => [k.id, k]));
+    assert.equal(byId.get(mine.id)?.name, '中三班');
+    assert.equal(byId.get(theirs.id)?.name, '大一班');
+    // Attribution is the point of a cross-teacher read: a class with no owner
+    // in the export is a name nobody can place.
+    assert.equal(byId.get(mine.id)?.user_id, a.id);
+    assert.equal(byId.get(theirs.id)?.user_id, b.id);
+    // And the uuid on the widened fact resolves — which is the failure this
+    // covers: the export ships `facts.class_id` and `courses.class_id`, so
+    // without the class rows both point at nothing.
+    assert.equal(byId.get(widened.class_id)?.name, '中三班');
+
+    const onlyHers = await store.adminListClasses({ userId: b.id });
+    assert.deepEqual(onlyHers.map((k) => k.id), [theirs.id], '按老师筛就只有这位老师的');
   });
 
   t('erase: memory, classes and signals go with the account', async (store) => {

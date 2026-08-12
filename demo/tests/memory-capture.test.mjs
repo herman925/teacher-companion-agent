@@ -90,6 +90,50 @@ test('a fact with no quote at all is refused', async (t) => {
   assert.equal(out.refused[0].reason, 'no_quote');
 });
 
+test('a one-particle quote grounds nothing — 「在她的消息里」 alone is not a citation', async (t) => {
+  const { store, user, course } = await fixture(t);
+  // The hole this floor closes, in the form it was actually demonstrated in:
+  // an innocuous message, a fabricated claim about children, and a quote short
+  // enough to occur in almost anything a teacher types. `class_composition` is
+  // a legal kind (the taxonomy is about children by design) and 有兴趣 is not in
+  // CHILD_CLAIM_RE, so without the floor this row files and then rides every
+  // future prompt under a header that reads 「quote 是老师的原话」.
+  const said = '今天的活动挺顺利的，谢谢你。';
+  const out = await capture(store, user, course, said, [
+    { kind: 'class_composition', text: '班上有几个孩子对龙舟特别有兴趣', quote: '的' },
+    { kind: 'teacher_preference', text: '她想先看看', quote: '了' },
+  ]);
+  assert.equal(out.recorded.length, 0, '一个字的「原话」不是原话');
+  assert.deepEqual(out.refused.map((r) => r.reason), ['quote_too_short', 'quote_too_short']);
+  assert.deepEqual(await store.listFacts(user.id, { courseId: course.id, includeArchived: true }), []);
+});
+
+test('a long quote about something else grounds nothing either', async (t) => {
+  const { store, user, course } = await fixture(t);
+  // The other half of the same attack: pass the length floor by quoting a real
+  // clause, then attach it to a fact it has nothing to do with.
+  const said = '今天的活动挺顺利的，谢谢你。';
+  const out = await capture(store, user, course, said, [
+    { kind: 'class_composition', text: '班上有几个孩子对龙舟特别有兴趣', quote: '今天的活动挺顺利' },
+  ]);
+  assert.equal(out.recorded.length, 0);
+  assert.deepEqual(out.refused.map((r) => r.reason), ['quote_unrelated']);
+});
+
+test('the floors do not punish an extractor for canonicalizing her wording', async (t) => {
+  const { store, user, course } = await fixture(t);
+  // MUST-PASS direction. ADR-0011 §4 puts canonicalization at the extractor, so
+  // 星期三 → 周三 is correct behaviour; the overlap floor is set where a
+  // rephrasing still shares words with the sentence it came from.
+  const said = '我们星期三下午都排了体能课，只剩半小时。';
+  const out = await capture(store, user, course, said, [
+    { kind: 'schedule', text: '周三下午只剩半小时', quote: '星期三下午都排了体能课' },
+  ]);
+  assert.deepEqual(out.refused, [], out.refused.map((r) => r.reason).join(','));
+  assert.equal(out.recorded.length, 1);
+  assert.equal(out.recorded[0].action, 'added');
+});
+
 // ------------------------------------------------------------ the taxonomy
 
 test('the closed taxonomy refuses a child observation — it has no kind to be filed under', async (t) => {
@@ -164,11 +208,14 @@ test('a realized child reaction is archived on arrival AND never reaches the pro
 
 test('at most three facts per turn; the excess is refused and counted, never dropped', async (t) => {
   const { store, user, course } = await fixture(t);
-  const said = '没有鼓。没有场地。周三很短。班上二十八个人。我不喜欢排练。';
+  // Every quote here is a whole clause, because the citation floors are a
+  // different test: this one is about the counter, and a fixture that tripped
+  // over the quote rules would pass or fail for the wrong reason.
+  const said = '我们班没有鼓。也没有场地。周三时间很短。班上二十八个人。我不喜欢排练。';
   const out = await capture(store, user, course, said, [
-    { kind: 'equipment', text: '没有鼓', quote: '没有鼓' },
-    { kind: 'space', text: '没有场地', quote: '没有场地' },
-    { kind: 'schedule', text: '周三很短', quote: '周三很短' },
+    { kind: 'equipment', text: '班上没有鼓', quote: '我们班没有鼓' },
+    { kind: 'space', text: '没有场地', quote: '也没有场地' },
+    { kind: 'schedule', text: '周三时间很短', quote: '周三时间很短' },
     { kind: 'class_composition', text: '班上二十八个人', quote: '班上二十八个人' },
     { kind: 'teacher_preference', text: '我不喜欢排练', quote: '我不喜欢排练' },
   ]);

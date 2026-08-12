@@ -495,9 +495,18 @@ export function capFacts(facts, max, opts = {}) {
     return a;
   });
 
+  // THE NOTICE PROMISES ONLY WHAT EXISTS. It used to say the archived rows
+  // could be taken back on the memory page, and nothing anywhere could do that:
+  // there is no unarchive method, no route and no control, deliberately.
+  // Archiving carries a REASON, and three of the four must not be undoable by a
+  // tap — putting a `child_claim` row back would return an unevidenced claim
+  // about children to every prompt (non-negotiable #1), and returning a
+  // superseded row would contradict the row that replaced it. The recovery path
+  // that does exist is the honest one and it is the one named here: an archived
+  // fact is never a merge target, so saying it again files a fresh live row.
   const shown = archived.slice(0, 3).map((f) => f.text).join('、');
   const more = archived.length > 3 ? '等' : '';
-  const notice = `记忆到了上限（${limit} 条），把最久没用到的 ${archived.length} 条收进了归档：${shown}${more}。归档不是删除，在记忆页随时可以拿回来。`;
+  const notice = `记忆到了上限（${limit} 条），把最久没用到的 ${archived.length} 条收进了归档：${shown}${more}。归档不是删除，在记忆页还看得到；以后再跟我说一次，我会重新记住。`;
 
   return { facts: out, archived, notice };
 }

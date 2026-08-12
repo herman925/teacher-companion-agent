@@ -44,6 +44,7 @@ import { appendAccess, pruneAccess, readAccess, RETENTION_DAYS } from './src/acc
 import { loadFacts, captureMemoryFacts, rawMemoryFacts, touchFacts } from './src/memory-capture.mjs';
 import { createLocalObjectStore, materialKey, validKey } from './src/storage/object-store.mjs';
 import { intakeFile, ACCEPTED_MIME_TYPES } from './src/upload-intake.mjs';
+import { diffVectors } from './src/interaction-axes.mjs';
 
 // Auth (SECURITY.md): opaque session cookie → store lookup. Courses are scoped
 // to the session user; no session = visitor (演示模式 only, /api/courses* 401s).
@@ -1120,7 +1121,26 @@ const server = http.createServer(async (req, res) => {
           if (JSON.stringify(q.profile ?? null).length > PROFILE_MAX_BYTES) {
             return json(400, { ok: false, message: '个人档案太长了，请精简一些' });
           }
+          // THE AXIS AUDIT TRAIL (ADR-0009 §3). The vector is a singleton in
+          // `users.settings` and overwriting it leaves no record of when a
+          // handle moved or by how much, so 「为什么这个把手动了」 had no answer at
+          // all — an agent that profiles its user and cannot show its work is a
+          // trust defect. The diff is taken BEFORE the save and only when the
+          // incoming profile actually carries a vector: a legacy client that
+          // patches only 回应风格 must not read as six axes snapping to default.
+          const beforeVector = me.profile?.interaction_vector ?? null;
+          const afterVector = q.profile && typeof q.profile === 'object'
+            ? q.profile.interaction_vector : null;
           await store.saveUserProfile(me.id, q.profile);
+          if (afterVector && typeof afterVector === 'object') {
+            for (const move of diffVectors(beforeVector, afterVector)) {
+              // Swallowed, loudly. A missing audit row must never fail her
+              // save — but it must never be silent either, or the table looks
+              // empty for two different reasons.
+              try { await store.recordSignal(me.id, move); }
+              catch (e) { console.warn('[axes] signal not recorded:', e?.message ?? e); }
+            }
+          }
           return json(200, { ok: true });
         }
         return json(400, { ok: false, message: '没有可更新的字段' });
@@ -1342,8 +1362,17 @@ const server = http.createServer(async (req, res) => {
         // The object key is NOT returned. It is the address of a photograph of
         // children, and the only way to read one back is a session-checked
         // handler that looks the ownership up again.
+        // The notice, when there is one, says what came OFF the file beyond the
+        // metadata — today that is a trailer appended after the picture's end
+        // marker (a motion photo's video, an MPF second image). Silent
+        // truncation is barred, and she has to be able to tell 「the system took
+        // something off」 from 「my phone sent something odd」.
+        if (intake.trailer_dropped) {
+          console.log(`[objects] trailer dropped from an upload on course ${courseId} — only the picture was kept`);
+        }
         return json(200, {
           ok: true,
+          ...(intake.notice ? { notice: intake.notice } : {}),
           material: {
             id: row.id, kind: row.kind, mime_type: row.mime_type, size_bytes: row.size_bytes,
             exif_stripped: row.exif_stripped, contains_children: row.contains_children,
@@ -1427,7 +1456,7 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // ---------- memory + classes: the TEACHER plane (ADR-0011) ----------
+  // ------- memory + classes + axis signals: the TEACHER plane (ADR-0011) -----
   //
   // THERE IS NO CREATE ROUTE FOR A FACT, AND THERE MUST NEVER BE ONE. A fact is
   // EXTRACTED from something she said — `memory-capture.mjs` screens every
@@ -1446,7 +1475,8 @@ const server = http.createServer(async (req, res) => {
   // same 404 with the same body: a distinguishable response tells one teacher
   // that another teacher's fact exists.
   if (url.pathname === '/api/memory' || url.pathname.startsWith('/api/memory/')
-      || url.pathname === '/api/classes' || url.pathname.startsWith('/api/classes/')) {
+      || url.pathname === '/api/classes' || url.pathname.startsWith('/api/classes/')
+      || url.pathname === '/api/signals') {
     const json = (status, obj) => {
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(obj));
@@ -1546,6 +1576,20 @@ const server = http.createServer(async (req, res) => {
         } catch (e) {
           return json(e.status ?? 500, { ok: false, message: e.message });
         }
+      }
+
+      // GET /api/signals?limit=&axis= — 「为什么这个把手动了」, newest first.
+      //
+      // READ-ONLY BY DESIGN AND BY GRANT: `app_rw` holds SELECT and INSERT on
+      // `interaction_signals` and nothing else, so there is no update or delete
+      // path here and none should ever be written. The rows are appended by the
+      // profile save (and later by the inference pass), never by a client — a
+      // client that could post its own observations would be writing the
+      // agent's beliefs about the teacher.
+      if (url.pathname === '/api/signals' && req.method === 'GET') {
+        const axis = url.searchParams.get('axis') || null;
+        const limit = Number(url.searchParams.get('limit')) || 100;
+        return json(200, { ok: true, signals: await store.listSignals(uid, { limit, axis }) });
       }
 
       return json(405, { ok: false, message: 'method not allowed' });
@@ -1869,12 +1913,17 @@ const server = http.createServer(async (req, res) => {
         // instance, every message, every snapshot, in one file that then lives
         // on somebody's laptop. One row per export, before a byte is written.
         await recordAccess({ action: 'export_course', excerpt: `${courses.length} 个课程的完整记录` });
-        // THE EXPORT DUTY (AGENTS.md). Three kinds of state ship in this
+        // THE EXPORT DUTY (AGENTS.md). Five kinds of state ship in this
         // change, and state that only exists inside a widget is a defect, so
-        // all three ride the export:
+        // all five ride the export:
         //   · uploads — the row, never the bytes and never the object key;
         //   · memory facts — including archived rows and their reasons, or a
         //     wrong extraction is mysterious rather than diagnosable;
+        //   · classes — because `facts.class_id` and `courses.class_id` both
+        //     ship, and without the class rows a constraint she widened to
+        //     中三班 exports as a uuid that resolves to nothing in the file;
+        //   · interaction signals — the rows behind 「为什么这个把手动了」, which
+        //     became real state the moment the profile save began writing them;
         //   · accounts — with `status` and `revoked_at`, because a revocation
         //     that no export records is a retention clock nobody can audit.
         // Failures are STATED, never coerced into an empty list: an export
@@ -1905,6 +1954,8 @@ const server = http.createServer(async (req, res) => {
           }
           return out;
         });
+        const classes = await sidecar(() => store.adminListClasses({}));
+        const signals = await sidecar(() => store.adminListSignals({}));
         const users = await sidecar(() => store.listUsers());
         res.writeHead(200, {
           'content-type': 'application/json; charset=utf-8',
@@ -1916,11 +1967,18 @@ const server = http.createServer(async (req, res) => {
           users: users.value,
           materials: materials.value,
           facts: facts.value,
+          classes: classes.value,
+          interaction_signals: signals.value,
           ...(facts.value?.length === FACT_EXPORT_MAX
             ? { facts_truncated: `只导出了最近 ${FACT_EXPORT_MAX} 条记忆——还有更早的没有包含在内` }
             : {}),
-          ...(users.error || materials.error || facts.error
-            ? { export_errors: { users: users.error, materials: materials.error, facts: facts.error } }
+          ...(users.error || materials.error || facts.error || classes.error || signals.error
+            ? {
+              export_errors: {
+                users: users.error, materials: materials.error,
+                facts: facts.error, classes: classes.error, interaction_signals: signals.error,
+              },
+            }
             : {}),
         }, null, 2));
         return;
@@ -1937,6 +1995,18 @@ const server = http.createServer(async (req, res) => {
         });
         await recordAccess({ action: 'read_facts', excerpt: `${rows.length} 条记忆` });
         return json(200, { ok: true, facts: rows });
+      }
+      // ---- the classes those facts and courses point at ----
+      // Without this the console shows a widened constraint as 「这个班」 and a
+      // uuid, which is not an answer to 「which class is this about」. Same
+      // cross-teacher reach as the facts read, so the same log line.
+      if (seg[0] === 'classes' && req.method === 'GET') {
+        const rows = await store.adminListClasses({
+          userId: url.searchParams.get('user_id') || null,
+          limit: Number(url.searchParams.get('limit')) || 500,
+        });
+        await recordAccess({ action: 'read_classes', excerpt: `${rows.length} 个班级` });
+        return json(200, { ok: true, classes: rows });
       }
       // ---- one course's uploads, on the admin plane ----
       // ADR-0013 §7's reach is acceptable ONLY with the log, and an upload is

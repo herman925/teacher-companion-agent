@@ -66,6 +66,12 @@
 //   adminListCourses()                         -> all courses (all users) + message/snapshot counts
 //   adminListFacts({userId, courseId, limit})  -> facts across teachers, archived
 //                                                 included (ADR-0013 §7: log the read)
+//   adminListClasses({userId, limit})          -> classes across teachers, WITH
+//                                                 user_id. Without it the export's
+//                                                 facts.class_id / courses.class_id
+//                                                 resolve to nothing.
+//   adminListSignals({userId, limit})          -> axis observations across teachers
+//                                                 (ADR-0009 §3's 「为什么这个把手动了」)
 //   adminGetCourse(courseId)                   -> full raw record | null
 //   adminDelete(courseId, { deleteObject })    -> same receipt (delete any owner)
 //   adminExportAll()                           -> [full records] for one-file export

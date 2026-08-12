@@ -425,6 +425,12 @@ test('cap: over the cap archives the overflow and says so', () => {
   assert.match(r.notice, /3 条/, '静默截断是被禁止的，必须说出来');
   assert.match(r.notice, /归档不是删除/);
   assert.ok(r.notice.includes('事实1'), '要说清是哪几条走了');
+  // The notice must not promise a control that does not exist. There is no
+  // unarchive anywhere — no store method, no route, no button — and telling her
+  // she can take a row back is a smaller version of the same lie as telling her
+  // something was remembered when it was not.
+  assert.ok(!/拿回来|恢复/.test(r.notice), '不许承诺一个不存在的「取回」动作');
+  assert.match(r.notice, /再跟我说一次/, '真正存在的取回路径是再说一次');
 });
 
 test('cap: oldest-UNUSED goes first, not oldest', () => {

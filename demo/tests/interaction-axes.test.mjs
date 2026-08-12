@@ -14,7 +14,7 @@ import {
   defaultVector, normalizeVector, vectorFromPreset, applyOnboarding,
   nudge, pinAxis, unpinAxis, turnOverride,
   vectorToDirectives, axisDirective, describeVector, bandOf, sourceRank, resolveAxisId,
-  isReadableVector,
+  isReadableVector, diffVectors,
 } from '../src/interaction-axes.mjs';
 
 // prompt-builder is READ here only — the legacy style table is the migration
@@ -451,4 +451,50 @@ test('readable: a half-written or absent vector is REFUSED, not defaulted', () =
   // MUST PASS: one real axis is enough — a teacher may legitimately hold
   // defaults everywhere else, and `normalizeVector` fills those in.
   assert.equal(isReadableVector({ version: VECTOR_VERSION, axes: { guidance: { value: 2 } } }), true);
+});
+
+// ---------- the audit trail behind the handles (ADR-0009 §3) ----------
+// `interaction_signals` was implemented in both store tiers and written to by
+// nothing at all, so 「为什么这个把手动了」 had no answer: the vector is a singleton
+// in users.settings and each save overwrote the last. These rows are what the
+// profile save now appends, so the diff is the writer and gets both directions.
+
+test('diff: an unchanged vector produces no rows — a save is not an observation', () => {
+  const v = defaultVector();
+  assert.deepEqual(diffVectors(v, v), []);
+  assert.deepEqual(diffVectors(v, snap(v)), [], '同样的值，换个对象也不算动过');
+  // Absent on both sides is the legacy client saving only 回应风格. It must not
+  // read as six axes snapping to their defaults.
+  assert.deepEqual(diffVectors(null, null), []);
+});
+
+test('diff: a moved handle records which axis, which way, and how far', () => {
+  const before = defaultVector();
+  const after = pinAxis(before, 'depth', 5);
+  const rows = diffVectors(before, after);
+  assert.equal(rows.length, 1, '只动了一根把手就只写一行');
+  assert.equal(rows[0].axis, 'depth');
+  assert.equal(rows[0].delta, 5 - normalizeVector(before).axes.depth.value);
+  assert.match(rows[0].signal, /pinned/);
+  // Direction, not magnitude alone: a handle pushed down and one pushed up are
+  // opposite facts about her and must not both read as 「moved」.
+  const down = diffVectors(after, pinAxis(after, 'depth', 1));
+  assert.equal(down[0].delta, 1 - 5);
+});
+
+test('diff: handing an axis back to inference is recorded even when the value does not move', () => {
+  // The event that would otherwise be invisible. Unpinning changes nothing on
+  // screen and changes completely what the agent may do with that axis.
+  const pinned = pinAxis(defaultVector(), 'guidance', 4);
+  const freed = unpinAxis(pinned, 'guidance');
+  assert.equal(normalizeVector(freed).axes.guidance.value, 4, '值没变');
+  const rows = diffVectors(pinned, freed);
+  assert.deepEqual(rows.map((r) => [r.axis, r.signal, r.delta]), [['guidance', 'unpinned', 0]]);
+});
+
+test('diff: the signal stays a label, never a sentence', () => {
+  for (const row of diffVectors(defaultVector(), pinAxis(defaultVector(), 'pacing', 5))) {
+    assert.ok(Array.from(row.signal).length <= SIGNAL_MAX, '和别处一样按码点截断');
+    assert.ok(!/\s/.test(row.signal), '标签不是句子');
+  }
 });

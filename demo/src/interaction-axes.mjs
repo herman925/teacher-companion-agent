@@ -568,3 +568,50 @@ export function describeVector(vector) {
     };
   });
 }
+
+/**
+ * What moved between two vectors, as `interaction_signals` rows.
+ *
+ * THE TABLE EXISTS AND NOTHING WROTE TO IT. `recordSignal` / `listSignals` are
+ * implemented in both tiers and were reachable from nowhere, so ADR-0009 §3's
+ * 「为什么这个把手动了」 had no answer at all: the vector changed in
+ * `users.settings` and left no trace of when or by how much. An agent that
+ * profiles its user and cannot show its work is a trust defect, and the fix has
+ * to be a WRITER, not another read method.
+ *
+ * PURE AND HERE rather than inline in the request handler, because 「did this
+ * axis move」 is a question about the vector, and the same diff has to be
+ * available to the inference path when it lands.
+ *
+ * `signal` is a LABEL, never a sentence — clipped like every other
+ * teacher-derived string in this codebase (see `clipSignal`).
+ *
+ * @param {any} before the stored vector （null on a first save）
+ * @param {any} after the incoming one
+ * @returns {Array<{axis: string, signal: string, delta: number}>} one row per
+ *   axis that actually changed; empty when nothing did
+ */
+export function diffVectors(before, after) {
+  const a = normalizeVector(before);
+  const b = normalizeVector(after);
+  const rows = [];
+  for (const id of AXIS_IDS) {
+    const was = a.axes[id];
+    const now = b.axes[id];
+    const moved = now.value !== was.value;
+    const pinChanged = now.pinned !== was.pinned;
+    if (!moved && !pinChanged) continue;
+    // Four different events, and they are not the same fact about her. Handing
+    // a handle back to inference （unpin） is the one that would otherwise be
+    // invisible: the value need not change at all, and yet what the agent is
+    // allowed to do with that axis just changed completely.
+    let signal;
+    if (pinChanged && !now.pinned) signal = 'unpinned';
+    else if (pinChanged) signal = moved ? 'moved_and_pinned' : 'pinned';
+    else if (now.source === 'explicit') signal = 'teacher_moved';
+    else if (now.source === 'onboarding') signal = 'onboarding';
+    else signal = `${now.source}_moved`;
+    rows.push({ axis: id, signal: clipSignal(signal), delta: now.value - was.value });
+  }
+  return rows;
+}

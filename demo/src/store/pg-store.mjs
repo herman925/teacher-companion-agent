@@ -1928,6 +1928,52 @@ export function createPgStore(opts = {}) {
       return rows.map(factRow);
     },
 
+    /**
+     * Every class, across teachers, with its owner.
+     *
+     * The admin connection, for the same reason `adminListFacts` needs it:
+     * `app_rw` cannot read across teachers by construction. `app_admin` holds
+     * SELECT on `classes` (002_roles.sql) and `classes_admin` permits it
+     * (003_rls.sql).
+     *
+     * WITHOUT THIS THE EXPORT CARRIES DANGLING POINTERS — `facts.class_id` and
+     * `courses.class_id` both ship, so a constraint widened to 中三班 exports as a
+     * uuid that resolves to nothing. A read here is a cross-teacher read under
+     * ADR-0013 §7 and the endpoint in front of it logs accordingly.
+     */
+    async adminListClasses({ userId = null, limit = 500 } = {}) {
+      if (userId != null && !isUuid(userId)) return [];
+      const cap = Math.min(2000, Math.max(1, Number(limit) || 500));
+      const { rows } = await q(
+        `SELECT ${CLASS_COLUMNS} FROM classes
+          WHERE ($1::uuid IS NULL OR user_id = $1)
+          ORDER BY created_at, id LIMIT $2`,
+        [userId, cap],
+      );
+      return rows.map((r) => ({ ...classRow(r), user_id: r.user_id }));
+    },
+
+    /**
+     * Every axis observation, across teachers, newest first.
+     *
+     * The admin connection: `app_admin` holds SELECT on `interaction_signals`
+     * (002_roles.sql) and `interaction_signals_admin` permits it (003_rls.sql),
+     * while `app_rw` cannot read across teachers by construction. These are the
+     * rows behind 「为什么这个把手动了」, and they became real state the moment the
+     * profile save started writing them — so the export duty applies.
+     */
+    async adminListSignals({ userId = null, limit = 500 } = {}) {
+      if (userId != null && !isUuid(userId)) return [];
+      const cap = Math.min(2000, Math.max(1, Number(limit) || 500));
+      const { rows } = await q(
+        `SELECT ${SIGNAL_COLUMNS} FROM interaction_signals
+          WHERE ($1::uuid IS NULL OR user_id = $1)
+          ORDER BY created_at DESC, id DESC LIMIT $2`,
+        [userId, cap],
+      );
+      return rows.map(signalRow);
+    },
+
     async adminExportAll() {
       const { rows } = await q('SELECT * FROM courses ORDER BY updated_at DESC');
       // Sequential rather than Promise.all: an export of every course on the

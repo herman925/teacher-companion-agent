@@ -484,12 +484,15 @@ The teacher profile moves server-side into `users.settings.profile` so it follow
 | `GET /api/courses/:id` | Course with current state document |
 | `GET /api/courses/:id/messages?before=<id>` | Paged chat history |
 | `POST /api/courses/:id/chat` | The turn endpoint, server-side state (replaces stateless `/api/chat`) |
-| `POST /api/materials/upload-url` | Mint a short-lived signed COS upload URL (client uploads direct — bytes never transit the VM) |
-| `GET /api/materials/:id/view-url` | Mint a short-lived signed view URL, owner-checked |
+| `POST /api/courses/:id/materials` | Upload one file. **The bytes transit the VM, deliberately** — see the note below |
+| `GET /api/courses/:id/materials` | Her uploads on this course. The object key is never returned |
+| `GET /api/materials/:id/view` | Stream one owned file back, owner-checked, `Content-Disposition: attachment` |
 | `GET /api/courses/:id/export` | Stage-5 story export (gap-check first, per stage-gate table) |
 | `GET /api/healthz` | Liveness for monitoring |
 
 Everything under `/api/` except `login` and `healthz` requires the session and is scoped to the session's `user_id`. No admin API in v1 — operational queries go through `psql` with an audit note in HANDOFF.md.
+
+**Why uploads are not client-direct.** This table used to promise a signed-URL flow where the bytes went from the phone to object storage without touching the VM. That flow cannot honour ADR-0013 §6: EXIF stripping is mandatory at ingest, it is the last chance to do it — nothing downstream re-checks — and a client-direct upload cannot be trusted to have done it. The same handler is also where the type is decided by content rather than by the filename, where the per-user byte budget and the free-disk floor are enforced, and where anything appended after a JPEG's end marker is dropped. All four are reasons the bytes have to pass through code we control. There are no presigned URLs in the local tier at all, which removes that class of leak entirely; a COS-backed object store slots in behind the same three-method seam (`put`/`get`/`delete`) without changing this.
 
 ## 5. Backups, retention and erasure
 

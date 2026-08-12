@@ -1832,6 +1832,50 @@ export function createJsonStore(opts = {}) {
         .map(factRow));
     },
 
+    /**
+     * Every class, across teachers, with its owner.
+     *
+     * WITHOUT THIS THE EXPORT CARRIES DANGLING POINTERS. `facts` ships with a
+     * `class_id` and `courses` ship with a `class_id`, so a constraint she
+     * deliberately widened to 中三班 exports as a uuid that resolves to nothing in
+     * the file — the audit can see that a fact belongs to *some* class and can
+     * never say which. A class is server-held state created by a live route,
+     * carrying a name, an age band, a size and the at-most-one-default
+     * invariant, so AGENTS.md's export duty applies to it exactly as it applies
+     * to facts and materials.
+     *
+     * `user_id` rides along (unlike `listClasses`, which answers a teacher who
+     * already knows whose classes she is looking at) because the console reads
+     * across teachers and attribution is the whole point of the read.
+     */
+    async adminListClasses({ userId = null, limit = 500 } = {}) {
+      const cap = Math.min(2000, Math.max(1, Number(limit) || 500));
+      return withLock(async () => (await readRows(classesFile))
+        .filter((k) => userId == null || k?.user_id === userId)
+        .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+        .slice(0, cap)
+        .map((k) => ({ ...classRow(k), user_id: k.user_id })));
+    },
+
+    /**
+     * Every axis observation, across teachers, newest first.
+     *
+     * The rows behind 「为什么这个把手动了」. Now that something actually writes
+     * them (the profile save diffs the vector), they are state this instance
+     * holds, and AGENTS.md's export duty applies: state that lives only inside
+     * one surface is a defect. The teacher-facing half is already answered in
+     * the profile pane, which states each axis's source beside its value; this
+     * is the cross-teacher half.
+     */
+    async adminListSignals({ userId = null, limit = 500 } = {}) {
+      const cap = Math.min(2000, Math.max(1, Number(limit) || 500));
+      return withLock(async () => (await readRows(signalsFile))
+        .filter((r) => userId == null || r?.user_id === userId)
+        .sort((a, b) => (String(b.created_at).localeCompare(String(a.created_at)) || (Number(b.id) - Number(a.id))))
+        .slice(0, cap)
+        .map(signalRow));
+    },
+
     async adminExportAll() {
       return withLock(async () => allCourses());
     },

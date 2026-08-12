@@ -17,12 +17,45 @@
 // hole this module exists to close. Adding it means writing the chunk stripper
 // first, not widening the list.
 
-/** JPEG APP segments we remove. APP1 is EXIF (and XMP) — where the camera
- * writes GPS. APP13 is the Photoshop/IPTC block, which carries location and
- * author fields of its own. Everything else (JFIF density, ICC colour) is
- * needed to render the picture correctly and says nothing about where it was
- * taken. */
-const JPEG_DROP_MARKERS = new Set([0xe1, 0xed]);
+/**
+ * JPEG segments we KEEP. A KEEP LIST, not a drop list — the same reject-by-
+ * default discipline as `ACCEPTED_MIME_TYPES`, and for the same reason: this
+ * module used to name APP1 (EXIF/XMP) and APP13 (Photoshop/IPTC) as the things
+ * to remove, which left APP2 (MPF), APP3 (Meta/Exif again on some Kodak and
+ * Samsung firmware), APP4–APP12 and the COM comment block riding through
+ * untouched while the row said `exif_stripped: true`.
+ *
+ * Exactly two application segments survive, because exactly two are needed to
+ * look at the picture and neither says where it was taken:
+ *   · APP0 — the JFIF header (pixel density);
+ *   · APP2 — ONLY when it is an ICC colour profile. APP2 is also where the
+ *     Multi-Picture Format index lives, and MPF is the thing that points at a
+ *     second full JPEG appended after this one, so 「APP2」 alone is not a safe
+ *     rule. The payload has to say `ICC_PROFILE`.
+ * Every other APPn and every COM segment is dropped. Structural markers (SOF,
+ * DHT, DQT, DRI, SOS, EOI) are kept — without them there is no image.
+ */
+const APP0_JFIF = 0xe0;
+const APP2 = 0xe2;
+const COM = 0xfe;
+const ICC_TAG = Buffer.from('ICC_PROFILE');
+
+/** Is this marker an application segment (APP0–APP15)? */
+const isAppMarker = (m) => m >= 0xe0 && m <= 0xef;
+
+/**
+ * Does this segment survive the strip?
+ * @param {number} marker @param {Buffer} buf @param {number} payloadStart
+ */
+function keepSegment(marker, buf, payloadStart) {
+  if (marker === COM) return false;
+  if (!isAppMarker(marker)) return true;
+  if (marker === APP0_JFIF) return true;
+  if (marker === APP2) {
+    return buf.subarray(payloadStart, payloadStart + ICC_TAG.length).equals(ICC_TAG);
+  }
+  return false;
+}
 
 /** MIME → the extension the object key gets. OURS, not the upload's. */
 export const MIME_EXT = Object.freeze({
@@ -72,24 +105,66 @@ export function sniffMime(buf) {
 }
 
 /**
- * Remove the metadata segments from a JPEG.
+ * Where does the entropy-coded data after a scan header end?
+ *
+ * Scan data is not length-prefixed: it runs until the next real marker, and it
+ * may legally contain `FF 00` (a stuffed byte) and `FF D0`–`FF D7` (restart
+ * markers), neither of which ends it. THIS FUNCTION EXISTS BECAUSE THE OLD CODE
+ * ASSUMED 「the rest of the buffer is scan data」, which is what let a Samsung or
+ * Google motion photo append a whole MP4 — and an MPF multi-picture JPEG append
+ * a second image with its own APP1 and its own GPS — after the end of the
+ * picture, untouched, under a row that read `exif_stripped: true`.
+ *
+ * @param {Buffer} buf @param {number} from first byte of scan data
+ * @returns {number} index of the next marker's `FF`, or `buf.length` if none
+ */
+function endOfScan(buf, from) {
+  let i = from;
+  while (i < buf.length - 1) {
+    if (buf[i] !== 0xff) { i += 1; continue; }
+    const next = buf[i + 1];
+    if (next === 0x00) { i += 2; continue; }                 // stuffed byte
+    if (next === 0xff) { i += 1; continue; }                 // fill byte
+    if (next >= 0xd0 && next <= 0xd7) { i += 2; continue; }  // restart marker
+    return i;
+  }
+  return buf.length;
+}
+
+/**
+ * Remove the metadata segments from a JPEG, and keep NOTHING after the picture.
  *
  * THE THING BEING DESIGNED AGAINST is one file that contains both a photograph
  * of children and the kindergarten's exact coordinates. EXIF is where a phone
  * writes those, along with the device id and the timestamp, and none of it is
  * needed to look at the picture.
  *
+ * TWO RULES, AND THE SECOND ONE IS THE ONE THAT IS EASY TO MISS:
+ *   1. Only the segments on the keep list survive (see `keepSegment`). Naming
+ *      what to drop instead leaves every APPn nobody thought of riding through.
+ *   2. THE FILE ENDS AT ITS FIRST EOI. Bytes appended after the end marker are
+ *      not part of the picture and are not kept — that is where a motion photo
+ *      hides its video and where a multi-picture JPEG hides its second copy of
+ *      the same GPS coordinates. The caller is TOLD (`trailer_dropped`), because
+ *      a silent drop of something she can see in her phone's gallery is the
+ *      kind of surprise that reads as a bug.
+ *
  * A JPEG whose segment structure does not parse is REFUSED rather than passed
  * through: 「we could not read this well enough to strip it」 is not a reason to
- * keep it whole, it is a reason not to keep it.
+ * keep it whole, it is a reason not to keep it. A file that never reaches an EOI
+ * is refused for the same reason — the point at which the picture stops is
+ * exactly what rule 2 needs to know.
  *
  * @param {Buffer} buf
- * @returns {{buffer: Buffer, stripped: boolean}|null} null when malformed
+ * @returns {{buffer: Buffer, stripped: boolean, trailerBytes: number}|null}
+ *   null when malformed
  */
 export function stripJpegMetadata(buf) {
   if (!buf || buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
   const out = [buf.subarray(0, 2)];
   let stripped = false;
+  let trailerBytes = 0;
+  let sawEnd = false;
   let pos = 2;
 
   while (pos < buf.length - 1) {
@@ -105,10 +180,12 @@ export function stripJpegMetadata(buf) {
       pos = m + 1;
       continue;
     }
-    // Start of scan / end of image: the rest is entropy-coded data (which can
-    // legally contain anything) and is copied verbatim.
-    if (marker === 0xda || marker === 0xd9) {
-      out.push(buf.subarray(pos));
+    // End of image. Everything past it is a trailer, and a trailer is not the
+    // picture — see rule 2.
+    if (marker === 0xd9) {
+      out.push(buf.subarray(pos, m + 1));
+      trailerBytes = buf.length - (m + 1);
+      sawEnd = true;
       pos = buf.length;
       break;
     }
@@ -118,12 +195,25 @@ export function stripJpegMetadata(buf) {
     const end = m + 1 + len;
     if (end > buf.length) return null;
 
-    if (JPEG_DROP_MARKERS.has(marker)) stripped = true;
-    else out.push(buf.subarray(pos, end));
+    // Start of scan: the header is length-prefixed like any other segment, and
+    // the entropy-coded data follows it unmeasured. A progressive JPEG has
+    // several of these, so the loop continues at the next marker rather than
+    // giving up on the rest of the file.
+    if (marker === 0xda) {
+      const scanEnd = endOfScan(buf, end);
+      out.push(buf.subarray(pos, scanEnd));
+      if (scanEnd >= buf.length) return null;   // ran off the end with no EOI
+      pos = scanEnd;
+      continue;
+    }
+
+    if (keepSegment(marker, buf, m + 3)) out.push(buf.subarray(pos, end));
+    else stripped = true;
     pos = end;
   }
 
-  return { buffer: Buffer.concat(out), stripped };
+  if (!sawEnd) return null;
+  return { buffer: Buffer.concat(out), stripped, trailerBytes };
 }
 
 /**
@@ -131,7 +221,8 @@ export function stripJpegMetadata(buf) {
  *
  * @param {Buffer} buf uploaded bytes, already capped by the caller
  * @param {string} [declared] the request's own content-type — checked, not trusted
- * @returns {{ok: true, mime: string, ext: string, bytes: Buffer, exif_stripped: boolean}
+ * @returns {{ok: true, mime: string, ext: string, bytes: Buffer,
+ *            exif_stripped: boolean, trailer_dropped: boolean, notice: string}
  *          |{ok: false, reason: string, message: string}}
  */
 export function intakeFile(buf, declared = '') {
@@ -155,7 +246,10 @@ export function intakeFile(buf, declared = '') {
     };
   }
   if (mime !== 'image/jpeg') {
-    return { ok: true, mime, ext: MIME_EXT[mime], bytes: buf, exif_stripped: false };
+    return {
+      ok: true, mime, ext: MIME_EXT[mime], bytes: buf,
+      exif_stripped: false, trailer_dropped: false, notice: '',
+    };
   }
   const cleaned = stripJpegMetadata(buf);
   if (!cleaned) {
@@ -168,5 +262,21 @@ export function intakeFile(buf, declared = '') {
   // `exif_stripped: true` means the pass RAN, not that something was found. A
   // photo that never had EXIF is as stripped as one that did, and the flag on
   // the row has to answer 「did this file go through the stripper」.
-  return { ok: true, mime, ext: MIME_EXT[mime], bytes: cleaned.buffer, exif_stripped: true };
+  //
+  // A DROPPED TRAILER IS SAID OUT LOUD. Silent truncation is barred (AGENTS.md),
+  // and 「动态照片」 is a setting a teacher may not know is on — she would upload
+  // what her phone shows as a moving picture and get back a still one. The
+  // notice is teacher-facing at the moment of upload; nothing about the trailer
+  // is stored, because not storing it is the entire point.
+  return {
+    ok: true,
+    mime,
+    ext: MIME_EXT[mime],
+    bytes: cleaned.buffer,
+    exif_stripped: true,
+    trailer_dropped: cleaned.trailerBytes > 0,
+    notice: cleaned.trailerBytes > 0
+      ? '这张照片后面还挂着一段别的数据（动态照片常见），只留下了照片本身'
+      : '',
+  };
 }

@@ -30,6 +30,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { intakeFile, stripJpegMetadata } from '../src/upload-intake.mjs';
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEMO = path.join(HERE, '..');
 const ADMIN_TOKEN = 'upload-test-token';
@@ -141,6 +143,121 @@ async function upload(call, cookie, courseId, bytes, contentType, query = '') {
     return { status: r.status, json, text };
   });
 }
+
+// ===================== THE STRIPPER, WITHOUT A SERVER =====================
+//
+// These are pure and run in-process, because the interesting JPEGs are the ones
+// no fixture builder writes by accident: a phone's motion photo (a whole MP4
+// appended after the picture's end marker), a multi-picture JPEG (a second full
+// image, with its own APP1 and its own GPS, in the same place), and the APPn
+// segments that are not APP1. The server tests above prove the route; these
+// prove the rule the route depends on.
+
+/** One length-prefixed JPEG segment. */
+function seg(marker, payload) {
+  const len = Buffer.alloc(2);
+  len.writeUInt16BE(payload.length + 2);
+  return Buffer.concat([Buffer.from([0xff, marker]), len, Buffer.from(payload)]);
+}
+
+/** A structurally valid JPEG built out of the parts a test cares about. */
+function jpegOf({ segments = [], scan = Buffer.from('PIXELS'), trailer = Buffer.alloc(0) } = {}) {
+  return Buffer.concat([
+    Buffer.from([0xff, 0xd8]),
+    ...segments,
+    Buffer.from([0xff, 0xda, 0x00, 0x02]), Buffer.from(scan),
+    Buffer.from([0xff, 0xd9]),
+    Buffer.from(trailer),
+  ]);
+}
+
+test('every application segment except JFIF and ICC comes off, and so does anything after the end marker', () => {
+  const gps = 'GPS-22.5431-114.0579';
+  const file = jpegOf({
+    segments: [
+      seg(0xe0, Buffer.from('JFIF\0')),          // APP0 — kept
+      seg(0xe1, Buffer.from(`Exif\0\0${gps}`)),              // APP1 EXIF — off
+      seg(0xe1, Buffer.from('http://ns.adobe.com/xap/1.0/\0<x:xmpmeta/>')), // XMP — off
+      seg(0xe2, Buffer.from(`MPF\0${gps}`)),                 // APP2 MPF — off
+      seg(0xe2, Buffer.from('ICC_PROFILE\0\0profile-bytes')), // APP2 ICC — kept
+      seg(0xe3, Buffer.from(`Meta\0${gps}`)),                // APP3 — off
+      seg(0xed, Buffer.from(`Photoshop 3.0\0${gps}`)),       // APP13 IPTC — off
+      seg(0xfe, Buffer.from(`拍摄地点 ${gps}`)),              // COM — off
+    ],
+    // A motion photo's video, appended past the EOI. This is the byte range the
+    // old code copied verbatim, which is how a second copy of the coordinates
+    // walked through a function whose verdict said `exif_stripped: true`.
+    trailer: Buffer.concat([Buffer.from('ftypmp42'), Buffer.from(`moov${gps}`)]),
+  });
+
+  const out = intakeFile(file, 'image/jpeg');
+  assert.equal(out.ok, true);
+  assert.equal(out.exif_stripped, true);
+  assert.equal(out.trailer_dropped, true, '尾巴掉了这件事要说出来');
+  assert.match(out.notice, /只留下了照片本身/);
+
+  const bytes = out.bytes;
+  assert.ok(!bytes.includes(Buffer.from(gps)), '坐标一份都不许留下');
+  for (const gone of ['Exif', 'xmpmeta', 'MPF\0', 'Meta\0', 'Photoshop 3.0', '拍摄地点', 'ftypmp42']) {
+    assert.ok(!bytes.includes(Buffer.from(gone)), `${gone} 应该被去掉`);
+  }
+  assert.ok(bytes.includes(Buffer.from('JFIF')), 'JFIF 头要留着——没有它图渲染不对');
+  assert.ok(bytes.includes(Buffer.from('ICC_PROFILE')), 'ICC 色彩配置要留着');
+  assert.ok(bytes.includes(Buffer.from('PIXELS')), '图像数据要留着');
+  assert.deepEqual(bytes.subarray(-2), Buffer.from([0xff, 0xd9]), '文件在它自己的结束标记处结束');
+});
+
+test('an ordinary JFIF + ICC photo passes through whole', () => {
+  // The must-pass direction. A rule that only ever removes things is not a rule
+  // anybody can trust with a teacher's photographs.
+  const file = jpegOf({
+    segments: [
+      seg(0xe0, Buffer.from('JFIF\0')),
+      seg(0xe2, Buffer.from('ICC_PROFILE\0\0profile-bytes')),
+      seg(0xdb, Buffer.alloc(64, 0x10)),   // DQT — structural, must survive
+    ],
+  });
+  const out = intakeFile(file, 'image/jpeg');
+  assert.equal(out.ok, true);
+  assert.equal(out.exif_stripped, true, '「跑过一遍」，不是「找到了东西」');
+  assert.equal(out.trailer_dropped, false);
+  assert.equal(out.notice, '');
+  assert.deepEqual(out.bytes, file, '没有可去的东西时，一个字节都不动');
+});
+
+test('restart markers, stuffed bytes and a second scan do not end the picture early', () => {
+  // A progressive JPEG has several scans, and scan data legally contains FF 00
+  // and FF D0–D7. Treating the first FF as a marker would truncate the image;
+  // treating the rest of the file as scan data was the old bug. Both directions
+  // of the same boundary.
+  const scan1 = Buffer.from([0x41, 0xff, 0x00, 0x42, 0xff, 0xd0, 0x43]);
+  const file = Buffer.concat([
+    Buffer.from([0xff, 0xd8]),
+    seg(0xe1, Buffer.from('Exif\0\0SECRET')),
+    Buffer.from([0xff, 0xda, 0x00, 0x02]), scan1,
+    seg(0xc4, Buffer.alloc(8, 0x20)),                       // DHT between scans
+    Buffer.from([0xff, 0xda, 0x00, 0x02]), Buffer.from('SECONDSCAN'),
+    Buffer.from([0xff, 0xd9]),
+  ]);
+  const out = stripJpegMetadata(file);
+  assert.ok(out, '这是一个合法的渐进式 JPEG');
+  assert.equal(out.trailerBytes, 0);
+  assert.ok(!out.buffer.includes(Buffer.from('SECRET')));
+  assert.ok(out.buffer.includes(scan1), '第一段扫描数据要完整留着');
+  assert.ok(out.buffer.includes(Buffer.from('SECONDSCAN')), '第二段也是');
+});
+
+test('a JPEG that never reaches its end marker is refused, not half-kept', () => {
+  const truncated = Buffer.concat([
+    Buffer.from([0xff, 0xd8]),
+    seg(0xe1, Buffer.from('Exif\0\0SECRET')),
+    Buffer.from([0xff, 0xda, 0x00, 0x02]), Buffer.from('PIXELS'),
+  ]);
+  assert.equal(stripJpegMetadata(truncated), null, '读不通就不收');
+  const out = intakeFile(truncated, 'image/jpeg');
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'unreadable_jpeg');
+});
 
 // ============================ THE PRIVACY CLAIM ============================
 

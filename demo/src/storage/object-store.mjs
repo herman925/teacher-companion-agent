@@ -9,10 +9,10 @@
 // NO PRESIGNED URLs IN THE LOCAL TIER, and that is a security property rather
 // than a missing feature: every read of an uploaded file goes through a
 // session-checked handler in serve.mjs, so there is no address that works
-// without a cookie and therefore no link to leak. DATABASE.md §4 sketches a
-// client-direct `POST /api/materials/upload-url`; we deliberately do not do
-// that, because EXIF stripping is mandatory at ingest and a browser cannot be
-// trusted to have done it.
+// without a cookie and therefore no link to leak. DATABASE.md §4 used to
+// sketch a client-direct `POST /api/materials/upload-url`; that line is gone
+// and the reason is written down there, because EXIF stripping is mandatory at
+// ingest and a browser cannot be trusted to have done it.
 //
 // The objects live OUTSIDE anything the static file handler serves. With the
 // default data root that is `demo/.data/objects/…`, which the static handler

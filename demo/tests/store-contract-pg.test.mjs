@@ -103,7 +103,8 @@ test('both tiers expose the same surface — a method on one only is a defect', 
   for (const m of [
     'listFacts', 'recordFact', 'archiveFact', 'widenFact', 'touchFactsUsed',
     'listClasses', 'createClass', 'updateClass', 'setDefaultClass', 'setCourseClass',
-    'recordSignal', 'listSignals', 'getMaterial', 'listMaterialIds', 'adminListFacts',
+    'recordSignal', 'listSignals', 'getMaterial', 'listMaterialIds',
+    'adminListFacts', 'adminListClasses', 'adminListSignals',
   ]) {
     assert.equal(typeof json[m], 'function', `json-store 缺 ${m}`);
     assert.equal(typeof pgs[m], 'function', `pg-store 缺 ${m}`);
@@ -161,6 +162,31 @@ test('RLS is real: teacher A cannot read teacher B\'s course, and a nameless con
     const courseA = await store.createCourse(a.user.id, 'A 的醒狮');
     const courseB = await store.createCourse(b.user.id, 'B 的龙舟');
 
+    // The four tables that gained `_owner` policies in 003 and were never named
+    // here. `facts` is the one that matters most: it rides EVERY prompt, and a
+    // read failure on it is SILENT BY DESIGN — zero rows is indistinguishable
+    // from 「this class has no constraints」, so 「the policy is real」 is exactly
+    // the claim that must be executed rather than reasoned about.
+    const klassA = await store.createClass(a.user.id, { name: `A班${stamp}` });
+    const klassB = await store.createClass(b.user.id, { name: `B班${stamp}` });
+    const factA = await store.recordFact(a.user.id, {
+      scope: 'course', courseId: courseA.id, kind: 'equipment',
+      text: 'A 班没有鼓', quote: '我们班没有鼓', source: 'auto',
+    });
+    const factB = await store.recordFact(b.user.id, {
+      scope: 'course', courseId: courseB.id, kind: 'equipment',
+      text: 'B 班没有鼓', quote: '我们班没有鼓', source: 'auto',
+    });
+    await store.recordSignal(b.user.id, {
+      axis: 'guidance', signal: 'asked_for_detail', delta: 0.5, courseId: courseB.id,
+    });
+    await store.recordMaterial(b.user.id, courseB.id, {
+      kind: 'document',
+      mime_type: 'application/pdf',
+      cos_key: `courses/${courseB.id}/rls-${stamp}.pdf`,
+      size_bytes: 10,
+    });
+
     // The raw connection. DATABASE_URL points at app_rw — never at `postgres`,
     // which ignores every policy and would make all three blocks pass while
     // proving the opposite of what they claim.
@@ -196,17 +222,44 @@ test('RLS is real: teacher A cannot read teacher B\'s course, and a nameless con
     ));
     assert.equal(stolenMessages, 0, 'B 的消息同样不可见');
 
+    // …and the four tables that carry teacher content of their own.
+    for (const [what, sql, params] of [
+      ['记忆', 'SELECT count(*)::int AS n FROM facts WHERE id = $1', [factB.id]],
+      ['班级', 'SELECT count(*)::int AS n FROM classes WHERE id = $1', [klassB.id]],
+      ['互动信号', 'SELECT count(*)::int AS n FROM interaction_signals WHERE user_id = $1', [b.user.id]],
+      ['上传', 'SELECT count(*)::int AS n FROM materials WHERE course_id = $1', [courseB.id]],
+    ]) {
+      assert.equal(await asA(() => count(sql, params)), 0, `A 必须读不到 B 的${what}`);
+    }
+
     // ② MUST PASS — her own row still comes back. Without this the test would
     // also pass against a database that returns nothing to anybody, which is
     // isolation by breakage rather than by policy.
     const mine = await asA(() => count('SELECT count(*)::int AS n FROM courses WHERE id = $1', [courseA.id]));
     assert.equal(mine, 1, 'A 读自己的课程必须读得到——否则这个测试证明的是「全都坏了」');
+    assert.equal(
+      await asA(() => count('SELECT count(*)::int AS n FROM facts WHERE id = $1', [factA.id])), 1,
+      'A 读自己的记忆必须读得到——记忆读不到会被当成「这个班没有约束」，比读错更危险',
+    );
+    assert.equal(
+      await asA(() => count('SELECT count(*)::int AS n FROM classes WHERE id = $1', [klassA.id])), 1,
+      'A 读自己的班级必须读得到',
+    );
 
     // ③ The forgotten identity. No SET LOCAL anywhere in this transaction.
     await client.query('BEGIN');
     const nameless = await count('SELECT count(*)::int AS n FROM courses');
     const namelessMessages = await count('SELECT count(*)::int AS n FROM messages');
+    const namelessOther = {};
+    for (const table of ['facts', 'classes', 'interaction_signals', 'materials']) {
+      namelessOther[table] = await count(`SELECT count(*)::int AS n FROM ${table}`);
+    }
     await client.query('COMMIT');
     assert.equal(nameless, 0, '没有 SET LOCAL 的连接必须看到 0 行，而不是全部');
     assert.equal(namelessMessages, 0, '消息同理');
+    assert.deepEqual(
+      namelessOther,
+      { facts: 0, classes: 0, interaction_signals: 0, materials: 0 },
+      '记忆、班级、互动信号、上传：忘了报出身份的连接一行都不该看到',
+    );
   });
