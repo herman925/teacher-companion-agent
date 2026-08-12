@@ -218,10 +218,21 @@ const FIELD_LABELS = {
   content: '内容',
   available: '已有材料',
   narrative_spine: '叙事主线',
+  // 文化育人价值复盘 rides story_fragment.data rather than a card of its own —
+  // `culture_review` was never a legal artifact type (adapter TURN_SCHEMA).
+  culture_review: '文化育人价值复盘（只给你看）',
+  core_resource: '核心资源',
+  initial_relation: '起点关系',
+  evidence_of_change: '变化的证据',
+  ladder_position: '文化目标阶梯位置',
+  usable_statement: '可以这样说',
 };
 
-/** Strings carrying these markers render as provisional (待现场确认, §4). */
-const PROVISIONAL_RE = /待现场确认|待核实|需要核实|暂不明确|拿不准/;
+/** Strings carrying these markers render as provisional (§4).
+ * 待现场确认 ⇄ 待现场验证: the corpus writes 验证, so matching only 确认 left a
+ * node hedged exactly as instructed rendering as a settled assertion — the same
+ * drift harness.mjs HEDGE_RE carried. */
+const PROVISIONAL_RE = /待现场(确认|验证)|待核实|需要核实|暂不明确|拿不准/;
 
 /**
  * Render a scalar model value as an inline element (sanitized).
