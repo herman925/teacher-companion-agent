@@ -132,6 +132,28 @@ export const PROVIDERS = {
 /** Default failover chain (MODEL-APIS.md recommendation). */
 export const FAILOVER = ['minimax', 'glm', 'kimi'];
 
+/**
+ * One delta op — the shape `plan_delta` and `blueprint_delta` share
+ * (contract.zh.md §计划树). Kept permissive on `node`: the engine sanitizes it
+ * (plan-tsv.normalizePlan / blueprint-util.normalizeBlueprint) and a strict
+ * recursive node schema here would only teach vendors to drop children.
+ */
+const DELTA_SCHEMA = {
+  type: 'array',
+  items: {
+    type: 'object',
+    required: ['op', 'id'],
+    properties: {
+      op: { type: 'string', enum: ['set', 'update', 'remove'] },
+      id: { type: 'string' },
+      parent_id: { type: 'string' },
+      node: { type: 'object' },
+      confirmed_by_quote: { type: 'string' },
+      reason: { type: 'string' },
+    },
+  },
+};
+
 /** JSON Schema of the turn contract, used verbatim for GLM json_schema and as the MiniMax tool schema. */
 export const TURN_SCHEMA = {
   type: 'object',
@@ -171,7 +193,7 @@ export const TURN_SCHEMA = {
         type: 'object',
         required: ['type', 'title', 'data'],
         properties: {
-          type: { type: 'string', enum: ['entry_card', 'fit_screening', 'experience_plan', 'interview_card', 'question_pool', 'driving_questions', 'cycle_task', 'story_fragment'] },
+          type: { type: 'string', enum: ['entry_card', 'fit_screening', 'experience_plan', 'interview_card', 'question_pool', 'driving_questions', 'cycle_task', 'story_fragment', 'blueprint'] },
           title: { type: 'string' },
           data: { type: 'object' },
         },
@@ -185,6 +207,12 @@ export const TURN_SCHEMA = {
       },
       required: ['do_now', 'materials', 'bring_back', 'i_will'],
     },
+    // The two tree write channels. They were missing here while contract.zh.md
+    // called plan_delta 「计划树的唯一写入通道」: under json_schema/tool_call the
+    // model is constrained by THIS document, so the month it was told to emit
+    // had nowhere to go and vanished with no error to catch.
+    plan_delta: DELTA_SCHEMA,
+    blueprint_delta: DELTA_SCHEMA,
     state_delta: { type: 'object' },
     evidence_refs: { type: 'array', items: { type: 'string' } },
     round_complete: { type: 'boolean' },

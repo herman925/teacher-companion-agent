@@ -10,7 +10,10 @@ import { evidenceIds, evidenceIsGrounded, stageGateError } from './engine.mjs';
  * cannot be filed as a class constraint and ride every future prompt. */
 export const CHILD_CLAIM_RE = /(孩子们?|幼儿|儿童|全班|大家)(都|均|已经?|很)*(发现|理解|感受到|爱上|喜欢上?|学会|明白|掌握|着迷|兴奋)/;
 /** Hedges that make a child-claim sentence legitimate without evidence. */
-const HEDGE_RE = /(可能|或许|也许|如果|假如|待现场确认|建议.{0,6}观察|预计|设想|想象一下)/;
+// 待现场确认 ⇄ 待现场验证: the corpus and blueprint-util's status gloss both
+// write 「预设，待现场验证」, so accepting only 确认 made a node marked exactly as
+// instructed read as an unmarked assertion. Both spellings mean the same thing.
+const HEDGE_RE = /(可能|或许|也许|如果|假如|待现场(确认|验证)|建议.{0,6}观察|预计|设想|想象一下)/;
 
 /** Adult-slogan lexicon — forbidden in child-facing content (spec §6). */
 const ADULT_SLOGANS = ['传承精神', '弘扬传统文化', '弘扬文化', '文化责任', '文化自信', '民族精神', '爱国主义精神', '文化担当'];

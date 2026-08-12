@@ -1750,21 +1750,22 @@ function turnStoryExpand(state) {
             },
           ],
           gaps: ['卡点与转折（待补充：当时哪一步不顺利、怎么转的弯）', '教师反思（待补充：一段即可）', '目标与评估对照（待补充：当时的目标记录缺失）'],
-        },
-      },
-      {
-        type: 'culture_review',
-        title: '文化育人价值复盘（教师后台段落）',
-        data: {
-          core_resource: '孩子们动手做的这件作品，以及它背后的生活场景',
-          initial_relation: '起点：照片里的孩子最初只是动手参与，谈不上「认作自己的」（ev-st-photo-1）',
-          evidence_of_change: [
-            '「这是我们一起做出来的」——把作品认作自己的（ev-st-words-1）',
-            '对着镜头主动介绍自己做的东西——愿意表达、愿意介绍（ev-st-video-1）',
-            '「下次我还想再做一遍」——愿意继续探索（ev-st-words-2）',
-          ],
-          ladder_position: '证据撑到情感层的苗头（喜欢、愿意分享）；行动层（改良、服务、向外介绍）尚未充分看见——如实标注，不拔高',
-          usable_statement: '孩子与这份材料的关系从「做」走到「认、讲、想再做」；四条证据俱在，更大的价值结论暂不写。',
+          // Culture review rides the story card rather than a card of its own:
+          // `culture_review` was never in the adapter's artifact-type enum, so a
+          // schema-constrained vendor turn could not have produced it and only the
+          // mock ever showed it. stage5.zh.md now sends this section here and the
+          // ladder level to goals_assessment_axis.cultural_ladder_target.
+          culture_review: {
+            core_resource: '孩子们动手做的这件作品，以及它背后的生活场景',
+            initial_relation: '起点：照片里的孩子最初只是动手参与，谈不上「认作自己的」（ev-st-photo-1）',
+            evidence_of_change: [
+              '「这是我们一起做出来的」——把作品认作自己的（ev-st-words-1）',
+              '对着镜头主动介绍自己做的东西——愿意表达、愿意介绍（ev-st-video-1）',
+              '「下次我还想再做一遍」——愿意继续探索（ev-st-words-2）',
+            ],
+            ladder_position: '证据撑到情感层的苗头（喜欢、愿意分享）；行动层（改良、服务、向外介绍）尚未充分看见——如实标注，不拔高',
+            usable_statement: '孩子与这份材料的关系从「做」走到「认、讲、想再做」；四条证据俱在，更大的价值结论暂不写。',
+          },
         },
       },
     ],
@@ -1776,6 +1777,12 @@ function turnStoryExpand(state) {
     },
     state_delta: {
       completed_nodes: ['WF30', 'WF31b', 'WF32'],
+      // Whole-key overwrite: spread the snapshot so naming the ladder level does
+      // not erase what stage 2 wrote into the same key.
+      goals_assessment_axis: {
+        ...(state.goals_assessment_axis || {}),
+        cultural_ladder_target: 'affection',
+      },
     },
     evidence_refs: ['ev-st-photo-1', 'ev-st-words-1', 'ev-st-video-1', 'ev-st-words-2'],
     round_complete: true,

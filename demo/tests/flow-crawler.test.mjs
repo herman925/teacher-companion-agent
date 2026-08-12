@@ -142,7 +142,10 @@ test('crawler: story_export delivers the REAL expanded story, adjusts, then hori
   ], (state, turns) => {
     const expand = turns[4];
     const frag = expand.artifacts.find((a) => a.type === 'story_fragment');
-    const review = expand.artifacts.find((a) => a.type === 'culture_review');
+    // The culture review rides story_fragment.data — `culture_review` was never a
+    // legal artifact type in the adapter's enum, so asserting a card here was
+    // asserting a shape only the mock could produce.
+    const review = { data: (frag?.data || {}).culture_review || {} };
     return state.stage === 5
       && state.completed_nodes.includes('WF30')
       && state.completed_nodes.includes('WF31b')
@@ -151,9 +154,9 @@ test('crawler: story_export delivers the REAL expanded story, adjusts, then hori
       && (frag.data.chapters || []).length === 4
       && frag.data.chapters.every((c) => String(c.content || '').length >= 20)
       && frag.data.gaps.every((g) => g.includes('待补充'))
-      && Boolean(review)
       && (review.data.evidence_of_change || []).length >= 3
       && String(review.data.ladder_position || '').includes('尚未充分看见')
+      && expand.state_delta.goals_assessment_axis.cultural_ladder_target === 'affection'
       && expand.evidence_refs.length === 4;
   });
   // WF30 must NOT be marked before the expansion actually happened.
