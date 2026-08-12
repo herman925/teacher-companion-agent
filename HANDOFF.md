@@ -6,7 +6,7 @@ Latest session first. Keep entries short and factual; link instead of restating.
 
 **Read this before starting work, and update it when something ships.** It exists because on 2026-08-12 the harness, the data model and the persistence layer were all built while the prompts and the entire teacher-facing surface were not — so from a teacher's seat nothing had changed, and that only surfaced when Herman asked why the app was still a plain chat box. Per-run reports hid it; a standing list cannot.
 
-The design is **four layers** (UI + workflow + prompts + harness). Two are done.
+The design is **four layers** (UI + workflow + prompts + harness). Three are done; the UI is the one that is left, and it is the only one a teacher can see.
 
 ### Harness — done
 
@@ -36,15 +36,16 @@ The design is **four layers** (UI + workflow + prompts + harness). Two are done.
 - [ ] Uploads / LighthouseCOS — nothing exists; only comments marking where it goes
 - [ ] Importer has never run against real course files
 
-### Prompts — NOT STARTED
+### Prompts — done (2026-08-12)
 
-All seven files in `demo/src/prompts/` still describe the V1.3 chain. **This is why the agent still behaves like v1**: behaviour is prompt-driven, and nothing tells it Workflow v2 exists.
+All seven files rewritten for v2. Verified: every stage assembles (13–15KB, ~99% of it cache-stable), gate green, 610 demo tests pass.
 
-- [ ] `base` / `contract` / `stage*` rewritten for v2
-- [ ] Two openings, converging by turn three ([ADR-0010](docs/adr/0010-conversation-and-workbench-model.md) §10)
-- [ ] Threshold-gated intake, not fixed rounds
-- [ ] One-pass generation of `course_plan`
-- [ ] Node-scoped turn behaviour
+- [x] `base` / `contract` / `stage*` rewritten for v2
+- [x] Two openings, converging by turn three ([ADR-0010](docs/adr/0010-conversation-and-workbench-model.md) §10)
+- [x] Threshold-gated intake, not fixed rounds
+- [x] One-pass generation of `course_plan`
+- [x] Node-scoped turn behaviour
+- [ ] Retarget `prompt-lint` anchors — they still hard-require V1.3 literals (`WF03b`, `三问`, `切口卡`, `核心驱动问题`). The strings survive, but as traps: `核心驱动问题` now appears only inside its own prohibition, so a future edit that drops the sentence fails the lint for the wrong reason. Editing this needs a call on whether the corpus should carry V1.3 node labels at all ([harness/prompt-lint.mjs](harness/prompt-lint.mjs):71,73)
 
 ### UI — NOT STARTED
 
@@ -83,9 +84,25 @@ Keeping both interaction models is worse than either. Remove in the same change 
 
 ### Suggested order
 
-**Prompts first.** A correct screen over V1.3 behaviour is still the old product; correct behaviour in the old screen is at least the new product wearing the wrong clothes. Then the UI shell, removing the three superseded surfaces in the same change. Uploads and `revokeUser` are independent and can slot anywhere.
+**The UI shell is now the whole gap.** Prompts landed 2026-08-12, so the model behaves like v2 and writes a `course_plan` — into a workbench that renders none of it. Build the shell and remove the three superseded surfaces in the same change; keeping both interaction models is worse than either. Uploads, `revokeUser` and the axis wiring are independent and slot anywhere.
 
-## 2026-08-11 (latest) — the guards were built, but not called: wiring, and three ways round them
+## 2026-08-12 (latest) — the prompt corpus speaks v2, and the tree write channel was never open
+
+The corpus was the last layer still describing the V1.3 chain, which is why the agent behaved like v1 no matter what the engine could do. All seven files now describe Workflow v2. The rewrite is the smaller half of this entry; what rewriting them exposed is the larger half.
+
+**`plan_delta` had nowhere to go.** `TURN_SCHEMA` in [demo/src/adapter.mjs](demo/src/adapter.mjs) declared neither `plan_delta` nor `blueprint_delta`, while contract.zh.md called plan_delta 「计划树的唯一写入通道」. Under GLM `json_schema` and the MiniMax tool schema the model is constrained by that document — so every tree edit a vendor turn tried to emit vanished with no error to catch, and the whole v2 tree design was inert on the only path that reaches a real teacher. `parseTurn` (harness.mjs:180) and `applyPlanDelta` were both already correct; only the schema was missing. Verified end to end: a `plan_delta` now survives `parseTurn` and lands as a node with `status: ai_suggestion`, `work_status: draft`.
+
+**stage5 licensed unevidenced child behaviour.** It required a citation for 「发现／理解／学会」 and then said: if you cannot cite it, write the behaviour instead. `CHILD_CLAIM_RE` only matches interpretive verbs, so 「孩子们轮流试了三种固定办法，第三次才立住」 was fabricable past both the prompt and the runtime harness — in the one export that goes to 园长、教研员、评审. It now reads: no citation, no sentence. Behaviour included, one child included (「男孩A学会了……」 is the same assertion as 「孩子们学会了……」).
+
+**The same hedge spelling drifted in three places.** The corpus and blueprint-util both write 「预设，待现场验证」; `HEDGE_RE` (harness.mjs) and `PROVISIONAL_RE` (ui/render.js) both matched only 「待现场确认」. A node hedged exactly as instructed read as an unmarked assertion to the harness and rendered as settled to the teacher. Both now accept either spelling — a hedge failing in the direction of overconfidence is the wrong failure.
+
+**`culture_review` was a shape only the mock could produce.** mock.mjs emitted it as an artifact type that was never in the adapter enum, so under schema-enforced JSON no vendor turn could have. The review now rides `story_fragment.data` with the ladder level in `goals_assessment_axis.cultural_ladder_target`, which is where stage5 sends it. Verified in the browser against the real mock story turn: four sections, Chinese labels, no `[object Object]`, provisional chip firing.
+
+Two commits: `4f01e3e` (corpus + schema + evidence fixes), `3e5c21f` (labels + hedge spelling). Gate green on both.
+
+**Worth knowing before the UI work.** `org_type` is a free-form string in plan-tsv.mjs — the five types the prompts name match mock.mjs and the fixtures, but nothing validates them, so a model typo passes silently. And stage5's opening premise (「reaching this stage means real recorded child evidence exists」) is true against `stageGateError` case 2 *today*; relax that gate and the sentence becomes a false premise the model reasons from.
+
+## 2026-08-11 — the guards were built, but not called: wiring, and three ways round them
 
 Review-fix session on the runtime line. Every item below already had passing unit fixtures **while being dead on the path a logged-in teacher uses** — that is the shape of this whole session, and the lesson worth carrying: a green suite is coverage of a module, not proof that anything calls it.
 
