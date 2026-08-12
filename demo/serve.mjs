@@ -1010,7 +1010,9 @@ const server = http.createServer(async (req, res) => {
         if (!owned) return json(404, { ok: false, message: '课程不存在' });
       }
       // PUT /api/courses/:id/workbench — mirror of the unsent 工作台 state
-      // (批注 + card answers, §5c) so admin exports show work-in-progress.
+      // (card answers + the receipt ledger) so admin exports show
+      // work-in-progress, not only what was sent. setWorkbench MERGES: an
+      // absent key leaves that section alone.
       if (seg.length === 2 && seg[1] === 'workbench' && req.method === 'PUT') {
         let body = '';
         for await (const chunk of req) body += chunk;

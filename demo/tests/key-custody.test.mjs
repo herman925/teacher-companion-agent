@@ -169,6 +169,10 @@ function stubState(over = {}) {
     modelChoices: {},
     customCfg: { baseURL: '', model: '', label: '' },
     providerInfo: () => ({ id: 'glm', label: 'GLM', defaultModel: 'glm-5.2', hasEnvKey: false }),
+    // Which conversation the turn belongs to (ADR-0010 §1). A UI selection, not
+    // key material — but it IS a new free variable in the builder, so the scope
+    // proxy demands it be declared here on purpose.
+    activeSubject: () => 'course',
     ...over,
   };
 }
@@ -227,6 +231,20 @@ test('the builder still says which provider and model to use', () => {
   assert.equal(body.provider, 'glm');
   assert.equal(body.model, 'glm-5.2-air', 'a non-default model override must survive');
   assert.equal(body.message, '继续');
+});
+
+test('the builder carries the turn subject on BOTH tiers (ADR-0010 §1)', () => {
+  // The gap this closes: prompt-builder has accepted opts.subject and written a
+  // focus band all along, but no client ever sent one — so every stored row was
+  // course-level and node conversations could not be filtered after a reload.
+  // The persistence tier is the half that matters, because that body is the one
+  // that reaches a store with a `subject` column.
+  const stub = stubState({ activeSubject: () => 'w2.a1' });
+  const { chatRequestBody, courseChatRequestBody } = compileBuilders(mainSrc, stub);
+  assert.equal(chatRequestBody('继续').subject, 'w2.a1');
+  assert.equal(courseChatRequestBody('继续').subject, 'w2.a1', 'the stateless destructure must not strip the subject');
+  const atCourse = compileBuilders(mainSrc, stubState());
+  assert.equal(atCourse.chatRequestBody('继续').subject, 'course');
 });
 
 test('main.js keeps no key storage, and purges what older builds left behind', () => {

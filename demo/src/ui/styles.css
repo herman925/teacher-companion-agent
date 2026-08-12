@@ -590,8 +590,6 @@ html, body {
 .qcards.submitted .qcard-input, .qcards.submitted .chip { cursor: default; }
 
 /* 工作台 问题卡 queue: permanent stacked list inside the panel */
-.qcards.wb-queue { padding: 12px 14px; }
-.qcards.wb-queue .qcard { box-shadow: none; }
 .wb-empty { padding: 28px 18px; color: var(--ink-faded); font-size: 14px; line-height: 1.8; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1273,7 +1271,7 @@ body.rail-pinned .composer { left: 260px; }
 .chip { transition: background-color 120ms ease-out, border-color 120ms ease-out, transform 120ms ease-out; }
 .chip:active { transform: scale(0.97); } /* register 3: press, release — never past 1.03 */
 
-.text-btn, .icon-btn, .qcards-arrow, .qcard-lock, .stage-chip, .wb-tab {
+.text-btn, .icon-btn, .qcards-arrow, .qcard-lock, .stage-chip {
   transition: background-color 140ms ease-out, color 140ms ease-out, border-color 140ms ease-out, box-shadow 140ms ease-out;
 }
 
@@ -1315,7 +1313,7 @@ body.rail-pinned .composer { left: 260px; }
 
 @media (prefers-reduced-motion: reduce) {
   .artifact-card, .qcard, .closure-card, .teacher-msg, .chip,
-  .text-btn, .icon-btn, .qcards-arrow, .qcard-lock, .stage-chip, .wb-tab,
+  .text-btn, .icon-btn, .qcards-arrow, .qcard-lock, .stage-chip,
   .input-field, .qcard-input, .qcards-seg { transition: none; }
   /* Hold-to-send: no fill animation — the button just darkens while held. */
   .send-btn.holding::after { transition: none; width: 100%; opacity: 0.35; }
@@ -1498,7 +1496,10 @@ body.rail-pinned .composer { left: 260px; }
 .bp-rollup { font-size: 11px; color: var(--persimmon); }
 .bp-legend { display: flex; gap: 8px; flex-wrap: wrap; margin-top: calc(var(--sp) * 1); opacity: 0.85; }
 
-/* -- blueprint 导图 view (PC only; deterministic SVG from blueprint-map-layout) */
+/* -- 列表 | 导图 representation switch. The SVG map renderer this block used to
+   dress is gone (ADR-0010 §3): it opened a click-through node popover, an input
+   surface a read-only panel must not have. 导图 is now the plan tree under a CSS
+   scale — see .plan-tree[data-view="map"]. */
 .bp-view-toggle { display: inline-flex; gap: 0; margin-left: auto; border: 1px solid var(--green-wash); border-radius: 999px; overflow: hidden; }
 .bp-view-toggle + .bp-version { margin-left: 10px; }
 .bp-view-btn {
@@ -1506,59 +1507,6 @@ body.rail-pinned .composer { left: 260px; }
   padding: 3px 12px; cursor: pointer; font-family: inherit;
 }
 .bp-view-btn.active { background: var(--green-wash); color: var(--green); }
-.bp-map { position: relative; }
-.bp-map-scroll { overflow: auto; max-height: 520px; padding: calc(var(--sp) * 1.5) 2px; }
-/* paper-fade scroll hints: "there's more tree" is felt, not guessed */
-.bp-map::before, .bp-map::after { content: ''; position: absolute; pointer-events: none; z-index: 1; }
-.bp-map::after { top: 0; right: 0; bottom: 0; width: 12px; background: linear-gradient(to left, var(--cream), transparent); }
-.bp-map::before { left: 0; right: 0; bottom: 0; height: 12px; background: linear-gradient(to top, var(--cream), transparent); }
-.bp-map-svg { display: block; }
-.bp-edge { fill: none; stroke: var(--ink-faded); stroke-width: 1.5; stroke-linecap: round; opacity: 0.45; }
-.bp-edge-hyp { stroke: var(--ink-faded); stroke-dasharray: 4 3; opacity: 0.7; }
-/* Status palette (design spec): mostly monochrome-warm — hue lives in the
-   border, dash means tentative; the card stays serene. No gold (closure-only). */
-.bp-mnode rect { fill: var(--surface); stroke: var(--ink-faded); stroke-width: 1; }
-.bp-mnode text { font-size: 13px; fill: var(--ink); font-family: var(--font-serif); }
-.bp-num { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-faded); }
-.bp-m-confirmed rect { fill: var(--green-wash); stroke: var(--status-truth); stroke-width: 2; }
-.bp-m-teacher_preset rect { fill: var(--status-teacher-wash); stroke: var(--status-teacher); stroke-width: 1.5; }
-.bp-m-ai_suggestion rect { stroke: var(--status-ai); stroke-width: 1.5; }
-.bp-m-hypothesis rect, .bp-m-pending_validation rect { fill: var(--status-guess-wash); stroke: var(--status-guess); stroke-dasharray: 4 3; stroke-width: 1.5; }
-.bp-m-hypothesis text, .bp-m-pending_validation text { fill: var(--status-guess); }
-.bp-m-branch { cursor: pointer; }
-.bp-m-branch:hover rect { stroke-width: 2; }
-.bp-fold-badge { font-size: 11px; fill: var(--persimmon); font-family: var(--font-sans); }
-.bp-fold-ok { fill: var(--green); }
-/* Motion. The OUTER g's SVG transform attribute does positioning; ALL motion
-   lives on the inner group (.bp-mnode-in) so CSS never fights the layout.
-   Entry grows out of the parent's direction (x offset toward parent) with the
-   edge drawing on ~120ms behind — branch extends, then the leaf appears. */
-.bp-map-enter .bp-mnode-in {
-  animation: bp-node-in 640ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  transform-origin: left center; transform-box: fill-box;
-}
-@keyframes bp-node-in {
-  from { opacity: 0; transform: translateX(-12px) scale(0.94); }
-  to { opacity: 1; transform: translateX(0) scale(1); }
-}
-.bp-edge-draw {
-  stroke-dasharray: 1; stroke-dashoffset: 1;
-  animation: bp-edge-on 720ms ease-out both;
-}
-@keyframes bp-edge-on { to { stroke-dashoffset: 0; } }
-.bp-map-enter .bp-edge-hyp { animation: bp-fade 720ms ease-out both; }
-@keyframes bp-fade { from { opacity: 0; } to { opacity: 0.7; } }
-/* Reflow after fold/expand: persisting nodes glide (FLIP), revealed ones fade in. */
-.bp-flip { transition: transform 600ms cubic-bezier(0.22, 1, 0.36, 1); }
-.bp-node-appear { animation: bp-appear 480ms ease-out both; }
-@keyframes bp-appear { from { opacity: 0; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) {
-  .bp-map-enter .bp-mnode-in, .bp-edge-draw, .bp-map-enter .bp-edge-hyp, .bp-node-appear { animation: none; }
-  .bp-flip { transition: none; }
-}
-.bp-mnode:focus-visible rect { outline: none; stroke: var(--green); stroke-width: 2.5; }
-.bp-mnode:focus-visible { outline: none; }
-
 /* ------------------------------------------- 蓝图 workspace panel (§5b) */
 :root { --bp-w: 460px; } /* 工作台 default share widened (§5b) */
 .bp-panel {
@@ -1581,7 +1529,6 @@ body.rail-pinned .composer { left: 260px; }
 .bp-panel-head .bp-version { margin-left: auto; }
 .bp-panel-close { width: 34px; height: 34px; }
 .bp-panel-body { flex: 1; overflow: auto; padding: 14px 16px 24px; }
-.bp-panel-body .bp-map-scroll { max-height: none; }
 .bp-panel-resizer {
   position: absolute; left: -4px; top: 0; bottom: 0; width: 8px;
   cursor: col-resize; touch-action: none;
@@ -1615,52 +1562,16 @@ body.rail-pinned .composer { left: 260px; }
   body.bp-sheet .bp-panel-body { padding-bottom: 140px; } /* keep the tail clear of the composer */
   body.bp-sheet .bp-fab { display: none; }
 }
-/* node-detail popover (map view) */
-.bp-pop {
-  position: absolute;
-  z-index: 3;
-  max-width: 320px;
-  background: var(--surface);
-  border: 1px solid var(--border-warm);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-card-lift);
-  padding: 12px 14px;
-}
-.bp-pop-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
-.bp-pop-head strong { font-family: var(--font-serif); color: var(--green); }
-.bp-pop-head .bp-num { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faded); }
-.bp-pop-body { font-size: 13.5px; line-height: 1.7; color: var(--ink); }
-.bp-fold-hit circle { fill: var(--surface); stroke: var(--border-warm); }
-.bp-fold-hit text { font-size: 11px; fill: var(--ink-faded); font-family: var(--font-sans); }
-.bp-fold-hit:hover circle { stroke: var(--green); }
 /* the hidden attribute must always win over the panel's display:flex */
 .bp-panel[hidden] { display: none !important; }
 .bp-fab[hidden] { display: none !important; }
-/* rationale detail + ✓确认 (living panel only) */
+/* rationale detail (blueprint nodes only — plan nodes put their 依据 in body) */
 .bp-rationale { margin: 4px 0 8px calc(2.2em + 8px); padding: 8px 10px; background: var(--paper); border-left: 2px solid var(--border-warm); border-radius: 6px; font-size: 12.5px; }
 .bp-rationale-row { display: flex; gap: 8px; line-height: 1.6; }
 .bp-rationale-label { flex: none; color: var(--ink-faded); font-size: 11px; padding-top: 2px; min-width: 4em; }
-.bp-pop .bp-rationale { margin: 8px 0 0; }
-.bp-confirm-btn {
-  appearance: none; border: 1px solid var(--status-truth); background: transparent;
-  color: var(--status-truth); font-size: 11px; border-radius: 999px; padding: 1px 8px;
-  cursor: pointer; margin-left: 4px; font-family: inherit;
-}
-.bp-confirm-btn:hover { background: var(--status-truth); color: var(--on-accent); }
-/* aligned status gutter (MS-Word-comments ergonomics) + filter pills */
+/* aligned status gutter */
 .bp-gutter { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .bp-leaf-line, .bp-module > summary, .bp-branch > summary { width: 100%; }
-.bp-filtered-out { display: none !important; }
-.bp-filter-row { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; align-items: center; }
-.bp-filter-pill {
-  appearance: none; font-size: 11px; border-radius: 999px; padding: 2px 10px;
-  cursor: pointer; font-family: inherit; background: transparent; border: 1.5px solid var(--border-warm); color: var(--ink-faded);
-}
-.bp-filter-pill.bp-confirmed.active { background: var(--status-truth); color: var(--on-accent); border-color: var(--status-truth); }
-.bp-filter-pill.bp-teacher_preset.active { background: var(--status-teacher-wash); color: var(--status-teacher); border-color: var(--status-teacher); }
-.bp-filter-pill.bp-ai_suggestion.active { background: var(--persimmon-wash); color: var(--status-ai); border-color: var(--status-ai); }
-.bp-filter-pill.bp-hypothesis.active { background: var(--status-guess-wash); color: var(--status-guess); border-color: var(--status-guess); }
-.bp-bulk { font-size: 11px; min-height: 26px; padding: 2px 10px; color: var(--status-truth); border-color: var(--status-truth); margin-left: auto; }
 
 /* chat-side blueprint pointer chip (spec 2026-07-20): blueprint lives in the
    panel; chat carries only this click-through */
@@ -1676,36 +1587,7 @@ body.rail-pinned .composer { left: 260px; }
 .bp-chat-chip-pending { color: var(--status-ai); font-size: 12px; }
 .bp-chat-chip-cta { color: var(--green); font-size: 12px; margin-left: auto; }
 
-/* per-node 批注 (spec 2026-07-20) */
-.bp-comment-btn {
-  appearance: none; border: 1px solid var(--border-warm); background: transparent;
-  color: var(--ink-faded); font-size: 11px; border-radius: 999px; padding: 1px 8px;
-  cursor: pointer; margin-left: 4px; font-family: inherit;
-}
-.bp-comment-btn:hover { border-color: var(--status-ai); color: var(--status-ai); }
-.bp-comment-btn.has-comment { border-color: var(--status-ai); color: var(--status-ai); background: var(--persimmon-wash); }
-.bp-comment-editor { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0 8px calc(2.2em + 8px); }
-.bp-pop .bp-comment-editor { margin: 8px 0 0; }
-.bp-comment-input {
-  flex: 1; min-height: 56px; resize: vertical; font-family: inherit; font-size: 13px;
-  color: var(--ink); background: var(--paper); border: 1px solid var(--border-warm);
-  border-radius: 8px; padding: 8px 10px;
-}
-.bp-comment-input:focus { outline: none; border-color: var(--status-ai); }
-.bp-comment-close {
-  appearance: none; border: none; background: transparent; color: var(--ink-faded);
-  font-size: 12px; cursor: pointer; font-family: inherit; padding: 4px 2px;
-}
-/* ------------------------------------------- 工作台 tabs + badges (§5b) */
-.wb-tabs { display: flex; align-items: center; gap: 8px; width: 100%; }
-.wb-tab {
-  appearance: none; font-family: var(--font-serif); font-size: 15px; font-weight: 600;
-  background: transparent; border: none; color: var(--ink-faded);
-  padding: 6px 10px; border-radius: 8px; cursor: pointer;
-  display: inline-flex; align-items: center; gap: 6px;
-}
-.wb-tab:hover { background: var(--cream); }
-.wb-tab.active { color: var(--green); background: var(--green-wash); }
+/* ------------------------------------------------ 工作台 badge (mobile FAB) */
 .wb-badge {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; height: 18px; padding: 0 5px;
@@ -1714,7 +1596,6 @@ body.rail-pinned .composer { left: 260px; }
 }
 .wb-badge-red { background: var(--brick); color: var(--on-accent, #fff); }
 .wb-badge[hidden] { display: none; }
-.wb-tabs .bp-panel-close { margin-left: 6px; }
 .craft-btn {
   appearance: none; font: inherit; font-size: 13px; cursor: pointer;
   margin-left: auto; padding: 6px 16px; min-height: 34px;
@@ -1726,7 +1607,6 @@ body.rail-pinned .composer { left: 260px; }
 .bp-head-controls[hidden] { display: none; }
 .bp-legend-btn { font-size: 12px; color: var(--ink-faded); min-height: 28px; }
 .bp-legend-btn:hover { color: var(--green); }
-.wb-cards-body[hidden] { display: none; }
 .bp-fab-badge { position: absolute; top: -6px; left: -8px; writing-mode: horizontal-tb; letter-spacing: 0; }
 
 /* ---------------------------------------------- mini modals (图例 / 制作) */
@@ -2113,3 +1993,516 @@ body.rail-pinned .composer { left: 260px; }
   .dev-panel { animation: none; }
   .mcard, .devopen, .cap-switch, .cap-switch::after { transition: none; }
 }
+
+/* ================================================================ Workflow v2
+   课程计划树 in the read-only 工作台, node mode on the left, receipts, and the
+   step-zero panel (ADR-0010). Same cream/persimmon family as .artifact-card and
+   the bp-* chips — nothing here introduces a new hue.
+
+   The two status axes never share a channel:
+     provenance  (.plan-badge-prov) — HUE + FILL, fully rounded pill.
+     work_status (.plan-badge-work) — NO hue: 3px corners, hairline outline,
+                                      weight and marker shape carry the state.
+   A reader can name either badge without reading its text. Do not give
+   .plan-badge-work a status token; do not make .plan-badge-prov square.
+
+   The panel is read-only: the only interactive elements below are
+   .plan-open-btn (open conversation), the branch summary (expand/collapse),
+   and the zoom group. Nothing is styled to look like a field. */
+
+/* ---- panel head ---- */
+.plan-head-title {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--green);
+  letter-spacing: 0.02em;
+  padding: 6px 2px;
+  flex: none;
+}
+.bp-panel-head #plan-version { margin-left: auto; }
+#plan-view-toggle { margin-left: 10px; }
+#plan-view-toggle + #plan-version { margin-left: 10px; }
+
+.plan-zoom {
+  display: inline-flex; align-items: center; gap: 2px;
+  border: 1px solid var(--border-warm); border-radius: 999px;
+  padding: 1px 2px;
+}
+.plan-zoom[hidden] { display: none; }
+.plan-zoom-btn {
+  appearance: none; font: inherit; font-size: 12px; line-height: 1;
+  background: transparent; border: 0; color: var(--ink-faded);
+  min-width: 24px; height: 24px; border-radius: 999px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.plan-zoom-btn:hover { background: var(--green-wash); color: var(--green); }
+.plan-zoom-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
+#plan-zoom-reset { font-variant-numeric: tabular-nums; padding: 0 6px; }
+
+/* ---- 状态计数 (read-only; spans, never buttons) ---- */
+.plan-tally {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  width: 100%; padding-top: 2px;
+}
+.plan-tally-group { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.plan-tally-group + .plan-tally-group {
+  margin-left: 6px; padding-left: 10px; border-left: 1px solid var(--border-warm);
+}
+.plan-tally-pill {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  font-size: 11px; line-height: 1.6; white-space: nowrap;
+  border-radius: 999px; padding: 1px 9px;
+  border: 1px solid var(--border-warm); color: var(--ink-faded);
+  cursor: default; /* read-only: no pointer, no press state */
+}
+.plan-tally-pill b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.plan-tally-pill[data-status="confirmed"] { border-color: var(--status-truth); color: var(--status-truth); }
+.plan-tally-pill[data-status="teacher_preset"] { border-color: var(--status-teacher); color: var(--status-teacher); background: var(--status-teacher-wash); }
+.plan-tally-pill[data-status="ai_suggestion"] { border-color: var(--status-ai); color: var(--status-ai); background: var(--persimmon-wash); }
+.plan-tally-pill[data-status="hypothesis"],
+.plan-tally-pill[data-status="pending_validation"] { border-color: var(--status-guess); border-style: dashed; color: var(--status-guess); background: var(--status-guess-wash); }
+/* the work half of the row stays hue-free, matching the badge rule */
+.plan-tally-pill[data-work] { border-radius: 3px; }
+
+/* ---- 最近处理 strip ---- */
+.plan-recent {
+  display: flex; gap: 6px; flex-wrap: nowrap;
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  padding-bottom: 8px; margin-bottom: 10px;
+  border-bottom: 1px solid var(--border-warm);
+}
+.plan-recent[hidden], .plan-recent:empty { display: none; }
+.plan-recent-chip {
+  appearance: none; font: inherit; font-size: 12px; cursor: pointer;
+  flex: none; max-width: 15em; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  background: var(--cream); border: 1px solid var(--border-warm);
+  border-radius: 999px; padding: 3px 12px; color: var(--ink);
+  text-align: left;
+}
+.plan-recent-chip:hover { border-color: var(--green); color: var(--green); }
+.plan-recent-chip:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
+.plan-recent-chip[aria-current="true"] { background: var(--green-wash); border-color: var(--green); color: var(--green); }
+.plan-recent-num { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-faded); margin-right: 6px; }
+
+/* ---- the plan tree ---- */
+.plan-tree { display: flex; flex-direction: column; gap: 2px; }
+.plan-tree[data-view="map"] {
+  --plan-zoom: 1;
+  overflow: auto;
+  padding: calc(var(--sp) * 1.5) 2px;
+}
+.plan-tree[data-view="map"] > .plan-node {
+  transform: scale(var(--plan-zoom));
+  transform-origin: top left;
+}
+
+.plan-node { border-left: 2px solid var(--green-wash); padding-left: calc(var(--sp) * 1.5); }
+.plan-node .plan-node { margin-left: var(--sp); }
+.plan-node[data-kind="phase"] { border-left-color: var(--green); margin-top: calc(var(--sp) * 1.5); }
+.plan-node[data-kind="phase"]:first-child { margin-top: 0; }
+.plan-node[data-kind="activity"] { border-left-style: dotted; }
+
+.plan-node-line {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  width: 100%; padding: 3px 0;
+  border-radius: 6px;
+}
+.plan-branch > .plan-node-line { cursor: pointer; list-style: none; user-select: none; }
+.plan-branch > .plan-node-line::-webkit-details-marker { display: none; }
+.plan-branch > .plan-node-line::before {
+  content: '▸'; color: var(--ink-faded); font-size: 12px; flex: none;
+  transition: transform 140ms ease-out;
+}
+.plan-branch[open] > .plan-node-line::before { transform: rotate(90deg); }
+.plan-node[data-kind="phase"] > .plan-node-line .plan-open-btn {
+  font-family: var(--font-serif); font-weight: 600; color: var(--green); font-size: 15px;
+}
+.plan-node[data-kind="week"] > .plan-node-line .plan-open-btn { font-weight: 500; }
+
+.plan-num {
+  flex: none; font-family: var(--font-mono); font-size: 11px;
+  color: var(--ink-faded); font-variant-numeric: tabular-nums; min-width: 2.6em;
+}
+
+.plan-open-btn {
+  appearance: none; background: transparent; border: 0; padding: 0;
+  font: inherit; color: var(--ink); text-align: left; cursor: pointer;
+  border-bottom: 1px solid transparent;
+  max-width: 100%; overflow-wrap: anywhere;
+}
+.plan-open-btn:hover { color: var(--green); border-bottom-color: var(--green-wash); }
+.plan-open-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; border-radius: 3px; }
+
+.plan-dates {
+  flex: none; font-family: var(--font-mono); font-size: 11px;
+  color: var(--ink-faded); white-space: nowrap; letter-spacing: 0.02em;
+}
+.plan-body { font-size: 13.5px; color: var(--ink-faded); line-height: 1.7; margin: 2px 0 6px calc(2.6em + 8px); }
+
+/* ---- badges: two axes, two channels ---- */
+.plan-badges { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+
+/* axis 1 — provenance: hue + fill, fully rounded (same shapes as .bp-chip) */
+.plan-badge-prov {
+  font-size: 11px; line-height: 1.6; white-space: nowrap;
+  border-radius: 999px; padding: 1px 8px;
+  border: 1px solid transparent;
+}
+.plan-badge-prov[data-status="confirmed"] { background: var(--status-truth); color: var(--on-accent); border-color: var(--status-truth); }
+.plan-badge-prov[data-status="teacher_preset"] { background: var(--status-teacher-wash); border-color: var(--status-teacher); color: var(--status-teacher); }
+.plan-badge-prov[data-status="ai_suggestion"] { background: var(--persimmon-wash); border-color: var(--status-ai); color: var(--status-ai); }
+.plan-badge-prov[data-status="hypothesis"],
+.plan-badge-prov[data-status="pending_validation"] { background: var(--status-guess-wash); border-color: var(--status-guess); border-style: dashed; color: var(--status-guess); }
+
+/* axis 2 — work_status: square corners, hairline faded outline, NO status hue.
+   The leading marker is a shape, so the state survives a monochrome print. */
+.plan-badge-work {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; line-height: 1.6; white-space: nowrap;
+  border-radius: 3px; padding: 0 7px;
+  border: 1px solid var(--ink-faded);
+  background: transparent; color: var(--ink-faded);
+  font-weight: 400;
+}
+.plan-badge-work::before {
+  content: ''; flex: none; width: 7px; height: 7px;
+  border: 1.5px solid currentColor;
+}
+.plan-badge-work[data-work="draft"] { border-style: dotted; opacity: 0.85; }
+.plan-badge-work[data-work="draft"]::before { border-radius: 50%; border-style: dotted; }
+.plan-badge-work[data-work="adjusting"]::before { transform: rotate(45deg); }
+.plan-badge-work[data-work="needs_review"] { border-width: 1.5px; font-weight: 500; color: var(--ink); border-color: var(--ink); }
+.plan-badge-work[data-work="needs_review"]::before { border-radius: 50%; background: currentColor; }
+.plan-badge-work[data-work="settled"] { color: var(--ink); border-color: var(--ink); }
+.plan-badge-work[data-work="settled"]::before { background: currentColor; }
+
+/* message count — quiet, hidden at zero by the renderer */
+.plan-badge-msgs {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; font-variant-numeric: tabular-nums;
+  color: var(--ink-faded); white-space: nowrap;
+}
+.plan-badge-msgs::before {
+  content: ''; width: 9px; height: 8px; flex: none;
+  border: 1px solid currentColor; border-radius: 2px 2px 2px 0;
+}
+.plan-badge-msgs[data-count="0"] { display: none; }
+
+/* 待复查 — dotted brick outline, the one warm alarm on the tree */
+.plan-badge-stale {
+  font-size: 11px; line-height: 1.6; white-space: nowrap;
+  border-radius: 3px; padding: 0 7px;
+  border: 1px dotted var(--brick); color: var(--brick);
+  background: rgba(168, 80, 60, 0.06);
+}
+.plan-rollup { font-size: 11px; color: var(--persimmon); white-space: nowrap; }
+
+.plan-node.is-open > .plan-node-line {
+  background: var(--green-wash);
+  box-shadow: inset 3px 0 0 var(--green);
+}
+.plan-node.is-open > .plan-node-line .plan-open-btn { color: var(--green); font-weight: 600; }
+
+/* ---- step zero ---- */
+.step-zero { display: flex; flex-direction: column; gap: calc(var(--sp) * 2); }
+.step-zero-headline {
+  font-family: var(--font-serif); font-size: 16px; font-weight: 600;
+  line-height: 1.75; color: var(--ink); margin: 0;
+}
+.step-zero-checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.checklist-item {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 13.5px; line-height: 1.7;
+  padding: 5px 10px; border-radius: 8px;
+  border: 1px solid var(--border-warm); background: var(--surface);
+}
+.checklist-item::before {
+  content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%;
+  border: 1.5px solid var(--ink-faded); align-self: center;
+}
+.checklist-item[data-state="known"] { border-color: var(--green-wash); background: var(--green-wash); }
+.checklist-item[data-state="known"]::before { border-color: var(--status-truth); background: var(--status-truth); }
+.checklist-item[data-state="missing"] { border-style: dashed; background: transparent; }
+.checklist-item[data-state="missing"]::before { border-style: dashed; }
+.checklist-label { flex: none; color: var(--ink); }
+.checklist-item[data-state="missing"] .checklist-label { color: var(--ink-faded); }
+.checklist-value {
+  color: var(--ink-faded); font-size: 12.5px;
+  overflow-wrap: anywhere; min-width: 0;
+}
+
+.step-zero-sample {
+  border: 1px solid var(--border-warm); border-radius: var(--radius-card);
+  background: var(--cream); padding: 10px 14px;
+}
+.step-zero-sample > summary {
+  cursor: pointer; list-style: none; font-size: 13px; color: var(--ink-faded);
+}
+.step-zero-sample > summary::-webkit-details-marker { display: none; }
+.step-zero-sample > summary::before { content: '▸ '; }
+.step-zero-sample[open] > summary::before { content: '▾ '; }
+.step-zero-sample[open] > summary { margin-bottom: 8px; color: var(--green); }
+.step-zero-sample-body { font-size: 13px; line-height: 1.75; color: var(--ink); }
+.step-zero-sample-body p { margin: 0 0 6px; }
+.step-zero-sample-body p:last-child { margin-bottom: 0; }
+
+/* ---- left panel: node mode ---- */
+.node-view {
+  max-width: var(--col); margin: 0 auto calc(var(--sp) * 3);
+  background: var(--surface);
+  border: 1px solid var(--border-warm);
+  border-left: 3px solid var(--green);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: calc(var(--sp) * 2.5) calc(var(--sp) * 3);
+}
+.node-view[hidden] { display: none !important; }
+.node-view-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.node-view-head .plan-badges { margin-left: auto; }
+#node-view-close { margin-left: auto; flex: none; }
+.node-view-body { margin-top: calc(var(--sp) * 2); display: flex; flex-direction: column; gap: calc(var(--sp) * 1.5); }
+.node-greeting {
+  font-family: var(--font-serif); font-size: 13px; color: var(--ink-faded);
+  padding: 0 4px 6px;
+}
+.node-greeting[hidden] { display: none; }
+
+/* subject attachment chip in the composer */
+.subject-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: var(--green);
+  background: var(--green-wash); border: 1px solid var(--green);
+  border-radius: 999px; padding: 2px 6px 2px 12px;
+  margin: 0 0 6px 2px; max-width: 100%;
+}
+.subject-chip[hidden] { display: none; }
+.subject-chip-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subject-chip-x {
+  appearance: none; font: inherit; font-size: 12px; line-height: 1; cursor: pointer;
+  border: 0; background: transparent; color: var(--green);
+  width: 20px; height: 20px; border-radius: 50%; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.subject-chip-x:hover { background: var(--surface); }
+.subject-chip-x:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
+
+/* pending question-card strip (replaces the 问题卡 tab) */
+.pending-strip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 2px 8px; font-size: 12.5px; color: var(--ink-faded);
+}
+.pending-strip[hidden] { display: none; }
+.pending-count { color: var(--persimmon); font-variant-numeric: tabular-nums; }
+#pending-jump { font-size: 12.5px; min-height: 28px; padding: 3px 12px; margin-left: auto; }
+
+/* ---- receipts: one compact line per turn + a toast with undo ---- */
+.turn-receipt {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  margin-top: 6px; padding: 4px 0 0 2px;
+  font-size: 12px; line-height: 1.7; color: var(--ink-faded);
+  border-top: 1px dotted var(--border-warm);
+}
+.turn-receipt::before { content: '·'; color: var(--green); flex: none; }
+.receipt-part + .receipt-part::before { content: ' · '; color: var(--border-warm); }
+.receipt-part[data-kind="confirm"] { color: var(--status-truth); }
+.receipt-part[data-kind="edit"] { color: var(--status-ai); }
+.turn-receipt.is-undone { opacity: 0.7; }
+.receipt-detail-btn, .receipt-undo {
+  appearance: none; font: inherit; font-size: 12px; cursor: pointer;
+  background: transparent; border: 0; padding: 0 2px;
+  color: var(--ink-faded); border-bottom: 1px solid var(--border-warm);
+}
+.receipt-detail-btn:hover { color: var(--green); border-bottom-color: var(--green); }
+.receipt-undo { color: var(--persimmon); border-bottom-color: var(--persimmon-wash); }
+.receipt-undo:hover { border-bottom-color: var(--persimmon); }
+.receipt-detail-btn:focus-visible, .receipt-undo:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+.toast-host {
+  position: fixed; left: 0; right: 0; bottom: 96px; z-index: 30;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  pointer-events: none; /* idle host never eats a click */
+  padding: 0 16px;
+}
+.toast-host:empty { display: none; }
+body.has-bp .toast-host { right: var(--bp-w); }
+.receipt-toast {
+  pointer-events: auto;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  max-width: min(var(--col), 100%);
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--border-warm); border-left: 3px solid var(--green);
+  border-radius: var(--radius-card); box-shadow: var(--shadow-card-lift);
+  padding: 10px 16px; font-size: 13px; line-height: 1.7;
+  animation: receipt-toast-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.receipt-toast.is-undone { border-left-color: var(--ink-faded); }
+.receipt-toast .receipt-undo {
+  margin-left: auto; font-size: 12.5px;
+  border: 1px solid var(--persimmon); border-radius: 999px;
+  padding: 2px 12px; min-height: 26px; color: var(--persimmon);
+}
+.receipt-toast .receipt-undo:hover { background: var(--persimmon-wash); }
+.receipt-toast.leaving { animation: receipt-toast-out 180ms ease-out both; }
+@keyframes receipt-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes receipt-toast-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(6px); }
+}
+
+/* ---- 图例: two labelled sections, one per axis ---- */
+.legend-section { margin: 0; padding: 0; }
+.legend-section + .legend-section { margin-top: calc(var(--sp) * 2); padding-top: calc(var(--sp) * 1.5); border-top: 1px solid var(--border-warm); }
+.legend-section-title {
+  font-family: var(--font-serif); font-size: 13px; font-weight: 600;
+  color: var(--ink-faded); letter-spacing: 0.04em; margin: 0 0 8px;
+}
+.legend-list .plan-badge-prov,
+.legend-list .plan-badge-work,
+.legend-list .plan-badge-stale,
+.legend-list .plan-badge-msgs { flex: none; margin-top: 2px; }
+
+/* ---- motion register 2 + mobile + reduced motion ---- */
+.plan-open-btn, .plan-recent-chip, .plan-zoom-btn, .subject-chip-x,
+.receipt-detail-btn, .receipt-undo, .checklist-item {
+  transition: background-color 140ms ease-out, color 140ms ease-out, border-color 140ms ease-out;
+}
+.plan-node-line { transition: background-color 160ms ease-out, box-shadow 160ms ease-out; }
+
+@media (max-width: 480px) {
+  .node-view { padding: calc(var(--sp) * 2); }
+  .node-detail-meta-row { flex-direction: column; gap: 2px; }
+  .node-detail-meta-label { min-width: 0; }
+  .plan-badges { margin-left: 0; width: 100%; flex-wrap: wrap; }
+  .toast-host { bottom: 84px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plan-open-btn, .plan-recent-chip, .plan-zoom-btn, .subject-chip-x,
+  .receipt-detail-btn, .receipt-undo, .checklist-item, .plan-node-line { transition: none; }
+  .plan-branch > .plan-node-line::before { transition: none; }
+  .receipt-toast, .receipt-toast.leaving { animation: none; }
+}
+
+/* ============================================ Workflow v2 · integration pass
+   The block above was written from the contract; these rules reconcile it with
+   the class names the renderers actually emit, and cover the pieces only the
+   wiring knows about (the entry fork, 课程资料, the rescued-批注 notice).
+   Additive only — nothing above is changed. */
+
+/* ---- entry fork: the two ways in (they converge by turn three) ---- */
+.entry-fork { display: flex; gap: 10px; flex-wrap: wrap; margin: calc(var(--sp) * 2) 0; }
+.entry-fork-btn {
+  appearance: none; font: inherit; font-size: 14.5px; cursor: pointer;
+  font-family: var(--font-serif);
+  background: var(--surface); color: var(--green);
+  border: 1px solid var(--green); border-radius: 999px;
+  padding: 9px 22px; min-height: 40px;
+  transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+.entry-fork-btn:hover { background: var(--green-wash); }
+.entry-fork-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.entry-fork-btn + .entry-fork-btn { color: var(--ink); border-color: var(--border-warm); }
+.entry-fork-btn + .entry-fork-btn:hover { border-color: var(--green); color: var(--green); }
+
+/* ---- 课程资料: the blueprint spine under the plan tree, read-only ---- */
+.plan-materials {
+  margin-top: calc(var(--sp) * 3);
+  border-top: 1px solid var(--border-warm);
+  padding-top: calc(var(--sp) * 2);
+}
+.plan-materials > summary {
+  cursor: pointer; list-style: none;
+  font-family: var(--font-serif); font-size: 13.5px; color: var(--ink-faded);
+}
+.plan-materials > summary::-webkit-details-marker { display: none; }
+.plan-materials > summary::before { content: '▸ '; }
+.plan-materials[open] > summary::before { content: '▾ '; }
+.plan-materials[open] > summary { color: var(--green); margin-bottom: calc(var(--sp) * 1.5); }
+/* Says out loud that this tree's 已确认 has not been quote-checked. Reads as a
+   caption, not an alarm: it is a limit of the record, not a fault of hers. */
+.plan-materials-note {
+  font-size: 12px; line-height: 1.7; color: var(--ink-faded);
+  margin-bottom: calc(var(--sp) * 1.5);
+}
+
+/* ---- node view: the renderer's own class names ---- */
+.node-detail { display: flex; flex-direction: column; gap: calc(var(--sp) * 1.5); }
+.node-detail-crumbs { display: flex; gap: 2px; flex-wrap: wrap; font-size: 12px; color: var(--ink-faded); }
+.node-crumb {
+  appearance: none; background: transparent; border: 0; padding: 0;
+  font: inherit; font-size: 12px; color: var(--ink-faded); cursor: pointer;
+}
+.node-crumb:hover { color: var(--green); text-decoration: underline; }
+.node-crumb-sep { color: var(--border-warm); margin: 0 4px; }
+.node-detail-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.node-detail-title {
+  font-family: var(--font-serif); font-size: 18px; font-weight: 600;
+  letter-spacing: 0.02em; margin: 0; color: var(--ink);
+}
+.node-detail-head .plan-badges { margin-left: auto; }
+.node-detail-meta { display: flex; flex-direction: column; gap: 4px; }
+.node-detail-meta-row { display: flex; gap: calc(var(--sp) * 1.5); align-items: baseline; }
+.node-detail-meta-label { flex: none; min-width: 5em; font-size: 12px; color: var(--ink-faded); }
+.node-detail-meta-value { font-size: 13.5px; color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
+.node-detail-summary { font-size: 14px; line-height: 1.8; color: var(--ink); }
+.node-detail-body { font-size: 14px; line-height: 1.85; color: var(--ink); }
+.node-detail-body p { margin: 0 0 8px; }
+.node-detail-body p:last-child { margin-bottom: 0; }
+.node-detail-empty { font-size: 13px; color: var(--ink-faded); }
+.node-detail-related { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.node-detail-related-label { font-size: 12px; color: var(--ink-faded); }
+.node-related-chip {
+  appearance: none; font: inherit; font-size: 12px; cursor: pointer;
+  background: var(--cream); border: 1px solid var(--border-warm);
+  border-radius: 999px; padding: 3px 12px; color: var(--ink);
+}
+.node-related-chip:hover { border-color: var(--green); color: var(--green); }
+.node-view-head { justify-content: flex-end; }
+
+/* one right-hand cluster in the panel head: #plan-version already claims the
+   free space, so 制作 must not claim it a second time */
+.bp-panel-head .craft-btn { margin-left: 0; }
+/* the hidden attribute must beat the toggle's own display (step zero has no
+   tree, so there is nothing to switch representations of) */
+.bp-view-toggle[hidden] { display: none; }
+
+/* ---- pieces the block above named differently ---- */
+.plan-recent-label { flex: none; align-self: center; font-size: 11px; color: var(--ink-faded); }
+.plan-tally-pill[data-flag] { border-radius: 3px; border-style: dotted; }
+.turn-receipt .receipt-line { overflow-wrap: anywhere; }
+.turn-receipt.is-undone .receipt-line { text-decoration: line-through; }
+.receipt-undone-note { font-size: 11.5px; color: var(--ink-faded); }
+.receipt-toast-close {
+  appearance: none; font: inherit; font-size: 12px; line-height: 1; cursor: pointer;
+  border: 0; background: transparent; color: var(--ink-faded);
+  width: 22px; height: 22px; border-radius: 50%; flex: none;
+}
+.receipt-toast-close:hover { background: var(--cream); color: var(--ink); }
+.legend-list .legend-section {
+  display: block;
+  font-family: var(--font-serif); font-size: 13px; font-weight: 600;
+  color: var(--ink-faded); letter-spacing: 0.04em;
+}
+.legend-row { display: flex; align-items: flex-start; gap: 10px; }
+.legend-text { min-width: 0; }
+.step-zero-lead { font-size: 13.5px; line-height: 1.8; color: var(--ink-faded); margin: 0; }
+.checklist-mark {
+  flex: none; font-size: 11px; letter-spacing: 0.06em;
+  color: var(--ink-faded); min-width: 2.4em;
+}
+.checklist-item[data-state="known"] .checklist-mark { color: var(--status-truth); }
+
+/* ---- hand-back notice: 批注 that were typed and never sent ---- */
+.rescued-comments { text-align: left; display: flex; flex-direction: column; gap: 6px; }
+.rescued-comment {
+  font-size: 13px; line-height: 1.75; color: var(--ink);
+  border-left: 2px solid var(--border-warm); padding-left: 10px;
+  overflow-wrap: anywhere;
+}
+.rescued-dismiss { align-self: flex-start; font-size: 12.5px; }
+.node-detail-close { margin-left: auto; flex: none; }

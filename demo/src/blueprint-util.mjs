@@ -91,41 +91,24 @@ export function countUnconfirmed(modules) {
 }
 
 /**
- * Package per-node 批注 into ONE teacher message (mirror of the question-card
- * packaging): numbered lines quoting the node the teacher saw, with the stable
- * id the model needs to answer via blueprint_delta.
- * @param {Array<{id: string, number: string, title: string, text: string}>} comments
- * @returns {string|null} packed message, or null when nothing to send
- */
-export function packBlueprintComments(comments) {
-  const rows = (comments || []).filter((c) => c && String(c.text ?? '').trim());
-  if (!rows.length) return null;
-  // One comment = ONE line (the parse side is line-anchored): newlines in the
-  // teacher's text collapse to spaces; 「」 in titles would break the quoting.
-  const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
-  const safeTitle = (s) => oneLine(s).replace(/[「」]/g, '');
-  const lines = rows.map((c, i) =>
-    `${i + 1}. 「${c.number} ${safeTitle(c.title)}」(id: ${c.id})：${oneLine(c.text)}`);
-  return `【蓝图批注】\n${lines.join('\n')}`;
-}
-
-/**
  * Package one staged composer send (DESIGN.md §5c: the composer is the only
  * mouth) into ONE teacher message. Sections, in reading order:
  *   【问题卡回复】 — locked card answers (skips explicit; untouched cards
  *                   honestly marked 暂未回答 so the model never guesses);
- *   【蓝图批注】   — via packBlueprintComments;
  *   free text      — whatever the teacher typed in the composer this send.
- * Pure and line-anchored on the parse side, same discipline as the two
- * existing packers it composes.
+ *
+ * The 【蓝图批注】 section left with its surface (ADR-0010 §3): per-node
+ * remarks are said in that node’s own conversation now, so there is nothing
+ * left to pack and no `comments` parameter to smuggle one back in.
+ * Pure and line-anchored on the parse side, same discipline as the packer it
+ * composes.
  * @param {{
  *   cards?: {questions: Array<{text: string}>, answers: Array<{value: string, skipped: boolean, locked?: boolean}>}|null,
- *   comments?: Array<{id: string, number: string, title: string, text: string}>,
  *   text?: string,
  * }} staged
  * @returns {string|null} packed message, or null when nothing at all to send
  */
-export function packStagedMessage({ cards, comments, text } = {}) {
+export function packStagedMessage({ cards, text } = {}) {
   const sections = [];
   const qs = cards?.questions ?? [];
   const as = cards?.answers ?? [];
@@ -140,8 +123,6 @@ export function packStagedMessage({ cards, comments, text } = {}) {
     });
     sections.push(`【问题卡回复】\n${lines.join('\n')}`);
   }
-  const packedComments = packBlueprintComments(comments || []);
-  if (packedComments) sections.push(packedComments);
   const free = String(text ?? '').trim();
   if (free) sections.push(free);
   return sections.length ? sections.join('\n\n') : null;

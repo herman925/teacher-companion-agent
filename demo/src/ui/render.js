@@ -7,7 +7,7 @@
 import { STAGE_NAMES } from '../engine.mjs';
 import { WF_NODES, NODE_PREREQS } from '../wf-nodes.mjs';
 import { BLUEPRINT_STATUS, normalizeBlueprint, numberBlueprint } from '../blueprint-util.mjs';
-import { layoutBlueprintMap, edgePath } from '../blueprint-map-layout.mjs';
+import { numberPlan } from '../plan-tsv.mjs';
 
 // ---------------------------------------------------------------- sanitizer
 
@@ -334,16 +334,6 @@ export function renderBlueprintCard(artifact) {
   return card;
 }
 
-/** Find a node by id in a numbered tree (popover needs rationale, layout drops it). */
-function findInTree(nodes, id) {
-  for (const n of nodes || []) {
-    if (n.id === id) return n;
-    const hit = findInTree(n.children, id);
-    if (hit) return hit;
-  }
-  return null;
-}
-
 /** Provenance detail block (DESIGN.md §5b). Team feedback 2026-07-20: terse
  * labels (依据/假设) read as jargon — the frame is now the teacher's own
  * questions, and each row renders as a full sentence, not a fragment. */
@@ -365,16 +355,6 @@ function renderRationale(rationale) {
   return box;
 }
 
-/** ✓确认 affordance — the teacher's clean escalation channel. Only rendered
- * when a callback is supplied (the living panel), never on chat snapshots. */
-function confirmButton(node, onConfirm) {
-  const btn = el('button', 'bp-confirm-btn', '✓确认');
-  btn.type = 'button';
-  btn.title = '确认这一项（升级为「已确认」）';
-  btn.addEventListener('click', (ev) => { ev.stopPropagation(); ev.preventDefault(); onConfirm(node.id); });
-  return btn;
-}
-
 /**
  * Chat-side blueprint pointer chip (spec 2026-07-20): the blueprint itself
  * lives ONLY in the workspace panel; chat gets a one-line pointer with the
@@ -389,245 +369,29 @@ export function renderBlueprintChip({ version, pending, onOpen }) {
   // not blow up the one-line chip.
   chip.append(el('span', 'bp-chat-chip-text', `预设蓝图 ${[...String(version)].slice(0, 20).join('')} 已更新`));
   if (pending > 0) chip.append(el('span', 'bp-chat-chip-pending', `${pending} 项待确认`));
-  chip.append(el('span', 'bp-chat-chip-cta', '去面板查看确认 →'));
+  // The panel is read-only now (ADR-0010 §3/§6): pointing her at a 确认 action
+  // that no longer exists would be worse than either interaction model.
+  chip.append(el('span', 'bp-chat-chip-cta', '去工作台看看 →'));
   if (onOpen) chip.addEventListener('click', onOpen);
   return chip;
 }
 
-/** 批注 affordance (spec 2026-07-20): every panel node gets a comment button;
- * the editor saves through opts.onCommentChange(node, text) and the send is a
- * single packaged message wired by the panel footer (main.js). */
-function commentButton(node, opts) {
-  const current = () => String(opts.comments?.[node.id] ?? '');
-  const btn = el('button', 'bp-comment-btn', current().trim() ? '已批注' : '批注');
-  btn.type = 'button';
-  btn.title = '给这一项写批注（发给 AI 用于修改蓝图）';
-  btn.classList.toggle('has-comment', Boolean(current().trim()));
-  btn.addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    ev.preventDefault();
-    const host = btn.closest('.bp-leaf, details, .bp-pop');
-    const existing = host?.querySelector(':scope > .bp-comment-editor');
-    if (existing) { existing.remove(); return; }
-    const editor = el('div', 'bp-comment-editor');
-    const ta = document.createElement('textarea');
-    ta.className = 'bp-comment-input';
-    ta.placeholder = '想改什么、为什么——写给 AI 的修改意见';
-    ta.maxLength = 500; // one comment = one packed line; keep it a note, not an essay
-    ta.value = current();
-    ta.addEventListener('input', () => {
-      opts.onCommentChange?.(node, ta.value);
-      btn.textContent = ta.value.trim() ? '已批注' : '批注';
-      btn.classList.toggle('has-comment', Boolean(ta.value.trim()));
-    });
-    const close = el('button', 'bp-comment-close', '收起');
-    close.type = 'button';
-    close.addEventListener('click', (e2) => { e2.stopPropagation(); editor.remove(); });
-    editor.append(ta, close);
-    // Leaf rows and popovers append at the end; branches slot in right after
-    // the summary so the editor stays visually attached to the header row.
-    if (host?.tagName === 'DETAILS') host.querySelector(':scope > summary')?.after(editor);
-    else host?.append(editor);
-    ta.focus();
-  });
-  return btn;
-}
-
-/** Collapsible numbered outline over a numbered blueprint tree — shared by
- * the chat card (snapshot) and the workspace panel (living document).
- * opts.onConfirm(nodeId): render ✓确认 on unconfirmed nodes (panel only).
- * opts.onCommentChange(node, text) + opts.comments: render 批注 (panel only). */
-export function renderBlueprintList(numbered, opts = {}) {
+/**
+ * Collapsible numbered outline over a numbered blueprint tree — shared by the
+ * chat card (snapshot) and the 课程资料 section of the read-only 工作台.
+ *
+ * READ-ONLY (ADR-0010 §3/§6): ✓确认 and 批注 were removed with their surfaces,
+ * and this renderer has no input path left — no callback opts, nothing to
+ * re-arm by passing one.
+ */
+export function renderBlueprintList(numbered) {
   const listView = el('div', 'bp-list-view');
-  for (const mod of numbered || []) listView.append(renderBlueprintNode(mod, true, opts));
+  for (const mod of numbered || []) listView.append(renderBlueprintNode(mod, true));
   return listView;
 }
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-/** Live outside-click handlers for map popovers (purged on each new render). */
-const MAP_OUTSIDE_HANDLERS = new Set();
-/** Node positions per posKey — lets a REBUILT map (new version, tab switch)
- * FLIP from where nodes last stood instead of replaying the grow-in. */
-const MAP_POS_CACHE = new Map();
-
-/**
- * 导图 view: deterministic SVG tidy tree over the SAME numbered tree the list
- * renders — geometry from blueprint-map-layout (pure), zero dependencies,
- * all client-side. Click a parent node to fold/unfold its branch; collapse
- * state lives here (UI state), never in the data. First render grows in with
- * a stagger (feedback register); re-layouts after a fold are instant.
- */
-export function renderBlueprintMapView(numbered, opts = {}) {
-  const wrap = el('div', 'bp-map');
-  const scroller = el('div', 'bp-map-scroll');
-  wrap.append(scroller);
-  // Node-detail popover (DESIGN.md §5b): the fold affordance toggles children;
-  // clicking anywhere ELSE on a node opens its detail — body now, rationale
-  // fields when the Phase-3 schema data starts flowing.
-  const pop = el('div', 'bp-pop');
-  pop.hidden = true;
-  wrap.append(pop);
-  const closePop = () => { pop.hidden = true; };
-  const openPop = (n, g) => {
-    pop.replaceChildren();
-    const head = el('div', 'bp-pop-head');
-    head.append(el('span', 'bp-num', n.number));
-    const t = el('strong');
-    t.innerHTML = sanitizeInline(n.title);
-    head.append(t, el('span', `bp-chip bp-${n.status}`, BLUEPRINT_STATUS[n.status]));
-    pop.append(head);
-    const body = el('div', 'bp-pop-body');
-    body.innerHTML = n.body ? sanitizeMarkdown(n.body) : '<em>（这个节点还没有展开说明）</em>';
-    pop.append(body);
-    const source = findInTree(numbered, n.id);
-    if (source?.rationale) pop.append(renderRationale(source.rationale));
-    if (opts.onConfirm && n.status !== 'confirmed') pop.append(confirmButton(n, opts.onConfirm));
-    if (opts.onCommentChange && source) pop.append(commentButton(source, opts));
-    const gBox = g.getBoundingClientRect();
-    const wBox = wrap.getBoundingClientRect();
-    pop.hidden = false;
-    const left = Math.max(8, Math.min(gBox.left - wBox.left, wrap.clientWidth - pop.offsetWidth - 8));
-    pop.style.left = `${left}px`;
-    pop.style.top = `${gBox.bottom - wBox.top + 8}px`;
-  };
-  // Outside-click closes the popover. Every new map view first purges the
-  // registry of listeners whose wrap left the DOM — renders never accumulate
-  // document-level listeners regardless of how the old view was discarded.
-  for (const h of [...MAP_OUTSIDE_HANDLERS]) {
-    if (!document.contains(h.wrap)) { document.removeEventListener('click', h.fn); MAP_OUTSIDE_HANDLERS.delete(h); }
-  }
-  const outsideClick = (ev) => { if (!wrap.contains(ev.target)) closePop(); };
-  MAP_OUTSIDE_HANDLERS.add({ wrap, fn: outsideClick });
-  document.addEventListener('click', outsideClick);
-  wrap.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closePop(); });
-  scroller.addEventListener('scroll', closePop, { passive: true }); // a scrolled map closes the (position-snapshotted) popover
-  const collapsed = new Set();
-  const cached = opts.posKey ? MAP_POS_CACHE.get(opts.posKey) : null;
-  let first = !cached; // a rebuilt map glides (FLIP) from cached positions instead of re-growing
-  let prevPos = cached || new Map(); // id → {x,y} of the previous layout, for the FLIP reflow tween
-  const draw = () => {
-    const { nodes, edges, width, height } = layoutBlueprintMap(numbered, collapsed);
-    const svg = document.createElementNS(SVG_NS, 'svg');
-    svg.setAttribute('width', width);
-    svg.setAttribute('height', height);
-    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-    svg.classList.add('bp-map-svg');
-    if (first) svg.classList.add('bp-map-enter');
-    edges.forEach((e, i) => {
-      const path = document.createElementNS(SVG_NS, 'path');
-      path.setAttribute('d', edgePath(e));
-      // Dash carries meaning: only the edge INTO a hypothesis child is dashed
-      // (mirrors the node). Tentative reads as tentative at the connector too.
-      const hyp = e.toStatus === 'hypothesis';
-      path.setAttribute('class', `bp-edge${hyp ? ' bp-edge-hyp' : ''}`);
-      if (first && !hyp) {
-        // Draw-on: branch extends first, then the leaf appears (~120ms behind
-        // its nodes). pathLength=1 normalizes dashoffset for any curve length.
-        path.setAttribute('pathLength', '1');
-        path.classList.add('bp-edge-draw');
-        path.style.animationDelay = `${Math.min(i * 45 + 120, 1020)}ms`;
-      }
-      svg.append(path);
-    });
-    nodes.forEach((n, i) => {
-      const g = document.createElementNS(SVG_NS, 'g');
-      g.setAttribute('class', `bp-mnode bp-m-${n.status}${n.childCount ? ' bp-m-branch' : ''}`);
-      g.setAttribute('transform', `translate(${n.x} ${n.y})`);
-      // Inner group carries ALL motion (entry + FLIP) — the outer g's SVG
-      // transform attribute does positioning and CSS must never touch it.
-      const gi = document.createElementNS(SVG_NS, 'g');
-      gi.setAttribute('class', 'bp-mnode-in');
-      if (first) gi.style.animationDelay = `${Math.min(i * 45, 900)}ms`;
-      const rect = document.createElementNS(SVG_NS, 'rect');
-      rect.setAttribute('width', n.w);
-      rect.setAttribute('height', n.h);
-      rect.setAttribute('rx', 8);
-      gi.append(rect);
-      const text = document.createElementNS(SVG_NS, 'text');
-      text.setAttribute('x', 10);
-      text.setAttribute('y', n.h / 2 + 4.5);
-      const num = document.createElementNS(SVG_NS, 'tspan');
-      num.setAttribute('class', 'bp-num');
-      num.textContent = n.number;
-      const title = document.createElementNS(SVG_NS, 'tspan');
-      title.setAttribute('dx', '5');
-      title.textContent = n.label;
-      text.append(num, title);
-      gi.append(text);
-      const tip = document.createElementNS(SVG_NS, 'title');
-      tip.textContent = `${n.number} ${n.title}${n.childCount ? `（${n.childCount} 项${n.collapsed ? '，已折叠' : ''}）` : ''}`;
-      gi.append(tip);
-      if (n.collapsed && n.childCount) {
-        // Folded + everything beneath confirmed = done, quietly (已齐);
-        // anything unconfirmed keeps the counting persimmon badge.
-        const badge = document.createElementNS(SVG_NS, 'text');
-        badge.setAttribute('x', n.w + 6);
-        badge.setAttribute('y', n.h / 2 + 4);
-        badge.setAttribute('class', `bp-fold-badge${n.pending === 0 ? ' bp-fold-ok' : ''}`);
-        badge.textContent = n.pending === 0 ? '已齐' : `+${n.childCount}`;
-        gi.append(badge);
-      }
-      g.append(gi);
-      g.setAttribute('tabindex', '0');
-      g.setAttribute('role', 'button');
-      if (n.childCount) {
-        g.setAttribute('aria-expanded', String(!n.collapsed));
-        const toggleFold = () => {
-          closePop();
-          if (collapsed.has(n.id)) collapsed.delete(n.id); else collapsed.add(n.id);
-          draw();
-        };
-        // Dedicated fold affordance at the node's right edge; the node body
-        // opens the detail popover instead (DESIGN.md §5b interaction contract).
-        const hit = document.createElementNS(SVG_NS, 'g');
-        hit.setAttribute('class', 'bp-fold-hit');
-        hit.setAttribute('transform', `translate(${n.w - 13} ${n.h / 2})`);
-        const circle = document.createElementNS(SVG_NS, 'circle');
-        circle.setAttribute('r', 8);
-        const glyph = document.createElementNS(SVG_NS, 'text');
-        glyph.setAttribute('text-anchor', 'middle');
-        glyph.setAttribute('y', 3.5);
-        glyph.textContent = n.collapsed ? '＋' : '－';
-        hit.append(circle, glyph);
-        hit.addEventListener('click', (ev) => { ev.stopPropagation(); toggleFold(); });
-        gi.append(hit);
-        g.addEventListener('click', () => openPop(n, g));
-        g.addEventListener('keydown', (ev) => {
-          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggleFold(); }
-          if (ev.key === 'd') openPop(n, g);
-        });
-      } else {
-        g.addEventListener('click', () => openPop(n, g));
-        g.addEventListener('keydown', (ev) => {
-          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openPop(n, g); }
-        });
-      }
-      svg.append(g);
-      // FLIP: persisting nodes glide from their previous position to the new
-      // one instead of snapping — the deterministic reflow stays legible.
-      const prev = prevPos.get(n.id);
-      if (!first && prev && (prev.x !== n.x || prev.y !== n.y)) {
-        gi.style.transform = `translate(${prev.x - n.x}px, ${prev.y - n.y}px)`;
-        requestAnimationFrame(() => {
-          gi.classList.add('bp-flip');
-          gi.style.transform = '';
-        });
-      } else if (!first) {
-        gi.classList.add('bp-node-appear'); // newly revealed by an expand
-      }
-    });
-    prevPos = new Map(nodes.map((n) => [n.id, { x: n.x, y: n.y }]));
-    if (opts.posKey) MAP_POS_CACHE.set(opts.posKey, prevPos);
-    scroller.replaceChildren(svg);
-    first = false;
-  };
-  draw();
-  return wrap;
-}
-
 /** One blueprint node → <details> (has children) or leaf row. */
-function renderBlueprintNode(node, isModule, opts = {}) {
+function renderBlueprintNode(node, isModule) {
   const chip = el('span', `bp-chip bp-${node.status}`, BLUEPRINT_STATUS[node.status]);
   if (!node.children.length) {
     const row = el('div', 'bp-leaf');
@@ -637,8 +401,6 @@ function renderBlueprintNode(node, isModule, opts = {}) {
     title.innerHTML = sanitizeInline(node.title);
     const gutter = el('span', 'bp-gutter');
     gutter.append(chip);
-    if (opts.onConfirm && node.status !== 'confirmed') gutter.append(confirmButton(node, opts.onConfirm));
-    if (opts.onCommentChange) gutter.append(commentButton(node, opts));
     line.append(title, gutter);
     row.dataset.status = node.status;
     row.append(line);
@@ -663,8 +425,6 @@ function renderBlueprintNode(node, isModule, opts = {}) {
   const gutter = el('span', 'bp-gutter');
   gutter.append(chip);
   if (pending > 0) gutter.append(el('span', 'bp-rollup', `${pending} 项待确认`));
-  if (opts.onConfirm && node.status !== 'confirmed') gutter.append(confirmButton(node, opts.onConfirm));
-  if (opts.onCommentChange) gutter.append(commentButton(node, opts));
   summary.append(title, gutter);
   details.dataset.status = node.status;
   details.append(summary);
@@ -674,8 +434,698 @@ function renderBlueprintNode(node, isModule, opts = {}) {
     details.append(body);
   }
   if (node.rationale) details.append(renderRationale(node.rationale));
-  for (const child of node.children) details.append(renderBlueprintNode(child, false, opts));
+  for (const child of node.children) details.append(renderBlueprintNode(child, false));
   return details;
+}
+
+// --------------------------------------------------------- 课程计划树 (plan)
+//
+// Workflow v2 (ADR-0010): the plan tree IS the theme network map — 月计划 (a
+// PHASE of 2–5 weeks, never a calendar month) → 周计划 → 活动, an activity's
+// date(s) rendered as a FIELD on its row. There is no day level: plan-tsv's
+// PLAN_KINDS is the whole vocabulary, and a fourth kind would silently
+// re-parent every activity in the skeleton the model reads each turn.
+//
+// The panel these render into is READ-ONLY (ADR-0010 §3). Opening a node's
+// conversation on the LEFT, folding a branch and zooming the 导图 are the only
+// three interactions; nothing here confirms, comments, filters or transmits.
+//
+// Numbering is reconstructed CLIENT-SIDE from plan-tsv's numberPlan — the same
+// discipline as numberBlueprint (ADR-0003 amendment 5): the model never writes
+// a display number, so renumbering can never be a model-visible change.
+
+/**
+ * Work status — where a node sits in the teacher's process. A SEPARATE axis
+ * from provenance, and encoded in a different CHANNEL on purpose: hue belongs
+ * to provenance alone (--status-truth/teacher/ai/guess), so work_status speaks
+ * in shape and glyph instead. Merging the two would let 「她正在改」 read as
+ * 「没跟孩子核对过」. Deliberately NOT added to BLUEPRINT_STATUS.
+ * @type {Readonly<Record<string, {glyph: string, label: string}>>}
+ */
+export const PLAN_WORK_STATUS = Object.freeze({
+  draft: { glyph: '草', label: '草稿' },
+  adjusting: { glyph: '改', label: '调整中' },
+  needs_review: { glyph: '复', label: '等你复看' },
+  settled: { glyph: '定', label: '已定稿' },
+});
+
+/** Zoom bounds for the 导图 view. Scale lives in cst.planZoom; clamping here
+ * as well means a corrupted stored value cannot render an unreadable tree. */
+const PLAN_ZOOM_MIN = 0.5;
+const PLAN_ZOOM_MAX = 2;
+
+/** Provenance is 「有多确定」; work status is 「做到哪一步」. The two sentences
+ * are written once and reused by the badges, the tally and the legend, so the
+ * encodings cannot drift apart between renderers. */
+const PLAN_AXIS_TITLES = { prov: '这一项有多确定', work: '这一项做到哪一步' };
+
+/** Nodes not yet confirmed in a subtree, INCLUDING the node itself — the same
+ * arithmetic the blueprint rollup uses, so a collapsed branch and an expanded
+ * one never disagree about what is outstanding. Provenance only: staleness and
+ * work status are other axes and never enter this count. */
+function planPending(node) {
+  let n = node?.status && node.status !== 'confirmed' ? 1 : 0;
+  for (const child of node?.children ?? []) n += planPending(child);
+  return n;
+}
+
+/** An activity's date field: one date, or a~b for a run of two days. Dates are
+ * display strings on the row — never a level, never a container. */
+function planDatesText(node) {
+  const dates = (node?.dates ?? []).filter(Boolean);
+  if (!dates.length) return '';
+  return dates.length === 1 ? dates[0] : `${dates[0]} ~ ${dates[dates.length - 1]}`;
+}
+
+/**
+ * The badge cluster for one node: both status axes as two distinguishable
+ * elements, plus the message count, the 待复查 mark and the branch rollup.
+ * Exported on its own so main.js and the tests can assert the two axes render
+ * as two elements without reaching into the tree renderer.
+ * @param {Object} node a normalized plan node
+ * @param {{messageCount?: number, rollup?: {pending: number}, stale?: boolean}} [opts]
+ * @returns {DocumentFragment}
+ */
+export function renderPlanBadges(node, opts = {}) {
+  const frag = document.createDocumentFragment();
+
+  // Channel 1 — provenance. Owns hue; label text is BLUEPRINT_STATUS's, so the
+  // plan and the blueprint can never call the same status two different things.
+  const status = BLUEPRINT_STATUS[node?.status] ? node.status : 'ai_suggestion';
+  const prov = el('span', 'plan-badge plan-badge-prov', BLUEPRINT_STATUS[status]);
+  prov.dataset.status = status;
+  prov.title = `${PLAN_AXIS_TITLES.prov}：${BLUEPRINT_STATUS[status]}`;
+  frag.append(prov);
+
+  // Channel 2 — work status. Square corners, hairline outline, glyph prefix,
+  // no status hue (styles.css owns the shapes; the data attribute is the hook).
+  const workKey = PLAN_WORK_STATUS[node?.work_status] ? node.work_status : 'draft';
+  const work = PLAN_WORK_STATUS[workKey];
+  const workEl = el('span', 'plan-badge plan-badge-work');
+  workEl.dataset.work = workKey;
+  workEl.title = `${PLAN_AXIS_TITLES.work}：${work.label}`;
+  workEl.append(el('span', 'plan-badge-work-glyph', work.glyph), document.createTextNode(work.label));
+  frag.append(workEl);
+
+  // A node nobody has discussed shows nothing at all (ADR-0010 §8).
+  const msgs = Math.trunc(Number(opts.messageCount) || 0);
+  if (msgs > 0) {
+    const badge = el('span', 'plan-badge plan-badge-msgs', `${msgs} 条`);
+    badge.dataset.count = String(msgs);
+    badge.title = `这一项下面已经聊过 ${msgs} 条`;
+    frag.append(badge);
+  }
+
+  // 待复查 carries its own reason (ADR-0007 §5): a badge saying only 待复查 is
+  // a puzzle she has to solve before she can judge it.
+  if (opts.stale || node?.stale_since) {
+    const stale = el('span', 'plan-badge plan-badge-stale', '待复查');
+    stale.title = node?.stale_reason
+      ? `待复查：${node.stale_reason}`
+      : '待复查：上游有改动，这一项还没回头看过';
+    frag.append(stale);
+  }
+
+  const pending = Math.trunc(Number(opts.rollup?.pending) || 0);
+  if (pending > 0) frag.append(el('span', 'plan-rollup', `${pending} 项待确认`));
+
+  return frag;
+}
+
+/** One plan node → <details class="plan-node plan-branch"> or a leaf row. */
+function renderPlanNode(node, ctx) {
+  const branch = (node.children ?? []).length > 0;
+  const host = branch ? document.createElement('details') : el('div', 'plan-node plan-leaf');
+  if (branch) {
+    host.className = 'plan-node plan-branch';
+    host.open = !ctx.folded.has(node.id);
+  }
+  // Two attributes, never merged: data-status carries provenance, data-work
+  // carries work status. A CSS change that collapsed them into one would erase
+  // the distinction the whole two-axis rule exists to keep.
+  host.dataset.nodeId = node.id;
+  host.dataset.kind = node.kind;
+  host.dataset.status = BLUEPRINT_STATUS[node.status] ? node.status : 'ai_suggestion';
+  host.dataset.work = PLAN_WORK_STATUS[node.work_status] ? node.work_status : 'draft';
+  host.dataset.stale = node.stale_since ? 'true' : 'false';
+  if (ctx.openNodeId && ctx.openNodeId === node.id) host.classList.add('is-open');
+
+  const line = branch ? document.createElement('summary') : el('div');
+  line.className = 'plan-node-line';
+  line.append(el('span', 'plan-num', ctx.numbers.get(node.id) ?? ''));
+
+  // The ONLY node-level action on the panel: open that node's conversation on
+  // the left. Transmits nothing (ADR-0010 §3).
+  const open = el('button', 'plan-open-btn');
+  open.type = 'button';
+  open.dataset.nodeId = node.id;
+  open.innerHTML = sanitizeInline(node.title || '（未命名）');
+  open.setAttribute('aria-label', `打开「${node.title || '未命名'}」的对话`);
+  open.addEventListener('click', (ev) => {
+    ev.stopPropagation();  // on a <summary> a click would otherwise also fold
+    ev.preventDefault();
+    ctx.onOpenNode?.(node.id);
+  });
+  line.append(open);
+
+  const dates = node.kind === 'activity' ? planDatesText(node) : '';
+  if (dates) line.append(el('span', 'plan-dates', dates));
+
+  const badges = el('span', 'plan-badges');
+  badges.append(renderPlanBadges(node, {
+    messageCount: ctx.messageCounts[node.id],
+    rollup: branch ? { pending: planPending(node) } : null,
+  }));
+  line.append(badges);
+  host.append(line);
+
+  if (branch) {
+    // `toggle` fires after the browser has already moved `open`, so the fold set
+    // main.js persists is read off the DOM rather than guessed from the click.
+    //
+    // It also fires ASYNCHRONOUSLY: setting `open` above queues a toggle that
+    // lands on this listener even though it was attached afterwards. Without the
+    // seen-state guard every branch that opens by default would report a fold
+    // change on first paint — a write to cst.planFold, and a render loop in any
+    // caller that repaints when the fold set changes.
+    let seenOpen = host.open;
+    host.addEventListener('toggle', () => {
+      if (host.open === seenOpen) return;
+      seenOpen = host.open;
+      ctx.onToggleFold?.(node.id, !host.open);
+    });
+    for (const child of node.children) host.append(renderPlanNode(child, ctx));
+  }
+  return host;
+}
+
+/**
+ * The living course_plan tree — 月计划 → 周计划 → 活动, read-only.
+ *
+ * Bodies deliberately do not render here: the tree is the skeleton the teacher
+ * scans, and a node's body, rationale and staleness reason live in the left
+ * node view (renderNodeDetail), one node at a time.
+ *
+ * @param {{version?: string|number, roots?: Array}} plan already through normalizePlan()
+ * @param {{
+ *   numbers?: Map<string, string>, view?: 'list'|'map', openNodeId?: string|null,
+ *   folded?: Set<string>, messageCounts?: Record<string, number>, zoom?: number,
+ *   onOpenNode?: (nodeId: string) => void,
+ *   onToggleFold?: (nodeId: string, folded: boolean) => void,
+ * }} [opts]
+ *
+ * The contract's `posKey` and `onZoom` are deliberately NOT accepted: 导图 is
+ * this same DOM under a CSS scale, so there are no node positions to cache,
+ * and the ＋／－／100% buttons live in the panel head where main.js owns them
+ * (a renderer that is re-created on every repaint is the wrong owner for a
+ * control that must survive one).
+ * @returns {HTMLElement} .plan-tree[data-view]
+ */
+export function renderPlanTree(plan, opts = {}) {
+  const view = opts.view === 'map' ? 'map' : 'list';
+  const tree = el('div', 'plan-tree');
+  tree.dataset.view = view;
+  const ctx = {
+    numbers: opts.numbers instanceof Map ? opts.numbers : numberPlan(plan),
+    folded: opts.folded instanceof Set ? opts.folded : new Set(),
+    messageCounts: opts.messageCounts ?? {},
+    openNodeId: opts.openNodeId ?? null,
+    onOpenNode: opts.onOpenNode,
+    onToggleFold: opts.onToggleFold,
+  };
+  // 导图 is a REPRESENTATION of this same tree, not a second implementation:
+  // one DOM, one set of handlers, data-view for CSS to branch on — which is
+  // also why it inherits no document-level listeners and needs no position
+  // cache. The SVG map renderer that did is gone (ADR-0010 §3): it carried a
+  // click-to-open popover, an input surface a read-only panel must not have.
+  if (view === 'map') {
+    const zoom = Math.min(PLAN_ZOOM_MAX, Math.max(PLAN_ZOOM_MIN, Number(opts.zoom) || 1));
+    // ONE scaling channel only. The custom property is read by the CSS rule
+    // on each root node; an inline transform here as well would multiply, and
+    // the head's percentage label would disagree with the picture at every
+    // step but 100%.
+    tree.style.setProperty('--plan-zoom', String(zoom));
+  }
+  for (const root of plan?.roots ?? []) tree.append(renderPlanNode(root, ctx));
+  return tree;
+}
+
+/**
+ * READ-ONLY provenance + work tally for the panel head. Non-interactive spans
+ * only — filtering died with the read-only rule, and a pill that looks like a
+ * button on a panel that cannot be clicked is a lie about the surface.
+ * @param {{confirmed?: number, teacher_preset?: number, ai_suggestion?: number,
+ *   hypothesis?: number, pending_validation?: number, stale?: number,
+ *   needs_review?: number}} [counts]
+ * @returns {HTMLElement} #plan-tally
+ */
+export function renderPlanTally(counts = {}) {
+  const row = el('div', 'plan-tally');
+  row.id = 'plan-tally';
+  const num = (v) => Math.trunc(Number(v) || 0);
+
+  const provGroup = el('span', 'plan-tally-group');
+  // The four named states always render (a zero 已确认 is information too);
+  // 待现场验证 joins them only when something actually carries it, so the
+  // common case stays a four-pill row.
+  const provKeys = ['confirmed', 'teacher_preset', 'ai_suggestion', 'hypothesis'];
+  if (num(counts.pending_validation) > 0) provKeys.push('pending_validation');
+  for (const key of provKeys) {
+    const pill = el('span', 'plan-tally-pill', `${BLUEPRINT_STATUS[key]} ${num(counts[key])}`);
+    pill.dataset.status = key;
+    pill.title = `${PLAN_AXIS_TITLES.prov}：${BLUEPRINT_STATUS[key]}`;
+    provGroup.append(pill);
+  }
+  row.append(provGroup);
+
+  // Second group, visually separated: the work/staleness channel. 待复查 is not
+  // a work status — it is a staleness mark — so it carries its own attribute.
+  const workGroup = el('span', 'plan-tally-group plan-tally-flags');
+  const review = el('span', 'plan-tally-pill plan-tally-work', `${PLAN_WORK_STATUS.needs_review.label} ${num(counts.needs_review)}`);
+  review.dataset.work = 'needs_review';
+  review.title = `${PLAN_AXIS_TITLES.work}：${PLAN_WORK_STATUS.needs_review.label}`;
+  const stale = el('span', 'plan-tally-pill plan-tally-flag', `待复查 ${num(counts.stale)}`);
+  stale.dataset.flag = 'stale';
+  stale.title = '上游改动可能牵动了这些项，还没回头看过';
+  workGroup.append(review, stale);
+  row.append(workGroup);
+  return row;
+}
+
+/** One legend row: the real badge element beside one spoken-register sentence,
+ * so the modal explains the encoding by SHOWING it. */
+function legendRow(badge, text) {
+  const li = el('li', 'legend-row');
+  li.append(badge, el('span', 'legend-text', text));
+  return li;
+}
+
+/**
+ * 图例 body — one source for both axes, so the encodings cannot drift apart
+ * between the tree, the tally and the modal that explains them.
+ * @returns {HTMLElement} <ul class="legend-list">
+ */
+export function renderPlanLegend() {
+  const list = el('ul', 'legend-list');
+
+  list.append(el('li', 'legend-section', PLAN_AXIS_TITLES.prov));
+  const provText = {
+    // Honest about BOTH write paths. The plan tree really does check the
+    // quote (applyPlanDelta + citedNodeOf); 课程资料 escalates a pre-existing
+    // node on any teacher turn with no citation (engine.mjs absorbBlueprint,
+    // the KNOWN GAP recorded at serve.mjs). One sentence must not vouch for
+    // two rules — claiming her consent is the same class of assertion
+    // non-negotiable #1 exists to stop.
+    confirmed: '计划树里的这一枚，是我引用了你的原话才标上的。课程资料里的那一枚还没有逐句核对，看到它请当成「我以为你点头了」——不对就说一声。',
+    teacher_preset: '你自己定的安排，我原样保留。',
+    ai_suggestion: '我提的建议，你还没表态。',
+    hypothesis: '我按经验猜的，边框是虚线——要到现场看过才算数。',
+    pending_validation: '已经写下来了，但要等你在班上试过再定。',
+  };
+  for (const [key, label] of Object.entries(BLUEPRINT_STATUS)) {
+    const badge = el('span', 'plan-badge plan-badge-prov', label);
+    badge.dataset.status = key;
+    list.append(legendRow(badge, provText[key]));
+  }
+
+  list.append(el('li', 'legend-section', PLAN_AXIS_TITLES.work));
+  const workText = {
+    draft: '刚写下来，随时可以推翻。',
+    adjusting: '正在改，还没停当。',
+    needs_review: '下面的内容变过了，这一层的说法要请你再看一眼。',
+    settled: '你说过就这样了。',
+  };
+  for (const [key, meta] of Object.entries(PLAN_WORK_STATUS)) {
+    const badge = el('span', 'plan-badge plan-badge-work');
+    badge.dataset.work = key;
+    badge.append(el('span', 'plan-badge-work-glyph', meta.glyph), document.createTextNode(meta.label));
+    list.append(legendRow(badge, workText[key]));
+  }
+
+  list.append(el('li', 'legend-section', '另外两种记号'));
+  list.append(legendRow(el('span', 'plan-badge plan-badge-stale', '待复查'),
+    '上游改动可能牵动了这一项，牌子上写着改的是什么。跟着改、我自己改、这样就行，三种做法里做一种，它才消失。'));
+  const msgs = el('span', 'plan-badge plan-badge-msgs', '3 条');
+  msgs.dataset.count = '3';
+  list.append(legendRow(msgs, '这一项下面已经聊过几条。没聊过的不显示数字。'));
+  return list;
+}
+
+/**
+ * 最近处理 strip — a time-ordered row of nodes she has just been in, whose only
+ * action is opening that node's conversation again.
+ * @param {Array<{id: string, number?: string, title?: string, at?: string}>} entries
+ * @param {{activeId?: string|null, onOpenNode?: (nodeId: string) => void}} [opts]
+ * @returns {HTMLElement} #plan-recent (empty and hidden when there is nothing yet)
+ */
+export function renderRecentStrip(entries, opts = {}) {
+  const strip = el('div', 'plan-recent');
+  strip.id = 'plan-recent';
+  const rows = (Array.isArray(entries) ? entries : []).filter((e) => e && e.id).slice(0, 8);
+  // A fresh course gets no 「这里还没有内容」 furniture — an empty strip is
+  // simply not there.
+  if (!rows.length) {
+    strip.hidden = true;
+    return strip;
+  }
+  strip.append(el('span', 'plan-recent-label', '最近处理'));
+  for (const row of rows) {
+    // textContent, not innerHTML: a chip is one short line and needs no markup,
+    // so the model-derived title never reaches a parser at all.
+    const title = String(row.title ?? '').trim() || '未命名';
+    const chip = el('button', 'plan-recent-chip', `${row.number ? `${row.number} ` : ''}${[...title].slice(0, 16).join('')}`);
+    chip.type = 'button';
+    chip.dataset.nodeId = row.id;
+    chip.title = `${row.number ? `${row.number} ` : ''}${title}`;
+    if (opts.activeId && opts.activeId === row.id) {
+      chip.classList.add('is-open');
+      chip.setAttribute('aria-current', 'true');
+    }
+    chip.addEventListener('click', () => opts.onOpenNode?.(row.id));
+    strip.append(chip);
+  }
+  return strip;
+}
+
+/**
+ * The LEFT-panel node view: everything stored about one node, rendered from
+ * stored data only. No model call, nothing invented — a field we do not have
+ * gets an honest empty state instead of a plausible sentence.
+ *
+ * The greeting is NOT part of this element: it is passed in only so the call
+ * site can see that it is screen furniture, and main.js renders it into
+ * #node-greeting where it is never logged, never sent and never exported.
+ *
+ * @param {Object} node the normalized plan node
+ * @param {{number?: string, ancestors?: Array<{id: string, number?: string, title?: string}>,
+ *   greeting?: string, related?: Array<{id: string, number?: string, title?: string}>,
+ *   onOpenNode?: (nodeId: string) => void, onClose?: () => void}} [opts]
+ * @returns {HTMLElement} .node-detail
+ */
+export function renderNodeDetail(node, opts = {}) {
+  const root = el('div', 'node-detail');
+  root.dataset.nodeId = node?.id ?? '';
+  root.dataset.kind = node?.kind ?? '';
+
+  const crumbs = el('div', 'node-detail-crumbs');
+  for (const a of opts.ancestors ?? []) {
+    const btn = el('button', 'node-crumb', `${a.number ? `${a.number} ` : ''}${String(a.title ?? '').trim() || '未命名'}`);
+    btn.type = 'button';
+    btn.dataset.nodeId = a.id;
+    btn.addEventListener('click', () => opts.onOpenNode?.(a.id));
+    crumbs.append(btn, el('span', 'node-crumb-sep', '›'));
+  }
+  if (crumbs.childElementCount) root.append(crumbs);
+
+  const head = el('div', 'node-detail-head');
+  head.append(el('span', 'plan-num', opts.number ?? ''));
+  const title = el('h2', 'node-detail-title');
+  title.innerHTML = sanitizeInline(node?.title || '（未命名）');
+  head.append(title);
+  const badges = el('span', 'plan-badges');
+  badges.append(renderPlanBadges(node ?? {}, { stale: Boolean(node?.stale_since) }));
+  head.append(badges);
+  if (opts.onClose) {
+    const close = el('button', 'node-detail-close', '返回整门课的对话');
+    close.type = 'button';
+    close.addEventListener('click', () => opts.onClose());
+    head.append(close);
+  }
+  root.append(head);
+
+  // Stored fields, each rendered only when it is actually there.
+  const meta = el('div', 'node-detail-meta');
+  const metaRow = (label, value) => {
+    const r = el('div', 'node-detail-meta-row');
+    r.append(el('span', 'node-detail-meta-label', label), el('span', 'node-detail-meta-value', value));
+    meta.append(r);
+  };
+  const dates = planDatesText(node);
+  if (dates) metaRow('时间', dates);
+  if (node?.org_type) metaRow('组织形式', node.org_type);
+  if (node?.stale_since) {
+    metaRow('待复查', node.stale_reason
+      ? `${node.stale_reason}（自 ${node.stale_since} 起）`
+      : `上游改动可能牵动了这一项（自 ${node.stale_since} 起）`);
+  }
+  if (meta.childElementCount) root.append(meta);
+
+  if (node?.summary) {
+    const summary = el('div', 'node-detail-summary');
+    summary.innerHTML = sanitizeInline(node.summary);
+    root.append(summary);
+  }
+
+  const body = el('div', 'node-detail-body');
+  body.innerHTML = node?.body
+    ? sanitizeMarkdown(node.body)
+    : '<p><em>这一项还没有展开说明。</em></p>';
+  root.append(body);
+
+  // The five-part 你说过／我据此猜／… block, from stored rationale only. Plan
+  // nodes carry no `rationale` field — contract.zh.md puts a plan node's 依据
+  // in its body, and normalizePlan drops anything else — so on the plan tree
+  // this is the empty state, which says where 依据 actually lives instead of
+  // promising a field nothing can fill. Its absence is stated rather than
+  // papered over: an invented 「你说过」 is exactly the
+  // fabrication non-negotiable #1 forbids.
+  if (node?.rationale) root.append(renderRationale(node.rationale));
+  else root.append(el('div', 'node-detail-empty', '计划节点没有单独的依据栏——为什么这样安排，写在上面的正文里。正文里没说清楚的，在下面的对话里问我，我把正文补上。'));
+
+  const related = (opts.related ?? []).filter((r) => r && r.id);
+  if (related.length) {
+    const box = el('div', 'node-detail-related');
+    box.append(el('span', 'node-detail-related-label', '相关的项'));
+    for (const r of related) {
+      const btn = el('button', 'node-related-chip', `${r.number ? `${r.number} ` : ''}${String(r.title ?? '').trim() || '未命名'}`);
+      btn.type = 'button';
+      btn.dataset.nodeId = r.id;
+      btn.addEventListener('click', () => opts.onOpenNode?.(r.id));
+      box.append(btn);
+    }
+    root.append(box);
+  }
+  return root;
+}
+
+/**
+ * Randomised node greetings — screen furniture above the composer in node mode.
+ *
+ * Exported as data plus a pure picker precisely so it is obvious at the call
+ * site that this string is NOT agent speech: it is never appended to the
+ * transcript, never passed to logEvent, never put in a request body and never
+ * exported. The `node_opened` session-log event carries the observability duty
+ * instead (ADR-0010 §8).
+ * @type {ReadonlyArray<string>}
+ */
+export const NODE_GREETINGS = Object.freeze([
+  '我们来看「{title}」这一段。',
+  '「{title}」——想从哪儿说起都行。',
+  '打开了「{title}」，你想改哪一处？',
+  '这一项是「{title}」，你说，我记。',
+  '「{title}」在这儿了，慢慢来。',
+  '来聊「{title}」。哪里不合适，直接说。',
+  '「{title}」——要不要先看看当初为什么这么排？',
+  '我把「{title}」调出来了，你先说想法。',
+  '这一段是「{title}」，改动只落在它身上。',
+  '「{title}」，我们一句一句捋。',
+]);
+
+/** Stable small hash so a seedless pick is deterministic per node title — a
+ * node that greets differently on every repaint reads as a glitch, and a test
+ * cannot pin a Math.random(). */
+function greetingHash(text) {
+  let h = 0;
+  for (const ch of String(text)) h = (h * 31 + ch.codePointAt(0)) % 100003;
+  return h;
+}
+
+/**
+ * One greeting for one node. Deterministic: same title (and same seed) in, same
+ * sentence out. Callers wanting variety across opens pass a seed of their own.
+ * @param {string} nodeTitle
+ * @param {number} [seed]
+ * @returns {string}
+ */
+export function pickGreeting(nodeTitle, seed) {
+  const title = String(nodeTitle ?? '').trim() || '这一项';
+  const base = Number.isFinite(Number(seed)) ? Math.trunc(Number(seed)) : greetingHash(title);
+  const i = ((base % NODE_GREETINGS.length) + NODE_GREETINGS.length) % NODE_GREETINGS.length;
+  return NODE_GREETINGS[i].split('{title}').join(title);
+}
+
+// ------------------------------------------------------------------ receipts
+//
+// Every state-changing turn says what it wrote (ADR-0010 §7): a toast with undo
+// at the moment, plus one compact line under that turn's reply. Both are
+// EVENTS, not messages — composed from the engine's own parts, never from the
+// model's prose, never pushed into the transcript, never sent back to the model.
+
+/** Default wording per part kind. `label` from the caller wins, so the engine
+ * can say 「周2 已改」 where a generic count would be vaguer than the truth. */
+const RECEIPT_KIND_TEXT = {
+  memory: (n) => `记住了 ${n} 条`,
+  confirm: (n) => `已确认 ${n} 处`,
+  edit: (n) => `已改 ${n} 处`,
+};
+
+/** One receipt part → one phrase. textContent all the way down: a part label
+ * may quote a node title, and a receipt is the one line that must never be a
+ * place where model text meets a parser. */
+function receiptPartText(part) {
+  const count = Math.trunc(Number(part?.count) || 0);
+  const label = String(part?.label ?? '').trim();
+  if (label) return label;
+  const fn = RECEIPT_KIND_TEXT[part?.kind];
+  return fn ? fn(count) : `写入 ${count} 项`;
+}
+
+/** The whole receipt as one line: 「记住了 1 条 · 已确认 2 处 · 周2 已改」. */
+function receiptLineText(receipt) {
+  const parts = (receipt?.parts ?? []).filter(Boolean).map(receiptPartText).filter(Boolean);
+  return parts.length ? parts.join(' · ') : '这一轮没有改动记录';
+}
+
+/**
+ * The compact per-turn receipt line under a turn's reply.
+ *
+ * Re-rendered from cst.receipts on replay, so an undone receipt must READ as
+ * undone — struck, with the undo gone — rather than quietly offering to undo
+ * something twice.
+ * @param {{id: string, at?: string, parts?: Array<{kind?: string, count?: number, label?: string, node_ids?: string[]}>,
+ *   undoable?: boolean, undone?: boolean}} receipt
+ * @param {{onUndo?: (receiptId: string) => void, onDetail?: (receiptId: string) => void}} [opts]
+ * @returns {HTMLElement} .turn-receipt
+ */
+export function renderTurnReceipt(receipt, opts = {}) {
+  const row = el('div', 'turn-receipt');
+  row.dataset.receiptId = receipt?.id ?? '';
+  if (receipt?.undone) row.classList.add('is-undone');
+  row.append(el('span', 'receipt-line', receiptLineText(receipt)));
+  if (opts.onDetail) {
+    const detail = el('button', 'receipt-detail-btn', '看改了什么');
+    detail.type = 'button';
+    detail.addEventListener('click', () => opts.onDetail(receipt.id));
+    row.append(detail);
+  }
+  if (receipt?.undone) {
+    row.append(el('span', 'receipt-undone-note', '已撤销'));
+  } else if (receipt?.undoable && opts.onUndo) {
+    const undo = el('button', 'receipt-undo', '撤销');
+    undo.type = 'button';
+    undo.addEventListener('click', () => opts.onUndo(receipt.id));
+    row.append(undo);
+  }
+  return row;
+}
+
+/**
+ * The same receipt as a transient toast. The renderer stays DOM-pure: main.js
+ * owns #toast-host and the dismissal timer, so nothing here schedules work that
+ * would outlive the element.
+ * @param {Parameters<typeof renderTurnReceipt>[0]} receipt
+ * @param {{onUndo?: (receiptId: string) => void, onDismiss?: (receiptId: string) => void,
+ *   timeoutMs?: number}} [opts]
+ * @returns {HTMLElement} .receipt-toast
+ */
+export function renderReceiptToast(receipt, opts = {}) {
+  const toast = el('div', 'receipt-toast');
+  toast.dataset.receiptId = receipt?.id ?? '';
+  toast.setAttribute('role', 'status');
+  // The timeout is the caller's to run; it rides as a custom property only so a
+  // progress hairline in styles.css can match the real dismissal.
+  const ms = Math.trunc(Number(opts.timeoutMs) || 0);
+  if (ms > 0) toast.style.setProperty('--receipt-timeout', `${ms}ms`);
+  toast.append(el('span', 'receipt-line', receiptLineText(receipt)));
+  if (opts.onUndo && !receipt?.undone) {
+    const undo = el('button', 'receipt-undo', '撤销');
+    undo.type = 'button';
+    undo.addEventListener('click', () => opts.onUndo(receipt.id));
+    toast.append(undo);
+  }
+  if (opts.onDismiss) {
+    const close = el('button', 'receipt-toast-close', '✕');
+    close.type = 'button';
+    close.setAttribute('aria-label', '收起这条提示');
+    close.addEventListener('click', () => opts.onDismiss(receipt.id));
+    toast.append(close);
+  }
+  return toast;
+}
+
+// ------------------------------------------------------------------ step zero
+
+// The checklist ROWS and the course_state derivation behind them live in
+// plan-view.mjs (STEP_ZERO_ITEMS / stepZeroStatus): they are pure logic with a
+// non-negotiable riding on them — 已知 must mean the teacher said it — and that
+// belongs somewhere a test can reach, not in a DOM factory.
+
+/**
+ * The 「看看做出来是什么样」 sample. FROZEN and module-level so a test can pin
+ * it: it contains ZERO child-observation-shaped text — no children's words, no
+ * discoveries, no interests, no reactions. A sample that showed invented child
+ * evidence would teach the teacher that this tool fabricates it.
+ * @type {string}
+ */
+export const STEP_ZERO_SAMPLE = [
+  '月计划 · 走进老街的手艺（3 周）',
+  '  周1 先去看一看',
+  '    活动 逛一逛老街，找会手艺的铺子    5月11日',
+  '    活动 把看到的画下来，摆一个小展台  5月13日',
+  '  周2 动手试一试',
+  '    活动 请一位老师傅来班里做一次      5月19日',
+  '    活动 用班里的材料仿着做一做        5月21日',
+  '  周3 说给别人听',
+  '    活动 布置一个小小的展览            5月26日',
+  '',
+  '每一项都带两个记号：一个说它有多确定，一个说它做到哪一步。',
+  '上面是示例，不是你的课程。',
+].join('\n');
+
+/**
+ * Step zero — what the panel shows before a plan exists: what this workbench
+ * is, a LIVE checklist of what has been understood so far, and a collapsed
+ * sample for the teacher who wants to see the shape of the thing first.
+ *
+ * Every row comes from the caller's derivation of course_state; a 「已知」 row
+ * may show the teacher's own recorded value, and a missing row shows its label
+ * and invents nothing.
+ * @param {{items?: Array<{key: string, label: string, known?: boolean, value?: string}>}} status
+ * @param {{headline?: string, onSampleOpen?: () => void}} [opts]
+ * @returns {HTMLElement} #plan-step-zero
+ */
+export function renderStepZero(status, opts = {}) {
+  const root = el('div', 'step-zero');
+  root.id = 'plan-step-zero';
+  root.append(el('div', 'step-zero-headline', opts.headline || '这块面板会长出你的课程计划'));
+  root.append(el('p', 'step-zero-lead',
+    '现在还空着。我们在左边聊，下面这几件事清楚了，月计划、周计划和活动就会一条条出现在这里。'));
+
+  const list = el('ul', 'step-zero-checklist');
+  list.id = 'step-zero-checklist';
+  for (const item of status?.items ?? []) {
+    const li = el('li', 'checklist-item');
+    li.dataset.key = item.key ?? '';
+    li.dataset.state = item.known ? 'known' : 'missing';
+    li.append(el('span', 'checklist-mark', item.known ? '已知' : '待聊'));
+    li.append(el('span', 'checklist-label', item.label ?? item.key ?? ''));
+    // Only a known row may carry a value, and the value is hers — textContent,
+    // clipped, never markdown.
+    if (item.known && item.value) {
+      li.append(el('span', 'checklist-value', [...String(item.value)].slice(0, 60).join('')));
+    }
+    list.append(li);
+  }
+  root.append(list);
+
+  const sample = document.createElement('details');
+  sample.className = 'step-zero-sample';
+  sample.id = 'step-zero-sample';
+  sample.append(el('summary', '', '看看做出来是什么样'));
+  sample.append(el('pre', 'step-zero-sample-body', STEP_ZERO_SAMPLE));
+  if (opts.onSampleOpen) sample.addEventListener('toggle', () => { if (sample.open) opts.onSampleOpen(); });
+  root.append(sample);
+  return root;
 }
 
 // ----------------------------------------------------------- question block
@@ -715,17 +1165,16 @@ export function renderQuestionBlock(q) {
  * teacher message — skipped cards report as 跳过 (a skip is information too).
  * Chips fill their own card's answer field (insert, never auto-send).
  * @param {Array<import('../types.mjs').TurnQuestion>} questions
- * @param {{ answers?: Array<{value: string, skipped: boolean, locked: boolean}>, onChange?: () => void, variant?: string }} opts
+ * @param {{ answers?: Array<{value: string, skipped: boolean, locked: boolean}>, onChange?: () => void }} opts
  */
 export function renderQuestionCards(questions, opts = {}) {
   const root = el('div', 'qcards');
-  if (opts.variant === 'queue') root.classList.add('as-list', 'wb-queue');
   const track = el('div', 'qcards-track');
   root.append(track);
 
-  // Answer state may be SHARED (DESIGN.md §5c): the chat carousel and the
-  // 工作台 问题卡 queue are two renderers over ONE living answer set owned by
-  // main.js. Standalone use falls back to a private array. Each entry:
+  // Answer state is owned by main.js (DESIGN.md §5c) so the living answers
+  // survive a re-render; the 问题卡 tab and its second 'queue' renderer are
+  // gone (ADR-0010 §3) — cards have ONE renderer now. Each entry:
   // {value, skipped, locked} — locked = 确认-staged into the composer tray.
   const answers = opts.answers ?? questions.map(() => ({ value: '', skipped: false, locked: false }));
   const notify = () => opts.onChange?.();
@@ -734,7 +1183,7 @@ export function renderQuestionCards(questions, opts = {}) {
   const hint = el('span', 'qcards-hint', '锁定的回答会从下方输入框一起发送');
 
   const cardCtl = []; // per-card {card, input, lockBtn, skipBtn} for state→DOM sync
-  let segs = null;    // segmented progress bar (carousel variant only)
+  let segs = null;    // segmented progress bar
 
   const refresh = () => {
     const answered = answers.filter((a) => a.value.trim() || (a.locked && a.skipped)).length;
@@ -845,8 +1294,7 @@ export function renderQuestionCards(questions, opts = {}) {
   // the old dots: one wide clickable segment per card, filled when answered,
   // hollow when pending, hatched when skipped, ringed when in view — progress
   // AND position in one strip loud enough to say "there are more cards".
-  // The 工作台 queue variant is a permanent stacked list: no carousel nav.
-  if (opts.variant !== 'queue') {
+  {
     const nav = el('div', 'qcards-nav');
     const prev = el('button', 'qcards-arrow', '‹');
     prev.type = 'button';

@@ -13,11 +13,19 @@ import {
   renderQuestionBlock, renderQuestionCards, freezeQuestionCards,
   renderClosureCard, renderAwaitingNote,
   renderErrorNotice, renderDebug, renderWfTrace, el,
-  renderBlueprintList, renderBlueprintMapView, renderBlueprintChip,
+  renderBlueprintList, renderBlueprintChip,
+  renderPlanTree, renderPlanTally, renderPlanLegend, renderRecentStrip,
+  renderNodeDetail, renderStepZero, renderTurnReceipt, renderReceiptToast,
+  pickGreeting,
 } from './render.js';
+import {
+  planViewModel, planRenderKey, toggleFold,
+  messageCountsBySubject, recentNodes, mergeRecent, summarizeTurnReceipt,
+  normalizeSubject, resolveSubject, filterBySubject, nodeContext,
+  stepZeroStatus, COURSE_SUBJECT, RECENT_MAX,
+} from './plan-view.mjs';
 import { normalizeBlueprint, numberBlueprint, countUnconfirmed, packStagedMessage } from '../blueprint-util.mjs';
 import { TITLE_INTERVALS, TITLE_INTERVAL_DEFAULT } from '../title-agent.mjs';
-import { confirmBlueprintNode } from '../engine.mjs';
 import { messageIn, cardIn, cardsIn, chipsIn, closureIn, fadeIn } from './motion.js';
 import { runLocalMockTurn } from './local-turn.mjs';
 import { buildSystemPrompt, stageModuleName, profileSectionText, STYLE_DIRECTIVES } from '../prompt-builder.mjs';
@@ -39,15 +47,29 @@ const LS = {
   courseId: 'cst.courseId',   // pointer to the active server course (persistence tier)
   railPinned: 'cst.railPinned', // history rail pinned-open preference
   channels: 'cst.channels',   // per-family 线路 choice (国内/国际), {group: providerId}
-  bpW: 'cst.bpW',             // blueprint panel width (desktop, px)
-  bpTab: 'cst.bpTab',         // blueprint panel view: 'list' | 'map'
+  bpW: 'cst.bpW',             // 工作台 panel width (desktop, px)
+  bpTab: 'cst.bpTab',         // 工作台 representation: 'list' | 'map'
   bpHidden: 'cst.bpHidden',   // teacher chose to collapse the panel
-  bpComments: 'cst.bpComments', // unsent per-node 批注, keyed by course
   turnMeta: 'cst.turnMeta',   // live turn-progress display toggles {timer, stats, thinking}
   qcards: 'cst.qcards',       // living question-card answer sets, keyed by course (§5c)
-  wbTab: 'cst.wbTab',         // 工作台 top-level tab: 'bp' | 'cards'
   providerCaps: 'cst.providerCaps', // per-provider 深度思考/联网搜索 toggles (UI-only for now)
+  // ---- Workflow v2 (ADR-0010) ----
+  subject: 'cst.subject',     // {course: nodeId|'course'} — which conversation she is in
+  nodeRecent: 'cst.nodeRecent', // {course: [{id, number, title, at}]} — 最近处理 strip
+  planFold: 'cst.planFold',   // {course: [nodeId]} — collapsed branches (view state)
+  planZoom: 'cst.planZoom',   // {course: number} — 导图 scale (view state)
+  receipts: 'cst.receipts',   // {course: [receipt]} — the per-turn receipt ledger
 };
+
+// Pure view state whose surface was removed with the 问题卡 tab (ADR-0010 §3).
+// Purged on load for the same reason the legacy key store is: code that no
+// longer reads a key can never clean it up later. Nothing here is content.
+const RETIRED_VIEW_KEYS = ['cst.wbTab'];
+/** Where unsent 批注 go when the 批注 surface is removed. NOT deleted — the
+ * text in there is the teacher's, typed and never sent, and the one thing worse
+ * than a dead feature is a dead feature that quietly ate her words. Renamed so
+ * this build stops writing it, kept so it can still be read out. */
+const RESCUED_COMMENTS = 'cst.bpComments.rescued';
 
 function load(key, fallback) {
   try {
@@ -89,6 +111,55 @@ function purgeLegacyKeyStorage() {
   return purged;
 }
 const purgedLegacyKeys = purgeLegacyKeyStorage();
+
+/**
+ * Retire the surfaces ADR-0010 §3/§6 removed, WITHOUT eating teacher content.
+ * View-only keys go; the unsent-批注 bucket is renamed rather than deleted and
+ * its rows are handed back so the app can show them to her. She typed those
+ * words for a button that no longer exists — that is our problem to hand back,
+ * not hers to lose.
+ *
+ * Read back from the RENAMED key too, not only from the original: the notice is
+ * not a one-shot. Before this, the first reload after the migration rescued
+ * nothing (the source key was already gone) and the .rescued key had no reader
+ * anywhere in the repo — a dead key holding the teacher's words.
+ * @returns {Array<{course: string, number: string, title: string, text: string}>}
+ */
+function retireRemovedSurfaces() {
+  const rescued = [];
+  const harvest = (raw) => {
+    const blob = JSON.parse(raw);
+    for (const [course, bucket] of Object.entries(blob && typeof blob === 'object' ? blob : {})) {
+      for (const row of Object.values(bucket && typeof bucket === 'object' ? bucket : {})) {
+        if (row && String(row.text ?? '').trim()) {
+          rescued.push({ course, number: String(row.number ?? ''), title: String(row.title ?? ''), text: String(row.text) });
+        }
+      }
+    }
+  };
+  try {
+    for (const key of RETIRED_VIEW_KEYS) localStorage.removeItem(key);
+    const raw = localStorage.getItem('cst.bpComments');
+    if (raw) {
+      harvest(raw);
+      if (rescued.length) localStorage.setItem(RESCUED_COMMENTS, raw);
+      localStorage.removeItem('cst.bpComments');
+    } else {
+      const kept = localStorage.getItem(RESCUED_COMMENTS);
+      if (kept) harvest(kept);
+    }
+  } catch { /* storage blocked or unparseable: nothing to retire */ }
+  return rescued;
+}
+let rescuedComments = retireRemovedSurfaces();
+/** Her explicit 「收好了」 is the only thing that drops the rescued text — a
+ * timer or a navigation dropping it is the app eating her words on a delay. */
+function dismissRescuedComments() {
+  rescuedComments = [];
+  try { localStorage.removeItem(RESCUED_COMMENTS); } catch { /* storage blocked */ }
+  logEvent('session', 'rescued_blueprint_comments_dismissed', {});
+  for (const node of messagesEl.querySelectorAll('.rescued-comments')) node.remove();
+}
 
 // ------------------------------------------------------------- app state
 
@@ -265,6 +336,15 @@ let activeCourseId = load(LS.courseId, null);
 function persistenceActive() {
   return persistent && backendOnline && !(authRequired && !me);
 }
+/**
+ * The bucket key every per-course client store is filed under (question-card
+ * answers, subject, 最近处理, fold set, zoom, receipts). Defined HERE, above
+ * every consumer, because it used to live inside the 批注 block: deleting that
+ * block wholesale would have taken the question-card system's course key with
+ * it and cards would have silently started reading the wrong bucket — no error,
+ * wrong answers restored.
+ */
+function courseKey() { return activeCourseId || courseState?.course_id || 'local'; }
 /** Brief list of the demo user's server courses, for the history rail. */
 let coursesCache = [];
 /** History rail state. */
@@ -611,12 +691,40 @@ function removeWelcome() {
   if (w) w.remove();
 }
 
+/**
+ * The entry fork (ADR-0010): 「帮我想想做什么」 or 「我已经有想法了」.
+ *
+ * The fork sets the OPENING, not the product — both paths converge on the same
+ * conversation by turn three, and neither creates a second kind of course. The
+ * first sends one plain message; the second opens the composer with the
+ * examples still on screen, because a teacher who already has an idea should be
+ * typing it, not choosing from a menu of ours.
+ */
 function renderWelcome() {
   const box = el('div', 'welcome');
   box.id = 'welcome';
   box.append(el('h2', 'welcome-title', '我在，随时可以开始。'));
   box.append(el('p', 'welcome-note',
-    '我是陪跑智能体，陪你把身边的本土资源慢慢长成孩子的课程。不用先准备什么材料——从一句话说起就可以，比如：'));
+    '我是陪跑智能体，陪你把身边的本土资源慢慢长成孩子的课程。不用先准备什么材料——两条路都行：'));
+
+  const fork = el('div', 'entry-fork');
+  const askMe = el('button', 'entry-fork-btn', '帮我想想做什么');
+  askMe.type = 'button';
+  askMe.addEventListener('click', () => {
+    logEvent('user_input', 'entry_fork', { choice: 'help_me_think' });
+    send('帮我想想做什么。我们班还没定主题，你先问我几句吧。');
+  });
+  const haveIdea = el('button', 'entry-fork-btn', '我已经有想法了');
+  haveIdea.type = 'button';
+  haveIdea.addEventListener('click', () => {
+    logEvent('user_input', 'entry_fork', { choice: 'have_idea' });
+    inputEl.placeholder = '说说你的想法——想做什么主题，班里是什么情况都行';
+    inputEl.focus();
+  });
+  fork.append(askMe, haveIdea);
+  box.append(fork);
+  box.append(el('p', 'welcome-note entry-fork-hint', '直接在下面说就行，比如：'));
+
   const row = el('div', 'chip-row');
   for (const starter of STARTERS) {
     const chip = el('button', 'chip', starter);
@@ -631,7 +739,8 @@ function renderWelcome() {
  * Render one full agent turn (message → artifacts → question → closure →
  * awaiting note). Animation only for live turns, not restored history.
  * @param {Object} ev the "turn" SSE event
- * @param {{animate?: boolean}} [opts]
+ * @param {{animate?: boolean, turnIndex?: number}} [opts] turnIndex ties this
+ *   group to its receipt line (ADR-0010 §7)
  */
 function renderTurnGroup(ev, opts = {}) {
   const animate = opts.animate !== false;
@@ -707,6 +816,10 @@ function renderTurnGroup(ev, opts = {}) {
     group.append(awaitingEl);
   }
 
+  // The receipt line: what this turn WROTE. An event, not a message — it is
+  // re-rendered from cst.receipts on every replay and never enters `transcript`.
+  if (typeof opts.turnIndex === 'number') appendTurnReceipt(group, opts.turnIndex);
+
   messagesEl.append(group);
 
   if (animate) {
@@ -723,20 +836,39 @@ function renderTurnGroup(ev, opts = {}) {
   }
 }
 
+/**
+ * Render the transcript for the conversation currently open.
+ *
+ * ONE LOG, FILTERED (ADR-0010 §1). In node mode this shows only the rows filed
+ * under that node; at course level it shows everything, including rows written
+ * inside a node — the course view IS the log, and node views are windows onto
+ * it. Rows written before subjects existed read as course-level, so there is no
+ * migration and no gap in history.
+ */
 function replayTranscript() {
   cardViewSyncs.clear(); // stale DOM renderers must not receive sync nudges
   refreshBlueprintPanel(); // any path that re-renders the chat re-syncs the living plan
   messagesEl.replaceChildren();
   if (!transcript.length) {
     renderWelcome();
+    showRescuedComments();
     return;
   }
-  for (const entry of transcript) {
+  const subject = activeSubject();
+  const shown = filterBySubject(transcript, subject);
+  if (!shown.length) {
+    messagesEl.append(el('div', 'awaiting-note',
+      '这一项下面还没有聊过。在下面说一句，就从这里开始。'));
+  }
+  // Indices are into the FULL transcript: a receipt belongs to the turn that
+  // produced it, whichever view is on screen.
+  const indexOf = new Map(transcript.map((entry, i) => [entry, i]));
+  for (const entry of shown) {
     if (entry.role === 'user') {
       messagesEl.append(renderTeacherMessage(entry.content, { onRetry: fillComposer }));
     } else if (entry.ev) {
       clearAwaitingNotes();
-      renderTurnGroup(entry.ev, { animate: false });
+      renderTurnGroup(entry.ev, { animate: false, turnIndex: indexOf.get(entry) });
     } else {
       messagesEl.append(renderAgentMessage(entry.content));
     }
@@ -747,12 +879,16 @@ function replayTranscript() {
   // Historical question cards are read-only: only card sets living in the very
   // last turn-group may still collect answers, and only when the transcript
   // actually ends on an agent turn (an existing teacher reply closes them all).
+  // In a FILTERED view the last rendered group may not be the last transcript
+  // entry, so the live set is recognised by identity, not by position.
+  const lastShown = shown[shown.length - 1];
   const groups = messagesEl.querySelectorAll('.turn-group');
   const lastGroup = groups[groups.length - 1] ?? null;
-  const lastIsOpenAgentTurn = Boolean(last?.ev);
+  const lastIsOpenAgentTurn = Boolean(last?.ev) && lastShown === last;
   for (const set of messagesEl.querySelectorAll('.qcards')) {
     if (!lastIsOpenAgentTurn || !lastGroup || !lastGroup.contains(set)) freezeQuestionCards(set);
   }
+  showRescuedComments();
 }
 
 // ------------------------------------------------------------- SSE client
@@ -810,6 +946,12 @@ function chatRequestBody(text) {
     history: wireHistory(),
     message: text,
     provider,
+    // WHICH CONVERSATION THIS TURN BELONGS TO (ADR-0010 §1). The server stores
+    // it on the message row and prompt-builder renders the focus band from it.
+    // Until this line existed every row was course-level, the focus band never
+    // rendered in production, and node conversations could not be filtered
+    // after a reload — the feature read as broken while every unit test passed.
+    subject: activeSubject(),
   };
   const prof = profileForRequest();
   if (prof) body.profile = prof;
@@ -1003,16 +1145,26 @@ function handleTurn(userText, ev) {
     wf_trace: ev.turn?.wf_trace ?? null,
   });
 
+  // Snapshot BEFORE the turn lands: applyPlanDelta is forward-only and there is
+  // no inverse, so undo restores this rather than recomputing anything.
+  const stateBefore = structuredClone(courseState);
   courseState = ev.state;
   lastEvent = ev;
   lastTurnHadQuestion = Boolean(ev.turn?.question);
+  // Both rows carry the subject so a localStorage-only course can be filtered
+  // too. Rows written before this build have none, and read as course-level.
+  const subject = activeSubject();
   transcript.push(
-    { role: 'user', content: userText },
-    { role: 'assistant', content: ev.turn.reply_markdown, ev },
+    { role: 'user', content: userText, subject },
+    { role: 'assistant', content: ev.turn.reply_markdown, ev, subject },
   );
+  const assistantIndex = transcript.length - 1;
   save(LS.state, courseState);
   save(LS.transcript, transcript);
   pendingMessage = null;
+  // The receipt for this turn: engine-derived, or nothing at all when the turn
+  // only talked.
+  issueReceipt(stateBefore, courseState, assistantIndex);
   // Living card set (§5c): a new agent turn with 2+ questions replaces the
   // active set; any other turn closes it (the conversation moved on).
   const evQuestions = Array.isArray(ev.turn?.questions) && ev.turn.questions.length
@@ -1039,7 +1191,7 @@ function handleTurn(userText, ev) {
   }
 
   setStatus(null);
-  renderTurnGroup(ev, { animate: true });
+  renderTurnGroup(ev, { animate: true, turnIndex: assistantIndex });
   // Prompt-cache readout, only when the vendor actually reported one and the
   // teacher hasn't switched it off (回合进度显示 · 提示缓存命中).
   if (ev.cache && turnMetaOn('cache')) {
@@ -2062,6 +2214,10 @@ function messagesToTranscript(rows) {
       out.push({
         role: 'assistant',
         content: m.content,
+        // The store has carried `subject` since ADR-0010; rows written before
+        // it default to course level via normalizeSubject, so old history needs
+        // no migration and never disappears from the course view.
+        subject: normalizeSubject(m.subject),
         ev: {
           turn: tc,
           gate_report: { ok: true, violations: [] },
@@ -2075,7 +2231,7 @@ function messagesToTranscript(rows) {
         },
       });
     } else {
-      out.push({ role: 'user', content: m.content });
+      out.push({ role: 'user', content: m.content, subject: normalizeSubject(m.subject) });
     }
   }
   return out;
@@ -2122,6 +2278,8 @@ async function loadCourseFromServer(id) {
   lastTurnHadQuestion = Boolean(transcript[transcript.length - 1]?.ev?.turn?.question);
   save(LS.state, courseState);      // localStorage stays a cache of the active course
   save(LS.transcript, transcript);
+  planKey = '';                     // a different plan is a different panel
+  applyNodeMode();                  // the stored subject may not exist in THIS plan
 }
 
 /** Boot the persistence tier: choose (or create) the active course, load it. */
@@ -2163,51 +2321,233 @@ async function switchCourse(id) {
   scrollToEnd();
 }
 
-// ---------------------------------------------- 蓝图 workspace panel (§5b)
-// The living mother plan: renders course_state.course_plan_blueprint — every
-// pixel (numbering, collapse, map geometry) reconstructed client-side. Chat
-// cards remain historical snapshots; this panel is always the latest version.
+// ------------------------------------------------ 工作台 (ADR-0010, Workflow v2)
+// The living 课程计划树: renders course_state.course_plan — 月计划（2–5 周的一
+// 段，不是自然月）→ 周计划 → 活动, with an activity's date as a FIELD on its
+// row. Numbering, fold state and the two status axes are all reconstructed
+// client-side (plan-view.mjs derives, render.js draws, this file wires).
+//
+// THE PANEL IS READ-ONLY. Three interactions and no more: open a node's
+// conversation on the left, fold a branch, zoom 导图. There is no ✓确认, no
+// 批注, no filter, no bulk action and no tab — every one of those was an input
+// surface on a surface that does not take input (ADR-0010 §3/§6). What replaced
+// them lives in the conversation: citation-backed confirmation, node
+// conversations, and the pending-card strip above the composer.
 
 let bpTab = load(LS.bpTab, 'list');
 let bpHidden = load(LS.bpHidden, false);
-let bpRenderKey = ''; // courseId:version:tab — unchanged key skips the re-render, keeping fold/scroll state
-let wbTab = load(LS.wbTab, 'bp'); // 工作台 top-level tab: 'bp' | 'cards'
-let wbCardsRenderKey = ''; // course:sig — unchanged key keeps the queue's DOM (focus, scroll)
+/** Digest of everything the panel DRAWS — not `course:version:tab`. The old key
+ * missed every change that did not bump the version (a 待复查 badge appearing, a
+ * message count going 0 → 1, the open-node highlight moving), so the panel
+ * simply did not repaint. planRenderKey() owns the digest; this holds the last
+ * one rendered. */
+let planKey = '';
+
+// -- per-course client stores (all keyed by courseKey(), all Workflow v2) --
+/** {[course]: nodeId|'course'} — the conversation she is in. Written ONLY from
+ * a UI selection (a node click, a recent chip, the chip's ✕); never from model
+ * output. Persisted so a reload returns her to the node she was reading. */
+let subjectByCourse = load(LS.subject, {});
+/** {[course]: [{id, number, title, at}]} — the 最近处理 strip, newest first. */
+let nodeRecent = load(LS.nodeRecent, {});
+/** {[course]: [nodeId]} — collapsed branches. VIEW STATE, deliberately not
+ * exported: it carries no teacher decision and no course content, and is fully
+ * reconstructible from the tree (same class as cst.bpW). */
+let planFold = load(LS.planFold, {});
+/** {[course]: number} — 导图 scale, 0.5–2.0. View state, same reasoning. */
+let planZoom = load(LS.planZoom, {});
+/** {[course]: [receipt]} — the receipt ledger behind the toast and the per-turn
+ * line. Each entry may carry `state_before`, a structuredClone of course_state
+ * taken BEFORE the turn was applied, because applyPlanDelta is forward-only and
+ * undo must restore rather than recompute. Only the newest few keep it. */
+let receiptsByCourse = load(LS.receipts, {});
+/** How many receipts keep their `state_before` snapshot. Older ones keep the
+ * summary (the record survives) and drop the state (the memory does not). */
+const RECEIPT_SNAPSHOT_KEEP = 10;
 
 // -- living question-card answer set (§5c): ONE set per course (only the
-// newest agent turn collects answers), shared by the chat carousel and the
-// 工作台 queue. Survives reloads via localStorage.
+// newest agent turn collects answers). The 问题卡 TAB is gone; the cards
+// themselves live on in the conversation with a pending strip above the
+// composer. Survives reloads via localStorage.
 let qcardSets = load(LS.qcards, {});
 const cardViewSyncs = new Set(); // live renderers to repaint after a cross-view edit
-function cardSetSig(questions) { return (questions || []).map((q) => q.text).join(''); }
-function activeCardSet() { return qcardSets[commentCourseKey()] ?? null; }
+function cardSetSig(questions) { return (questions || []).map((q) => q.text).join(''); }
+function activeCardSet() { return qcardSets[courseKey()] ?? null; }
 function setActiveCardSet(set) {
-  const key = commentCourseKey();
+  const key = courseKey();
   if (set) qcardSets = { ...qcardSets, [key]: set };
   else { qcardSets = { ...qcardSets }; delete qcardSets[key]; }
   save(LS.qcards, qcardSets);
-  wbCardsRenderKey = ''; // structure changed → queue must re-render
   cardViewSyncs.clear();
 }
 function onCardChange() {
   save(LS.qcards, qcardSets);
   for (const fn of cardViewSyncs) { try { fn(); } catch { /* view left the DOM */ } }
   refreshStageTray();
+  refreshPendingStrip();
   refreshWorkbenchBadges();
   scheduleWorkbenchMirror();
 }
 
-/** Snapshot of the teacher's unsent 工作台 state — 批注 + living card
- * answers. Rides the session-log export and mirrors to the server (admin
- * exports must show work-in-progress, not only sent messages). */
+// ------------------------------------------------------------- subject (§1)
+
+/** The subject this browser has selected for the active course, dropped back to
+ * course level when it points at a node the plan no longer has (a stale id
+ * would filter the transcript to nothing and file her next message where nobody
+ * will look). */
+function activeSubject() {
+  return resolveSubject(subjectByCourse[courseKey()], courseState?.course_plan);
+}
+/** Node ids → how many local transcript rows are filed under each. Entries
+ * written before subjects existed default to 'course' (normalizeSubject), so
+ * there is no migration. */
+function subjectCounts() {
+  return messageCountsBySubject(transcript);
+}
+
+/**
+ * Switch the conversation the left panel is showing.
+ * `to` is a node id or COURSE_SUBJECT. Nothing here transmits: the subject
+ * rides the NEXT send, and the transcript re-renders as a filtered view of the
+ * one log (ADR-0010 §1 — node conversations are views, never second threads).
+ * @param {string} to
+ * @param {{from?: string, scroll?: boolean}} [opts]
+ */
+function setSubject(to, opts = {}) {
+  const key = courseKey();
+  const want = resolveSubject(to, courseState?.course_plan);
+  const before = activeSubject();
+  subjectByCourse = { ...subjectByCourse, [key]: want };
+  save(LS.subject, subjectByCourse);
+  if (want === COURSE_SUBJECT) {
+    if (before !== COURSE_SUBJECT) logEvent('workflow', 'subject_change', { from: before, to: want });
+  } else {
+    const ctx = nodeContext(courseState?.course_plan, want);
+    logEvent('workflow', 'node_opened', {
+      course_id: courseState?.course_id ?? null,
+      node_id: want,
+      number: ctx?.number ?? '',
+      from: opts.from ?? 'panel',
+    });
+    if (ctx) {
+      nodeRecent = {
+        ...nodeRecent,
+        [key]: mergeRecent(nodeRecent[key], {
+          id: want, number: ctx.number, title: ctx.node.title, at: new Date().toISOString(),
+        }, { limit: RECENT_MAX }),
+      };
+      save(LS.nodeRecent, nodeRecent);
+    }
+  }
+  planKey = ''; // the open-node highlight and the recent strip both moved
+  applyNodeMode();
+  replayTranscript();
+  refreshBlueprintPanel();
+  if (opts.scroll !== false) scrollToEnd();
+}
+
+/** Paint everything that depends on WHICH conversation is open: the node view
+ * above the transcript, the composer's subject chip, the static greeting. */
+function applyNodeMode() {
+  const subject = activeSubject();
+  const inNode = subject !== COURSE_SUBJECT;
+  document.body.classList.toggle('node-mode', inNode);
+  const view = $('#node-view');
+  const body = $('#node-view-body');
+  const chip = $('#subject-chip');
+  const chipTitle = $('#subject-chip-title');
+  const greeting = $('#node-greeting');
+  if (!inNode) {
+    if (view) view.hidden = true;
+    if (body) body.replaceChildren();
+    if (chip) chip.hidden = true;
+    if (greeting) { greeting.hidden = true; greeting.textContent = ''; }
+    return;
+  }
+  const ctx = nodeContext(courseState?.course_plan, subject);
+  if (!ctx) { setSubject(COURSE_SUBJECT, { from: 'missing_node' }); return; }
+  if (view) view.hidden = false;
+  if (body) {
+    // ctx.node is the NORMALIZED node and that is all there is: a plan node
+    // has no `rationale` field (contract.zh.md puts its 依据 in the body, and
+    // normalizePlan drops every other key), so there is no raw copy to go
+    // looking for.
+    body.replaceChildren(renderNodeDetail(ctx.node, {
+      number: ctx.number,
+      ancestors: ctx.ancestors,
+      related: relatedNodes(subject),
+      onOpenNode: (id) => setSubject(id, { from: 'node_view' }),
+      // onClose deliberately NOT passed: #node-view-close in index.html is the
+      // one close affordance, and two of them is two things to keep in sync.
+    }));
+  }
+  if (chip && chipTitle) {
+    chipTitle.textContent = `${ctx.number} ${ctx.node.title || '未命名'}`;
+    chip.hidden = false;
+  }
+  if (greeting) {
+    // SCREEN FURNITURE. Set here and nowhere else: never appended to the
+    // transcript, never handed to logEvent, never put in a request body, never
+    // exported. The node_opened event above is what makes the open observable.
+    greeting.textContent = pickGreeting(ctx.node.title, greetingSeed);
+    greeting.hidden = false;
+  }
+}
+/** Rotates so a re-open greets differently; seeded (not Math.random) so a given
+ * open is reproducible within the session. */
+let greetingSeed = 0;
+
+/** Siblings of a node — the cheapest honest 「相关的项」: they are in the plan,
+ * so nothing here is inferred. */
+function relatedNodes(nodeId) {
+  const model = planViewModel(courseState);
+  const me2 = model.byId.get(nodeId);
+  if (!me2) return [];
+  return model.nodes
+    .filter((n) => n.parentId === me2.parentId && n.id !== nodeId)
+    .slice(0, 6)
+    .map((n) => ({ id: n.id, number: n.number, title: n.title }));
+}
+
+// ------------------------------------------------------- step zero checklist
+//
+// The derivation itself is stepZeroStatus() in plan-view.mjs: pure, tested, and
+// gated on teacher_resource_intent.confidence so a row reads 已知 only when the
+// TEACHER said it. Everything below is the observability half.
+
+let lastStepZeroSig = '';
+/** One session-log line per real change, so a developer can see what the agent
+ * believes it has — and, more to the point, what it does not. */
+function logStepZero(status) {
+  const known = status.items.filter((i) => i.known).map((i) => i.key);
+  const missing = status.items.filter((i) => !i.known).map((i) => i.key);
+  const sig = `${known.join(',')}|${missing.join(',')}`;
+  if (sig === lastStepZeroSig) return;
+  lastStepZeroSig = sig;
+  logEvent('workflow', 'step_zero_status', { known, missing });
+}
+
+// ------------------------------------------------------------- the panel
+
+/** Snapshot of the teacher's unsent 工作台 state. Rides the session-log export
+ * and mirrors to the server (admin exports must show work-in-progress, not only
+ * what was sent). 批注 left with its surface; receipts and the navigation trail
+ * joined in its place. */
 function workbenchSnapshot() {
   const set = activeCardSet();
+  const key = courseKey();
   return {
-    blueprint_comments: Object.values(commentsForCourse()),
     question_cards: set ? {
       questions: set.questions.map((q) => ({ text: q.text, ...(q.why ? { why: q.why } : {}) })),
       answers: set.answers.map((a) => ({ value: a.value, skipped: Boolean(a.skipped), locked: Boolean(a.locked) })),
     } : null,
+    // Summaries only: `state_before` is a state snapshot, not a record, and has
+    // no business in an export or on the wire.
+    receipts: (receiptsByCourse[key] ?? []).map(({ state_before: _drop, ...r }) => r),
+    // Client-only by design: a per-browser navigation trail, not course content.
+    // The server can already derive a truer version from message subjects plus
+    // course_plan.revision_log, so mirroring it would be a second, worse copy.
+    recent_nodes: nodeRecent[key] ?? [],
   };
 }
 
@@ -2227,159 +2567,299 @@ function scheduleWorkbenchMirror() {
   }, 800);
 }
 
-/** Reveal the 工作台 (chat chip / FAB click-through). Below the desktop
+/** Reveal the 工作台 (FAB / chat chip click-through). Below the desktop
  * breakpoint it opens as the full-height sheet. */
-function openBlueprintPanel(tab) {
+function openBlueprintPanel() {
   bpHidden = false;
   save(LS.bpHidden, false);
-  if (tab === 'bp' || tab === 'cards') { wbTab = tab; save(LS.wbTab, wbTab); }
   if (!window.matchMedia('(min-width: 1100px)').matches) document.body.classList.add('bp-sheet');
   refreshBlueprintPanel();
 }
 
-/** Pending counts for badges: cards still needing the teacher (unlocked) and
- * blueprint nodes not yet confirmed. */
+/** What the mobile edge badge counts: plan nodes still unconfirmed plus nodes
+ * marked 待复查. The unanswered-card count moved to #pending-strip. */
 function workbenchPending() {
+  const { tally } = planViewModel(courseState);
   const set = activeCardSet();
-  const cards = set ? set.answers.filter((a) => !a.locked).length : 0;
-  const bp = courseState?.course_plan_blueprint;
-  const bpPending = bp?.modules?.length
-    ? countUnconfirmed(normalizeBlueprint({ modules: bp.modules }).modules)
-    : 0;
-  return { cards, bpPending };
+  return {
+    cards: set ? set.answers.filter((a) => !a.locked).length : 0,
+    planPending: tally.pending,
+    stale: tally.stale,
+  };
 }
 function refreshWorkbenchBadges() {
-  const { cards, bpPending } = workbenchPending();
-  const setBadge = (id, n) => {
-    const b = $(id);
-    if (!b) return;
-    b.hidden = n === 0;
-    b.textContent = String(n);
-  };
-  setBadge('#wb-cards-badge', cards);
-  setBadge('#wb-bp-badge', bpPending);
-  setBadge('#bp-fab-badge', cards + bpPending);
+  const { planPending, stale } = workbenchPending();
+  const b = $('#bp-fab-badge');
+  if (!b) return;
+  const n = planPending + stale;
+  b.hidden = n === 0;
+  b.textContent = String(n);
+}
+
+/** 待回答的问题卡 counter + jump-back — the slim strip that replaced the tab. */
+function refreshPendingStrip() {
+  const strip = $('#pending-strip');
+  if (!strip) return;
+  const set = activeCardSet();
+  const n = set ? set.answers.filter((a) => !a.locked).length : 0;
+  strip.hidden = n === 0;
+  const count = $('#pending-count');
+  if (count) count.textContent = `还有 ${n} 张问题卡等你回答`;
+}
+function jumpToPendingCards() {
+  const sets = messagesEl.querySelectorAll('.qcards:not(.submitted)');
+  const target = sets[sets.length - 1];
+  if (!target) return;
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 function refreshBlueprintPanel() {
   const panel = $('#bp-panel');
   const fab = $('#btn-blueprint');
   if (!panel || !fab) return;
-  const bp = courseState?.course_plan_blueprint;
-  const hasBp = Boolean(bp?.modules?.length);
-  const cardSet = activeCardSet();
-  const hasCards = Boolean(cardSet?.questions?.length);
-  const has = hasBp || hasCards;
-  document.body.classList.toggle('has-bp', has && !bpHidden);
-  fab.hidden = !has;
-  panel.hidden = !has || bpHidden;
+  // The 工作台 is permanent now: with no plan yet it shows step zero, which is
+  // the thing that explains what the panel is for. It is never empty furniture.
+  document.body.classList.toggle('has-bp', !bpHidden);
+  fab.hidden = false;
+  panel.hidden = bpHidden;
   refreshWorkbenchBadges();
   refreshStageTray();
-  if (!has) return;
-  // Top-level 工作台 tabs: fall back to whichever side has content.
-  if (wbTab === 'bp' && !hasBp) wbTab = 'cards';
-  if (wbTab === 'cards' && !hasCards && hasBp) wbTab = 'bp';
-  $('#wb-tab-bp')?.classList.toggle('active', wbTab === 'bp');
-  $('#wb-tab-cards')?.classList.toggle('active', wbTab === 'cards');
-  $('#bp-head-controls').hidden = wbTab !== 'bp';
-  $('#bp-panel-body').hidden = wbTab !== 'bp';
-  $('#wb-cards-body').hidden = wbTab !== 'cards';
+  refreshPendingStrip();
+  if (bpHidden) return;
 
-  // 问题卡 queue — same living answers as the chat carousel, stacked list.
-  if (wbTab === 'cards') {
-    const cardsBody = $('#wb-cards-body');
-    const cardsKey = `${commentCourseKey()}:${cardSet ? cardSet.sig : 'none'}`;
-    if (cardsKey !== wbCardsRenderKey) {
-      wbCardsRenderKey = cardsKey;
-      if (hasCards) {
-        cardsBody.replaceChildren(renderQuestionCards(cardSet.questions, {
-          variant: 'queue',
-          answers: cardSet.answers,
-          onChange: onCardChange,
-          registerView: (fn) => cardViewSyncs.add(fn),
-        }));
-      } else {
-        cardsBody.replaceChildren(el('div', 'wb-empty', '这一轮没有需要回答的问题卡。'));
-      }
-    }
-  }
+  const key = courseKey();
+  const folded = new Set(planFold[key] ?? []);
+  const openNodeId = activeSubject() === COURSE_SUBJECT ? null : activeSubject();
+  const model = planViewModel(courseState, {
+    messageCounts: subjectCounts(),
+    folded,
+    openNodeId,
+  });
 
-  if (!hasBp) {
-    $('#bp-panel-body').replaceChildren(el('div', 'wb-empty', '蓝图还没生成——和我聊聊你的主题，我先给你一版。'));
-    bpRenderKey = '';
+  // 版本 pill: the PLAN's engine-owned counter (course_plan.version), not the
+  // blueprint's — they are two trees and two counters.
+  $('#plan-version').textContent = model.hasPlan ? `v0.${model.version}` : '';
+
+  const desktopMap = window.matchMedia('(min-width: 880px)').matches;
+  $('#plan-tab-map').hidden = !desktopMap;
+  if (bpTab === 'map' && !desktopMap) bpTab = 'list';
+  const viewable = model.hasPlan;
+  $('#plan-view-toggle').hidden = !viewable;
+  $('#plan-tab-list').classList.toggle('active', bpTab === 'list');
+  $('#plan-tab-map').classList.toggle('active', bpTab === 'map');
+  const zoomBox = $('#plan-zoom');
+  const zoom = clampZoom(planZoom[key]);
+  zoomBox.hidden = !(viewable && bpTab === 'map');
+  $('#plan-zoom-reset').textContent = `${Math.round(zoom * 100)}%`;
+
+  const tallyHost = $('#plan-head-controls');
+  if (model.hasPlan) tallyHost.replaceChildren(renderPlanTally(model.tally));
+  else tallyHost.replaceChildren();
+
+  const bp = courseState?.course_plan_blueprint;
+  const hasBp = Boolean(bp?.modules?.length);
+  const nextKey = planRenderKey(model, {
+    view: bpTab,
+    openNodeId,
+    extra: [key, zoom, desktopMap, hasBp ? bp.version : 'nobp', (nodeRecent[key] ?? []).map((r) => r.id).join(','),
+      model.hasPlan ? '' : JSON.stringify(stepZeroStatus(courseState).items.map((i) => `${i.key}:${i.known ? 1 : 0}`))].join('~'),
+  });
+  if (nextKey === planKey) return; // nothing drawn has changed → keep her scroll
+  planKey = nextKey;
+
+  const body = $('#bp-panel-body');
+  if (!model.hasPlan) {
+    const status = stepZeroStatus(courseState);
+    logStepZero(status);
+    body.replaceChildren(renderStepZero(status, {
+      onSampleOpen: () => logEvent('workflow', 'step_zero_sample_opened', {}),
+    }));
+    if (hasBp) body.append(renderCourseMaterials(bp));
     return;
   }
-  // 版本 pill: pure engine counter — v0.1, v0.2, v0.3… one step per revision
-  // (absorb / ✓确认 / 批注 delta). The model's version string is advisory
-  // only; display numbering is engine-owned (Herman 2026-07-21, ADR-0003).
-  $('#bp-panel-version').textContent = `v0.${bp.version}`;
-  const numbered = numberBlueprint(normalizeBlueprint({ modules: bp.modules }).modules);
-  const desktopMap = window.matchMedia('(min-width: 880px)').matches;
-  $('#bp-tab-map').hidden = !desktopMap;
-  if (bpTab === 'map' && !desktopMap) bpTab = 'list';
-  $('#bp-tab-list').classList.toggle('active', bpTab === 'list');
-  $('#bp-tab-map').classList.toggle('active', bpTab === 'map');
-  const key = `${courseState?.course_id}:${bp.version}:${bpTab}:${desktopMap}`;
-  if (key === bpRenderKey) return; // same plan, same view → keep the teacher's fold/scroll state
-  bpRenderKey = key;
-  const body = $('#bp-panel-body');
-  pruneOrphanComments(numbered);
-  const opts = {
-    onConfirm: confirmNode,
-    posKey: courseState?.course_id,
-    comments: Object.fromEntries(Object.entries(commentsForCourse()).map(([id, c]) => [id, c.text])),
-    onCommentChange: setNodeComment,
-  };
-  body.replaceChildren(bpTab === 'map' ? renderBlueprintMapView(numbered, opts) : renderBlueprintList(numbered, opts));
-  applyBpFilter();
+
+  body.replaceChildren(renderRecentStrip(recentStripEntries(), {
+    activeId: openNodeId,
+    onOpenNode: (id) => setSubject(id, { from: 'recent' }),
+  }));
+  body.append(renderPlanTree(model.plan, {
+    numbers: model.numbers,
+    view: bpTab,
+    openNodeId,
+    folded,
+    messageCounts: subjectCounts(),
+    zoom,
+    onOpenNode: (id) => setSubject(id, { from: 'plan' }),
+    onToggleFold: (id, isFolded) => {
+      planFold = { ...planFold, [courseKey()]: toggleFold(planFold[courseKey()], id, isFolded) };
+      save(LS.planFold, planFold);
+      planKey = ''; // the fold signature is part of the key; let it repaint next pass
+    },
+  }));
+  if (hasBp) body.append(renderCourseMaterials(bp));
 }
 
-// -- per-node 批注 (spec 2026-07-20): unsent comments live locally per course;
-// they STAGE into the composer tray (§5c) and ride the next composer send as
-// one packaged section the model answers with blueprint_delta refinements.
-let bpComments = load(LS.bpComments, {});
-function commentCourseKey() { return activeCourseId || courseState?.course_id || 'local'; }
-function commentsForCourse() { return bpComments[commentCourseKey()] ?? {}; }
-function setNodeComment(node, text) {
-  const key = commentCourseKey();
-  const bucket = { ...(bpComments[key] ?? {}) };
-  if (String(text ?? '').trim()) bucket[node.id] = { id: node.id, number: node.number, title: node.title, text };
-  else delete bucket[node.id];
-  bpComments[key] = bucket;
-  save(LS.bpComments, bpComments);
-  refreshStageTray();
+/** 课程资料: the blueprint spine, read-only, under the plan tree. It still
+ * drives state, so leaving it invisible to the teacher would be the silent
+ * orphaning ADR-0010 warns about — but it is not an input surface any more, so
+ * it renders with NO onConfirm and NO onCommentChange. */
+function renderCourseMaterials(bp) {
+  const box = document.createElement('details');
+  box.className = 'plan-materials';
+  box.open = false;
+  const numbered = numberBlueprint(normalizeBlueprint({ modules: bp.modules }).modules);
+  box.append(el('summary', '', `课程资料 · 预设蓝图 v0.${bp.version}（${countUnconfirmed(numbered)} 项待确认）`));
+  // Said here, next to the badges it describes, and in the 图例 too. The plan
+  // tree's 已确认 is quote-checked (applyPlanDelta + confirmed_by_quote); this
+  // tree's is not — absorbBlueprint still escalates a pre-existing node on any
+  // teacher turn (the KNOWN GAP recorded at serve.mjs). Until that closes, the
+  // app must not let a badge speak for her.
+  box.append(el('div', 'plan-materials-note',
+    '这里的「已确认」是我按对话推的，没有逐句核对你的原话。看着不对，在下面说一声就行。'));
+  box.append(renderBlueprintList(numbered));
+  return box;
+}
+
+/** 最近处理: the nodes she opened (this browser) merged with the ones the plan's
+ * own revision log says were edited. Opening is not editing, which is why the
+ * two sources are merged rather than one replacing the other. */
+function recentStripEntries() {
+  const key = courseKey();
+  let list = nodeRecent[key] ?? [];
+  for (const entry of recentNodes(courseState?.course_plan, { limit: RECENT_MAX })) {
+    if (!list.some((r) => r.id === entry.id)) list = [...list, entry];
+  }
+  // Titles/numbers move with the plan; a chip must show what the tree shows.
+  const model = planViewModel(courseState);
+  return list
+    .map((r) => {
+      const row = model.byId.get(r.id);
+      return row ? { ...r, number: row.number, title: row.title } : null;
+    })
+    .filter(Boolean)
+    .slice(0, RECENT_MAX);
+}
+
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 2;
+/** Rounded to two places: 0.1 steps otherwise accumulate float noise into a
+ * persisted value (1.2000000000000002), which then rides the export. */
+const clampZoom = (v) => Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(v) || 1)) * 100) / 100;
+function setPlanZoom(scale) {
+  const key = courseKey();
+  planZoom = { ...planZoom, [key]: clampZoom(scale) };
+  save(LS.planZoom, planZoom);
+  planKey = '';
+  refreshBlueprintPanel();
+}
+
+// ---------------------------------------------------------- receipts (§7)
+//
+// Every turn that WROTE something says so: a toast with undo at the moment, and
+// one compact line under that turn's reply. Both are composed from the engine's
+// own record (plan before, plan after, revision log) — never from the model's
+// prose — and a turn that only talked produces neither.
+
+function receiptsFor(key) { return receiptsByCourse[key] ?? []; }
+function saveReceipts(key, list) {
+  // Older entries keep their summary and drop their state snapshot: the record
+  // survives, the memory cost does not.
+  const trimmed = list.map((r, i) => (i < RECEIPT_SNAPSHOT_KEEP ? r : (({ state_before: _d, ...rest }) => rest)(r)));
+  receiptsByCourse = { ...receiptsByCourse, [key]: trimmed.slice(0, 40) };
+  save(LS.receipts, receiptsByCourse);
   scheduleWorkbenchMirror();
 }
-/** A node removed by a delta takes its unsent comment with it — an invisible
- * comment the bar still counts would be a lie the teacher can't act on. */
-function pruneOrphanComments(numbered) {
-  const known = new Set();
-  const walk = (n) => { known.add(n.id); n.children.forEach(walk); };
-  (numbered || []).forEach(walk);
-  const key = commentCourseKey();
-  const bucket = bpComments[key];
-  if (!bucket) return;
-  const kept = Object.fromEntries(Object.entries(bucket).filter(([id]) => known.has(id)));
-  if (Object.keys(kept).length !== Object.keys(bucket).length) {
-    bpComments[key] = kept;
-    save(LS.bpComments, bpComments);
-  }
+
+/**
+ * Build, record and show the receipt for one turn.
+ * @param {Object} before course_state as it stood BEFORE the turn was applied
+ * @param {Object} after course_state after
+ * @param {number} turnIndex transcript index of the assistant entry
+ */
+function issueReceipt(before, after, turnIndex) {
+  const receipt = summarizeTurnReceipt(before, after, {
+    id: `r-${Date.now()}-${turnIndex}`,
+    at: new Date().toISOString(),
+    turnIndex,
+  });
+  if (!receipt) return null;
+  // Undo restores a snapshot; on the persistence tier the server holds the
+  // course record and there is no route to restore it, so offering an undo
+  // there would desync the two silently. Honest until that route exists.
+  receipt.undoable = !persistenceActive();
+  receipt.state_before = before;
+  const key = courseKey();
+  saveReceipts(key, [receipt, ...receiptsFor(key)]);
+  logEvent('workflow', 'receipt_issued', {
+    receipt_id: receipt.id,
+    parts: receipt.parts.map((p) => ({ kind: p.kind, count: p.count, node_ids: p.node_ids ?? [] })),
+    undoable: receipt.undoable,
+  });
+  showReceiptToast(receipt);
+  return receipt;
+}
+
+const TOAST_MS = 8000;
+function showReceiptToast(receipt) {
+  const host = $('#toast-host');
+  if (!host) return;
+  const toast = renderReceiptToast(receipt, {
+    timeoutMs: TOAST_MS,
+    onUndo: receipt.undoable ? (id) => { undoReceipt(id); toast.remove(); } : undefined,
+    onDismiss: () => toast.remove(),
+  });
+  host.append(toast);
+  setTimeout(() => {
+    toast.classList.add('leaving');
+    setTimeout(() => toast.remove(), 200);
+  }, TOAST_MS);
+}
+
+/** Undo: restore the snapshot taken before the turn. There is no inverse of
+ * applyPlanDelta (it is forward-only), so this restores rather than recomputes. */
+function undoReceipt(receiptId) {
+  const key = courseKey();
+  const list = receiptsFor(key);
+  const hit = list.find((r) => r.id === receiptId);
+  if (!hit || hit.undone || !hit.state_before) return;
+  courseState = hit.state_before;
+  save(LS.state, courseState);
+  saveReceipts(key, list.map((r) => (r.id === receiptId ? { ...r, undone: true, state_before: null } : r)));
+  logEvent('workflow', 'receipt_undone', {
+    receipt_id: receiptId,
+    restored_plan_version: courseState?.course_plan?.version ?? null,
+  });
+  planKey = '';
+  applyNodeMode();
+  replayTranscript();
+  refreshDebug();
+}
+
+/** The compact line under a turn's reply. An EVENT, not a message: appended
+ * inside .turn-group, re-rendered on replay from cst.receipts, never pushed
+ * into the transcript array and never sent to the model. */
+function appendTurnReceipt(group, turnIndex) {
+  const receipt = receiptsFor(courseKey()).find((r) => r.turn_index === turnIndex);
+  if (!receipt) return;
+  group.append(renderTurnReceipt(receipt, {
+    onUndo: receipt.undoable && !receipt.undone && receipt.state_before ? undoReceipt : undefined,
+  }));
 }
 
 // ---------------------------------------- staging tray + the only mouth (§5c)
 
-/** Everything currently staged for the next composer send. */
+/** Everything currently staged for the next composer send. 批注 left with its
+ * surface; card answers are what remains, and hold-to-send still guards them. */
 function stagedPayload() {
   const set = activeCardSet();
   const lockedCount = set ? set.answers.filter((a) => a.locked).length : 0;
-  const comments = Object.values(commentsForCourse());
-  return { set, lockedCount, comments, total: lockedCount + comments.length };
+  return { set, lockedCount, total: lockedCount };
 }
 
 function refreshStageTray() {
   const tray = $('#stage-tray');
   if (!tray) return;
-  const { lockedCount, comments, total } = stagedPayload();
+  const { lockedCount, total } = stagedPayload();
   tray.hidden = total === 0;
   sendBtn.classList.toggle('hold-send', total > 0);
   sendBtn.title = total > 0 ? '按住 1.2 秒发送（含待发内容）' : '发送';
@@ -2387,54 +2867,32 @@ function refreshStageTray() {
   if (total === 0) { tray.replaceChildren(); return; }
   tray.replaceChildren();
   tray.append(el('span', 'stage-tray-label', '待发'));
-  if (lockedCount) {
-    const chip = el('button', 'stage-chip', `${lockedCount} 张答卡`);
-    chip.type = 'button';
-    chip.title = '打开工作台查看已锁定的回答';
-    chip.addEventListener('click', () => openBlueprintPanel('cards'));
-    tray.append(chip);
-  }
-  if (comments.length) {
-    const chip = el('button', 'stage-chip', `${comments.length} 条批注`);
-    chip.type = 'button';
-    chip.title = '打开工作台查看批注';
-    chip.addEventListener('click', () => openBlueprintPanel('bp'));
-    tray.append(chip);
-  }
+  const chip = el('button', 'stage-chip', `${lockedCount} 张答卡`);
+  chip.type = 'button';
+  chip.title = '回到对话里的问题卡';
+  chip.addEventListener('click', jumpToPendingCards);
+  tray.append(chip);
   tray.append(el('span', 'stage-tray-hint', '按住发送键一起发出'));
 }
 
-/** The composer send: packages staged card answers + 批注 + typed text into
- * ONE teacher message (§5c), consumes the staged sources, and hands off to
- * send(). Plain sends (nothing staged) pass straight through. */
+/** The composer send: packages staged card answers + typed text into ONE
+ * teacher message (§5c), consumes the staged sources, and hands off to send().
+ * Plain sends (nothing staged) pass straight through. */
 function composerSend() {
   if (busy) return;
   const typed = inputEl.value;
-  const { set, lockedCount, comments } = stagedPayload();
+  const { set, lockedCount } = stagedPayload();
   const packed = packStagedMessage({
     cards: lockedCount ? set : null,
-    comments,
     text: typed,
   });
   if (!packed) return;
   inputEl.value = '';
   autogrow();
-  if (lockedCount || comments.length) {
-    logEvent('user_input', 'staged_send', {
-      locked_cards: lockedCount,
-      comments: comments.length,
-      node_ids: comments.map((r) => r.id),
-      typed: Boolean(typed.trim()),
-    });
-  }
   if (lockedCount) {
+    logEvent('user_input', 'staged_send', { locked_cards: lockedCount, typed: Boolean(typed.trim()) });
     setActiveCardSet(null); // consumed — the batch now lives in the transcript
     for (const stale of messagesEl.querySelectorAll('.qcards:not(.submitted)')) freezeQuestionCards(stale);
-  }
-  if (comments.length) {
-    bpComments = { ...bpComments, [commentCourseKey()]: {} };
-    save(LS.bpComments, bpComments);
-    bpRenderKey = ''; // re-render clears the 已批注 button states
   }
   refreshBlueprintPanel();
   // Mobile sheet: sending hands the floor back to the chat.
@@ -2467,101 +2925,24 @@ function holdCancel() {
   sendBtn.classList.remove('holding');
 }
 
-// -- status filter + bulk confirm (Herman: MS-Word-comments ergonomics) --
-let bpFilter = null; // null = all, else a status key
-function applyBpFilter() {
-  const body = $('#bp-panel-body');
-  if (!body) return;
-  for (const rowEl of body.querySelectorAll('[data-status]')) {
-    const show = !bpFilter || rowEl.dataset.status === bpFilter
-      || Boolean(rowEl.querySelector(`[data-status="${bpFilter}"]`)); // keep branches containing matches
-    rowEl.classList.toggle('bp-filtered-out', !show);
-    if (bpFilter && rowEl.tagName === 'DETAILS' && show) rowEl.open = true; // reveal matches
-  }
-  for (const pill of document.querySelectorAll('.bp-filter-pill')) {
-    pill.classList.toggle('active', pill.dataset.filter === String(bpFilter));
-  }
-  const bulk = $('#bp-bulk-confirm');
-  if (bulk) {
-    const visible = [...(body?.querySelectorAll('[data-status]:not(.bp-filtered-out)') ?? [])]
-      .filter((e) => e.dataset.status !== 'confirmed').length;
-    bulk.hidden = visible === 0;
-    bulk.textContent = `✓确认可见 ${visible} 项`;
-  }
-}
-async function bulkConfirmVisible() {
-  const body = $('#bp-panel-body');
-  const ids = [...(body?.querySelectorAll('.bp-list-view [data-status]:not(.bp-filtered-out)') ?? [])]
-    .filter((e) => e.dataset.status !== 'confirmed')
-    .map((e) => e.querySelector('.bp-confirm-btn'))
-    .filter(Boolean);
-  // Walk via the engine event per node — same custody as single clicks.
-  const nodeIds = [...(body?.querySelectorAll('.bp-list-view [data-status]:not(.bp-filtered-out)') ?? [])]
-    .filter((e) => e.dataset.status !== 'confirmed' && e.querySelector(':scope > .bp-leaf-line .bp-confirm-btn, :scope > summary .bp-confirm-btn'));
-  void ids;
-  for (const el2 of nodeIds) {
-    const id = findNodeIdForRow(el2);
-    if (id) await confirmNode(id);
-  }
-}
-// Rows don't carry ids in the DOM yet — derive from the rendered number prefix.
-function findNodeIdForRow(rowEl) {
-  const num = rowEl.querySelector(':scope > .bp-leaf-line .bp-number, :scope > summary .bp-number')?.textContent;
-  if (!num) return null;
-  const bp = courseState?.course_plan_blueprint;
-  if (!bp) return null;
-  const numbered = numberBlueprint(normalizeBlueprint({ modules: bp.modules }).modules);
-  const walk = (nodes) => {
-    for (const n of nodes) {
-      if (n.number === num) return n.id;
-      const hit = walk(n.children);
-      if (hit) return hit;
-    }
-    return null;
-  };
-  return walk(numbered);
-}
-
-/** Teacher ✓确认: the engine escalates locally (single source of truth), the
- * server mirrors it for persistent courses so history/exports agree. */
-async function confirmNode(nodeId) {
-  const r = confirmBlueprintNode(courseState, nodeId);
-  if (!r.confirmed) return;
-  courseState = r.state;
-  save(LS.state, courseState);
-  bpRenderKey = ''; // force the panel to re-render the new version
-  refreshBlueprintPanel();
-  logEvent('workflow', 'blueprint_confirm', { node_id: nodeId, version: courseState.course_plan_blueprint?.version });
-  if (persistenceActive() && activeCourseId) {
-    try {
-      await fetch(apiUrl(`/api/courses/${activeCourseId}/blueprint/confirm`), {
-        method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ node_id: nodeId }),
-      });
-    } catch { /* offline: local state already holds the confirmation */ }
-  }
-}
-
 function wireBlueprintPanel() {
   const panel = $('#bp-panel');
   if (!panel) return;
   // Panel sits under the sticky header — measure once (font/theme safe enough).
   const header = document.querySelector('.app-header');
   if (header) document.documentElement.style.setProperty('--header-h', `${header.offsetHeight}px`);
-  const setTab = (tab) => { bpTab = tab; save(LS.bpTab, tab); bpRenderKey = ''; refreshBlueprintPanel(); };
-  for (const pill of document.querySelectorAll('.bp-filter-pill')) {
-    pill.addEventListener('click', () => {
-      bpFilter = bpFilter === pill.dataset.filter ? null : pill.dataset.filter;
-      applyBpFilter();
-    });
-  }
-  $('#bp-bulk-confirm')?.addEventListener('click', bulkConfirmVisible);
-  $('#bp-tab-list').addEventListener('click', () => setTab('list'));
-  $('#bp-tab-map').addEventListener('click', () => setTab('map'));
-  // 工作台 top-level tabs (§5b): 蓝图 | 问题卡.
-  const setWbTab = (tab) => { wbTab = tab; save(LS.wbTab, tab); refreshBlueprintPanel(); };
-  $('#wb-tab-bp')?.addEventListener('click', () => setWbTab('bp'));
-  $('#wb-tab-cards')?.addEventListener('click', () => setWbTab('cards'));
+  // 列表 | 导图 is a REPRESENTATION switch, not input — one of the three
+  // interactions a read-only panel is allowed (ADR-0010 §3).
+  const setTab = (tab) => { bpTab = tab; save(LS.bpTab, tab); planKey = ''; refreshBlueprintPanel(); };
+  $('#plan-tab-list').addEventListener('click', () => setTab('list'));
+  $('#plan-tab-map').addEventListener('click', () => setTab('map'));
+  // Zoom — the third and last permitted panel interaction.
+  $('#plan-zoom-out').addEventListener('click', () => setPlanZoom(clampZoom(planZoom[courseKey()]) - 0.1));
+  $('#plan-zoom-in').addEventListener('click', () => setPlanZoom(clampZoom(planZoom[courseKey()]) + 0.1));
+  $('#plan-zoom-reset').addEventListener('click', () => setPlanZoom(1));
+  // 图例 body is generated once, from the same table the badges read, so the
+  // tree, the tally and the modal cannot drift apart about what a mark means.
+  $('#legend-list')?.replaceWith(renderPlanLegend());
   // 图例 + 制作 modals (small paper cards; Esc / scrim / ✕ dismiss).
   const wireMini = (openBtnId, modalId) => {
     const modal = $(modalId);
@@ -2571,7 +2952,7 @@ function wireBlueprintPanel() {
       if (e.target === modal || e.target.closest('[data-close-mini]')) modal.hidden = true;
     });
   };
-  wireMini('#bp-legend-btn', '#legend-modal');
+  wireMini('#plan-legend-btn', '#legend-modal');
   wireMini('#btn-craft', '#craft-modal');
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
@@ -3129,6 +3510,8 @@ async function resetCourse() {
   pendingMessage = null;
   save(LS.state, courseState);
   save(LS.transcript, transcript);
+  planKey = '';
+  applyNodeMode(); // a new course starts at course level, whatever the last one was
   replayTranscript();
   updateHeader();
   updateSkipLink();
@@ -3191,6 +3574,12 @@ function wire() {
       send('先跳过');
     }
   });
+
+  // ---- Workflow v2: node mode, the subject chip, the pending-card strip ----
+  // Every one of these RETURNS or NAVIGATES. None of them sends.
+  $('#node-view-close').addEventListener('click', () => setSubject(COURSE_SUBJECT, { from: 'node_close' }));
+  $('#subject-chip-x').addEventListener('click', () => setSubject(COURSE_SUBJECT, { from: 'chip' }));
+  $('#pending-jump').addEventListener('click', jumpToPendingCards);
 
   $('#btn-new').addEventListener('click', resetCourse);
   // Header theme toggle: one click flips light↔dark as an explicit choice
@@ -3284,6 +3673,41 @@ function wire() {
   // model-card + 线路 change handlers live in buildModelsPane (built there)
 }
 
+/** One log line per session, however many replays repaint the notice. */
+let rescuedLogged = false;
+/**
+ * Hand back any 批注 that were typed and never sent before the 批注 surface was
+ * removed (ADR-0010 §3). Deleting them quietly would be the app eating her
+ * words, which is exactly what a tool that asks teachers to type in it must
+ * never do.
+ *
+ * Re-appended at the END of every replay, not once at boot: replayTranscript()
+ * clears #messages, and it runs on every node open, every course switch and
+ * every dev-mode toggle. Shown once at boot, the notice vanished the first time
+ * she clicked a node on the panel — the primary new interaction — and the text
+ * was only recoverable from devtools after that. It leaves when she says so.
+ */
+function showRescuedComments() {
+  if (!rescuedComments.length) return;
+  if (!rescuedLogged) {
+    rescuedLogged = true;
+    logEvent('session', 'rescued_blueprint_comments', {
+      count: rescuedComments.length,
+      courses: [...new Set(rescuedComments.map((r) => r.course))].length,
+    });
+  }
+  const box = el('div', 'awaiting-note rescued-comments');
+  box.append(el('div', '', '「批注」这个功能改成了直接和我对话——每一项都可以点开单独聊。下面是你之前写过、还没发出的批注，原样留在这里，需要的话直接复制到输入框：'));
+  for (const row of rescuedComments) {
+    box.append(el('div', 'rescued-comment', `${row.number} ${row.title}：${row.text}`));
+  }
+  const done = el('button', 'text-btn rescued-dismiss', '收好了，不用再提醒');
+  done.type = 'button';
+  done.addEventListener('click', dismissRescuedComments);
+  box.append(done);
+  messagesEl.append(box);
+}
+
 // -------------------------------------------------------------------- boot
 
 function boot() {
@@ -3297,8 +3721,17 @@ function boot() {
       api_base: apiBase || '(same-origin)',
       course_id: courseState?.course_id ?? null,
       stage: courseState?.stage ?? null,
-      // 工作台 work-in-progress rides every export (Herman 2026-07-21):
-      // unsent 批注 + the living card answers, not just what was sent.
+      // Which conversation the export was taken from (ADR-0010 §1). Without it
+      // a node-mode export reads as a course-level one with holes in it.
+      subject: (() => {
+        const s = activeSubject();
+        return { active: s, node_title: s === COURSE_SUBJECT ? null : (nodeContext(courseState?.course_plan, s)?.node.title ?? null) };
+      })(),
+      // 工作台 work-in-progress rides every export (Herman 2026-07-21): the
+      // living card answers, the receipt ledger and the 最近处理 trail — not
+      // only what was sent. cst.planFold and cst.planZoom deliberately stay
+      // out: view state, no teacher decision in it, reconstructible from the
+      // tree (same class as cst.bpW, which has never been exported either).
       workbench: workbenchSnapshot(),
     }),
   });
@@ -3309,7 +3742,8 @@ function boot() {
     // sees only toggle deltas and can't reconstruct pre-session state.
     provider_caps: providerCaps,
   });
-  replayTranscript(); // instant render from the localStorage cache
+  applyNodeMode();    // before the first replay: it decides what the replay filters to
+  replayTranscript(); // instant render from the localStorage cache (also repaints the 批注 hand-back)
   wireBlueprintPanel();
   refreshBlueprintPanel();
   updateHeader();

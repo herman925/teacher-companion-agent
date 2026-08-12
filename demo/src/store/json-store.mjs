@@ -517,25 +517,57 @@ export function createJsonStore(opts = {}) {
       });
     },
 
-    /** Mirror of the teacher's unsent 工作台 state — per-node 批注 + the
-     * living question-card answers (DESIGN.md §5c). Scratch, not history:
-     * no state_version bump, no snapshot row; admin exports simply show
-     * work-in-progress alongside what was actually sent. */
+    /** Mirror of the teacher's unsent 工作台 state: the living question-card
+     * answers plus the receipt ledger (ADR-0010 §7). Scratch, not history — no
+     * state_version bump, no snapshot row; admin exports simply show
+     * work-in-progress alongside what was actually sent.
+     *
+     * MERGES, never replaces. The 批注 surface is gone, so a current client
+     * sends no `blueprint_comments` — and a replacing write turned the first
+     * turn after that build into a silent deletion of words the teacher typed
+     * and never sent. An absent key now means 「不知道」, not 「空的」; only an
+     * explicitly supplied array rewrites a section. `recent_nodes` is
+     * deliberately NOT stored: it is a per-browser navigation trail, and the
+     * server can derive a truer one from message subjects plus
+     * course_plan.revision_log. */
     async setWorkbench(userId, courseId, workbench) {
       return withLock(async () => {
         const c = await readCourse(courseId);
         if (!c || c.user_id !== userId) throw err(404, '课程不存在');
         const s = (v, max) => String(v ?? '').slice(0, max);
-        const comments = (Array.isArray(workbench?.blueprint_comments) ? workbench.blueprint_comments : [])
-          .slice(0, 200)
-          .map((r) => ({ id: s(r?.id, 120), number: s(r?.number, 20), title: s(r?.title, 200), text: s(r?.text, 500) }));
+        const prev = c.workbench ?? {};
+        // Accept-and-clip if an older client still sends it; otherwise keep
+        // whatever is already stored. Never default to [].
+        const comments = Array.isArray(workbench?.blueprint_comments)
+          ? workbench.blueprint_comments.slice(0, 200)
+            .map((r) => ({ id: s(r?.id, 120), number: s(r?.number, 20), title: s(r?.title, 200), text: s(r?.text, 500) }))
+          : prev.blueprint_comments;
+        // Receipts are a record of what was written, so they are clipped and
+        // capped like everything else here, and `state_before` (a whole state
+        // snapshot, the undo buffer) is never accepted over the wire.
+        const receipts = Array.isArray(workbench?.receipts) ? workbench.receipts.slice(0, 40).map((r) => ({
+          id: s(r?.id, 120),
+          at: s(r?.at, 40),
+          turn_index: Number.isFinite(Number(r?.turn_index)) ? Number(r.turn_index) : null,
+          parts: (Array.isArray(r?.parts) ? r.parts : []).slice(0, 10).map((x) => ({
+            kind: s(x?.kind, 20), count: Math.trunc(Number(x?.count) || 0), label: s(x?.label, 200),
+            node_ids: (Array.isArray(x?.node_ids) ? x.node_ids : []).slice(0, 50).map((i) => s(i, 120)),
+          })),
+          undoable: Boolean(r?.undoable),
+          undone: Boolean(r?.undone),
+        })) : null;
         const qc = workbench?.question_cards;
         const cards = qc && Array.isArray(qc.questions) ? {
           questions: qc.questions.slice(0, 50).map((q) => ({ text: s(q?.text, 500), ...(q?.why ? { why: s(q.why, 500) } : {}) })),
           answers: (Array.isArray(qc.answers) ? qc.answers : []).slice(0, 50)
             .map((a) => ({ value: s(a?.value, 2000), skipped: Boolean(a?.skipped), locked: Boolean(a?.locked) })),
         } : null;
-        c.workbench = { blueprint_comments: comments, question_cards: cards, updated_at: nowISO() };
+        c.workbench = {
+          ...(comments === undefined ? {} : { blueprint_comments: comments }),
+          question_cards: 'question_cards' in (workbench ?? {}) ? cards : (prev.question_cards ?? cards),
+          receipts: receipts === null ? (prev.receipts ?? []) : receipts,
+          updated_at: nowISO(),
+        };
         await writeCourse(c);
         return c.workbench;
       });

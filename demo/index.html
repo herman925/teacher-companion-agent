@@ -178,64 +178,65 @@
     </div>
   </header>
 
+  <!-- 节点模式 (ADR-0010 §1a): tapping a node on the read-only 工作台 swaps the
+       LEFT side into that node's conversation. This shell sits above the
+       transcript; renderNodeDetail() fills #node-view-body, and the transcript
+       below becomes the filtered view of the one subject-tagged log. -->
+  <section class="node-view" id="node-view" hidden aria-label="节点详情">
+    <div class="node-view-head">
+      <button type="button" class="text-btn" id="node-view-close">返回整门课的对话</button>
+    </div>
+    <div class="node-view-body" id="node-view-body"></div>
+  </section>
+
   <main class="chat-main" id="messages" aria-live="polite"></main>
 
-  <!-- 工作台 panel (DESIGN.md §5b, 2026-07-20 evening): the single home of
-       everything needing the teacher's interactive input — 蓝图 (living mother
-       plan) + 问题卡 (living answer queue). The panel NEVER sends; every act
-       stages into the composer tray (§5c). Desktop ≥1100px: resizable right
-       panel. Mobile: full-height sheet via the 工作台 edge button. -->
+  <!-- 工作台 panel (ADR-0010 §3): the living 课程计划树 — 月计划（2–5 周的一
+       段，不是自然月）→ 周计划 → 活动, plus 课程资料 (the blueprint spine).
+       READ-ONLY: the only three interactions are opening a node's conversation
+       on the left, folding a branch, and zooming 导图. Nothing here confirms,
+       comments, filters or transmits — all input happens in the composer.
+       Desktop ≥1100px: resizable right panel. Mobile: full-height sheet. -->
   <aside class="bp-panel" id="bp-panel" aria-label="工作台" hidden>
     <div class="bp-panel-resizer" id="bp-resizer" aria-hidden="true"></div>
-    <header class="bp-panel-head">
-      <div class="wb-tabs" role="tablist" aria-label="工作台">
-        <button type="button" class="wb-tab active" id="wb-tab-bp" role="tab">蓝图<span class="wb-badge" id="wb-bp-badge" hidden></span></button>
-        <button type="button" class="wb-tab" id="wb-tab-cards" role="tab">问题卡<span class="wb-badge wb-badge-red" id="wb-cards-badge" hidden></span></button>
-        <button type="button" class="craft-btn" id="btn-craft">制作</button>
-        <button type="button" class="icon-btn bp-panel-close" id="bp-panel-close" aria-label="收起工作台">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-            <path d="M6 6l12 12M18 6L6 18"></path>
-          </svg>
-        </button>
+    <header class="bp-panel-head" id="plan-head">
+      <span class="plan-head-title">工作台</span>
+      <div class="bp-view-toggle bp-panel-tabs" id="plan-view-toggle">
+        <button type="button" class="bp-view-btn active" id="plan-tab-list">列表</button>
+        <button type="button" class="bp-view-btn" id="plan-tab-map">导图</button>
       </div>
-      <div class="bp-head-controls" id="bp-head-controls">
-        <div class="bp-view-toggle bp-panel-tabs">
-          <button type="button" class="bp-view-btn active" id="bp-tab-list">列表</button>
-          <button type="button" class="bp-view-btn" id="bp-tab-map">导图</button>
-        </div>
-        <button type="button" class="text-btn bp-legend-btn" id="bp-legend-btn">图例</button>
-        <span class="bp-version" id="bp-panel-version"></span>
-        <div class="bp-filter-row" aria-label="按状态筛选">
-          <button type="button" class="bp-filter-pill bp-confirmed" data-filter="confirmed">已确认</button>
-          <button type="button" class="bp-filter-pill bp-teacher_preset" data-filter="teacher_preset">老师预设</button>
-          <button type="button" class="bp-filter-pill bp-ai_suggestion" data-filter="ai_suggestion">AI建议</button>
-          <button type="button" class="bp-filter-pill bp-hypothesis" data-filter="hypothesis">待验证</button>
-          <button type="button" class="text-btn bp-bulk" id="bp-bulk-confirm" hidden>✓确认可见</button>
-        </div>
+      <div class="plan-zoom" id="plan-zoom" role="group" aria-label="导图缩放" hidden>
+        <button type="button" class="plan-zoom-btn" id="plan-zoom-out" aria-label="缩小">－</button>
+        <button type="button" class="plan-zoom-btn" id="plan-zoom-reset" aria-label="恢复原始大小">100%</button>
+        <button type="button" class="plan-zoom-btn" id="plan-zoom-in" aria-label="放大">＋</button>
       </div>
+      <span class="bp-version" id="plan-version"></span>
+      <button type="button" class="text-btn bp-legend-btn" id="plan-legend-btn">图例</button>
+      <button type="button" class="craft-btn" id="btn-craft">制作</button>
+      <button type="button" class="icon-btn bp-panel-close" id="bp-panel-close" aria-label="收起工作台">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18"></path>
+        </svg>
+      </button>
+      <!-- read-only two-axis counts; renderPlanTally() writes #plan-tally here -->
+      <div class="bp-head-controls" id="plan-head-controls"></div>
     </header>
     <div class="bp-panel-body" id="bp-panel-body"></div>
-    <div class="bp-panel-body wb-cards-body" id="wb-cards-body" hidden></div>
   </aside>
   <button type="button" class="bp-fab" id="btn-blueprint" hidden>工作台<span class="wb-badge wb-badge-red bp-fab-badge" id="bp-fab-badge" hidden></span></button>
 
-  <!-- 图例 modal: what every status colour / line style means, both renderers. -->
+  <!-- 图例 modal: both status axes, side by side. The list body is generated by
+       renderPlanLegend() at boot so the tree, the tally and this modal can never
+       drift apart about what a badge means. -->
   <div class="mini-modal-scrim" id="legend-modal" hidden>
-    <div class="mini-modal" role="dialog" aria-modal="true" aria-label="蓝图图例">
+    <div class="mini-modal" role="dialog" aria-modal="true" aria-label="图例">
       <div class="mini-modal-head">
-        <h3>蓝图图例</h3>
+        <h3>图例</h3>
         <button type="button" class="icon-btn" data-close-mini aria-label="关闭">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
         </button>
       </div>
-      <ul class="legend-list">
-        <li><span class="bp-chip bp-confirmed">已确认</span><span>你亲自确认过的内容——实心绿是整个蓝图里唯一代表「定了」的颜色。</span></li>
-        <li><span class="bp-chip bp-teacher_preset">老师预设</span><span>你自己提出、还没最终确认的设想（信任蓝底）。</span></li>
-        <li><span class="bp-chip bp-ai_suggestion">AI建议</span><span>我根据已有信息提出的建议，等你取舍（柿色底）。</span></li>
-        <li><span class="bp-chip bp-hypothesis">预设·待验证</span><span>还没发生的儿童反应，一律只算预设——紫色底、虚线边，开课后才可能被验证。</span></li>
-        <li><span class="legend-dash" aria-hidden="true"></span><span>虚线（边框或导图连线）都表示「尚未在现场核实」。</span></li>
-        <li><span class="bp-rollup legend-rollup">n 项待确认</span><span>折叠的分支上，这个角标统计里面还有多少项等你过目。</span></li>
-      </ul>
+      <ul class="legend-list" id="legend-list"></ul>
     </div>
   </div>
 
@@ -262,11 +263,30 @@
     </div>
   </div>
 
+  <!-- Receipt toasts (ADR-0010 §7). Pointer-transparent and empty when idle;
+       main.js appends renderReceiptToast() nodes and owns the dismissal timer. -->
+  <div class="toast-host" id="toast-host" aria-live="polite"></div>
+
   <div class="composer">
     <div class="composer-inner">
       <div class="status-line" id="status-line">
         <span class="status-caret" aria-hidden="true"></span>
         <span id="status-text"></span>
+      </div>
+      <!-- Node-mode greeting: SCREEN FURNITURE. Never appended to the
+           transcript, never logged as agent speech, never sent to the model,
+           never exported (the node_opened session-log event carries the
+           observability duty instead). -->
+      <div class="node-greeting" id="node-greeting" hidden></div>
+      <!-- Unanswered 问题卡 counter + jump-back, replacing the 问题卡 tab. -->
+      <div class="pending-strip" id="pending-strip" hidden>
+        <span class="pending-count" id="pending-count"></span>
+        <button type="button" class="text-btn" id="pending-jump">回到问题卡</button>
+      </div>
+      <!-- 「3.2.2 ✕」 attachment chip: which node this turn is filed under. -->
+      <div class="subject-chip" id="subject-chip" hidden>
+        <span class="subject-chip-title" id="subject-chip-title"></span>
+        <button type="button" class="subject-chip-x" id="subject-chip-x" aria-label="改回整门课的对话">✕</button>
       </div>
       <div class="stage-tray" id="stage-tray" hidden></div>
       <div class="composer-row">

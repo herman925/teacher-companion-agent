@@ -462,6 +462,40 @@ export function runStoreContract(name, makeStore, { skip = false } = {}) {
     await rejectsWithStatus(() => store.setWorkbench(b.id, c.id, {}), 404, '别人的工作台写不了');
   });
 
+  // The 批注 surface is gone (ADR-0010 §3), so a current client PUTs a payload
+  // with NO `blueprint_comments` key at all — and the previous write replaced
+  // the whole blob, so the first turn after that build silently erased words
+  // the teacher had typed and never sent. An absent key means 「不知道」 here,
+  // never 「空的」. The other half of the same contract: the receipt ledger the
+  // client now sends has to actually reach the record, or an admin export of a
+  // persisted course shows no receipts at all.
+  t('workbench: an absent key preserves what is stored; receipts ride along', async (store) => {
+    const a = await newUser(store);
+    const c = await store.createCourse(a.id, '龙舟');
+    await store.setWorkbench(a.id, c.id, {
+      blueprint_comments: [{ id: 'n1', number: '3.2.1', title: '看龙舟', text: '这个对中班太难' }],
+      question_cards: { questions: [{ text: '几个孩子' }], answers: [{ value: '30', skipped: false, locked: true }] },
+    });
+
+    const after = await store.setWorkbench(a.id, c.id, {
+      question_cards: { questions: [{ text: '几个孩子' }], answers: [{ value: '30', skipped: false, locked: true }] },
+      receipts: [{
+        id: 'r1', at: '2026-08-12T02:00:00.000Z', turn_index: 4,
+        parts: [{ kind: 'confirm', count: 2, label: '已确认 2 处', node_ids: ['w2', 'w2-a1'] }],
+        undoable: true, undone: false,
+        state_before: { huge: 'x'.repeat(50) }, // the undo buffer never goes over the wire
+      }],
+    });
+    assert.equal(after.blueprint_comments[0].text, '这个对中班太难', '没写这个键 ≠ 清空这个键');
+    assert.equal(after.receipts[0].parts[0].label, '已确认 2 处');
+    assert.deepEqual(after.receipts[0].parts[0].node_ids, ['w2', 'w2-a1']);
+    assert.equal(after.receipts[0].state_before, undefined, '状态快照不进课程记录');
+    assert.equal(after.question_cards.answers[0].value, '30');
+
+    const admin = await store.adminGetCourse(c.id);
+    assert.equal(admin.workbench.receipts.length, 1, '导出里看得见回执');
+  });
+
   t('confirmBlueprintNode: a teacher confirmation IS a revision', async (store) => {
     const a = await newUser(store);
     const c = await store.createCourse(a.id, '醒狮');

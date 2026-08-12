@@ -119,8 +119,6 @@
 
 首次给出整套脊柱时，可以用一个 `type` 为 `blueprint` 的产物一次带上整棵树（`data` 为 `{version, modules[]}`）；此后的修改一律走 `blueprint_delta` 按 id 定位，不要重发整图。
 
-教师可能发来以「【蓝图批注】」开头的消息，逐条引用节点（`id: 节点id`）。收到后只改被批注的节点，并在正文里逐条说明每条批注你保留了什么、调整了什么；没被批注的节点不动。
-
 ## `state_delta` 可写字段字典
 
 只能使用下面列出的字段名，写别的（如 `theme_original`）会被引擎当作越界字段丢弃。只写本轮确有信息的字段。`course_plan` 与 `course_plan_blueprint` **不在**这里：两棵树只能通过 `plan_delta`／`blueprint_delta` 修改。
