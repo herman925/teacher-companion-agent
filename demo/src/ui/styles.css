@@ -99,6 +99,16 @@ html, body {
   line-height: 1.75;
 }
 
+/* The surfaces the browser draws for us still belong to this palette. A teacher
+   selecting a line of a 课程故事 to paste into her 园本模板 does that constantly,
+   and the default system blue is the one place the warm world visibly stops.
+   Wash rather than solid: the point is to keep the text readable while marked,
+   not to invert it. Debug drawer keeps its own cool selection (it is a
+   deliberately unthemed developer surface, DESIGN.md §2). */
+::selection { background: var(--green-wash); color: var(--ink); }
+.dev-panel ::selection { background: rgba(126, 231, 135, 0.22); color: var(--slate-text); }
+:root { caret-color: var(--green); }
+
 /* ---------------------------------------------------------------- header */
 
 .app-header {
@@ -1315,8 +1325,10 @@ body.rail-pinned .composer { left: 260px; }
   .artifact-card, .qcard, .closure-card, .teacher-msg, .chip,
   .text-btn, .icon-btn, .qcards-arrow, .qcard-lock, .stage-chip,
   .input-field, .qcard-input, .qcards-seg { transition: none; }
-  /* Hold-to-send: no fill animation — the button just darkens while held. */
-  .send-btn.holding::after { transition: none; width: 100%; opacity: 0.35; }
+  /* Hold-to-send: no fill animation — the button just darkens while held. The
+     state change still lands (reduced motion removes the tween, not the
+     feedback: she must still see that the hold registered). */
+  .send-btn.holding::after { transition: none; transform: scaleX(1); opacity: 0.35; }
   .artifact-card:hover, .qcard:hover { transform: none; }
   .chip:active { transform: none; }
   .status-dots i { animation: none; opacity: 0.6; }
@@ -1667,13 +1679,17 @@ body.rail-pinned .composer { left: 260px; }
 .stage-tray-hint { margin-left: auto; font-size: 12px; opacity: 0.9; }
 /* Hold fill: LINEAR over the hold — a countdown, not an ease (§6). */
 .send-btn { position: relative; overflow: hidden; }
+/* Hold-to-send fill. scaleX, not width: the fill runs for a full 1.2s under the
+   teacher's finger, and animating width relayouts the button on every frame of
+   exactly the interaction she is watching most closely. */
 .send-btn::after {
-  content: ''; position: absolute; inset: 0 auto 0 0; width: 0;
+  content: ''; position: absolute; inset: 0 0 0 0;
+  transform: scaleX(0); transform-origin: left center;
   background: color-mix(in srgb, var(--ink) 30%, transparent);
   pointer-events: none;
-  transition: width 150ms ease-out; /* early release: quick snap-back */
+  transition: transform 150ms ease-out; /* early release: quick snap-back */
 }
-.send-btn.holding::after { width: 100%; transition: width var(--hold-ms, 1200ms) linear; }
+.send-btn.holding::after { transform: scaleX(1); transition: transform var(--hold-ms, 1200ms) linear; }
 .send-btn.hold-send { box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 30%, transparent); }
 
 /* ---- key-vault UI (spec 2026-07-22): write-only fields + migration prompt ---- */
@@ -2567,3 +2583,33 @@ body.has-bp .toast-host { right: var(--bp-w); }
 }
 .rescued-dismiss { align-self: flex-start; font-size: 12.5px; }
 .node-detail-close { margin-left: auto; flex: none; }
+
+/* ---- touch targets on coarse pointers ------------------------------------
+   The small controls (skip, lock, carousel arrows, segment pips, the ↻ on a
+   teacher message) sit at 28–36px, which is right for a mouse and short of the
+   44px a finger needs. Rather than inflate them everywhere and lose the density
+   the workbench depends on, grow the HIT AREA only where the pointer is coarse,
+   using a centered pseudo-element so the drawn control keeps its size and the
+   layout does not move. */
+@media (pointer: coarse) {
+  .msg-retry, .qcards-arrow, .qcards-seg, .qcard-skip, .qcard-lock,
+  .qcards-list-toggle, .icon-btn, .text-btn, .craft-btn, .rescued-dismiss,
+  .plan-recent-chip, .node-detail-close {
+    position: relative;
+  }
+  .msg-retry::after, .qcards-arrow::after, .qcards-seg::after, .qcard-skip::after,
+  .qcard-lock::after, .qcards-list-toggle::after, .icon-btn::after, .text-btn::after,
+  .craft-btn::after, .rescued-dismiss::after, .plan-recent-chip::after,
+  .node-detail-close::after {
+    content: ''; position: absolute; left: 50%; top: 50%;
+    width: max(100%, 44px); height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+    /* Hit area only — never paints, never eats the control's own hover. */
+    pointer-events: auto;
+  }
+  /* The segment pips sit shoulder to shoulder; a 44px pad on each would overlap
+     its neighbours and steal their taps. They get height only, and the strip
+     gains the room to carry it. */
+  .qcards-seg::after { width: 100%; }
+  .qcards-segs { gap: 6px; }
+}
