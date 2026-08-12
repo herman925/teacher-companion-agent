@@ -21,13 +21,17 @@ export function runLocalMockTurn(state, history, message, opts = {}) {
   // the same guards as the server — a demo whose citation check is inert would
   // be demonstrating something we do not ship.
   const teacherText = String(message ?? '');
+  // `mock: true` is honest HERE and only here: this function's payload came out
+  // of mockTurn() three lines up. It is what licenses the `demo_sample`
+  // evidence exemption (engine.evidenceIsGrounded); a vendor turn emitting the
+  // same enum value gets no such licence.
   const violations = parsed.turn
-    ? validateTurn(parsed.turn, cur, { stylePref: opts.profile?.stylePref, teacherText })
+    ? validateTurn(parsed.turn, cur, { stylePref: opts.profile?.stylePref, teacherText, mock: true })
     : parsed.violations;
   const blocking = violations.filter((v) => v.action === 'block');
   const ok = Boolean(parsed.turn) && blocking.length === 0;
   const turn = ok ? parsed.turn : safeTemplate(cur);
-  const applied = applyDelta(cur, turn.state_delta, { roundComplete: turn.round_complete, teacherTurn: true, teacherText });
+  const applied = applyDelta(cur, turn.state_delta, { roundComplete: turn.round_complete, teacherTurn: true, teacherText, mock: true });
   applied.state = absorbBlueprint(applied.state, turn, { teacherTurn: true }).state;
   const bpd = applyBlueprintDelta(applied.state, turn.blueprint_delta, { teacherText });
   applied.state = bpd.state;

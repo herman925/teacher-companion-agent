@@ -2,6 +2,8 @@
 // One OpenAI-compatible client; per-provider JSON strategy + quirk handling.
 // Runs in Node (serve.mjs). Keys never touch the repo.
 
+import { scrubCredentials } from './redact.mjs';
+
 /** @type {Record<string, import('./types.mjs').ProviderConfig>} */
 export const PROVIDERS = {
   // MiniMax runs two separate platforms with separate keys/balances:
@@ -242,12 +244,38 @@ export function extractPayload(p, completion) {
 }
 
 export class AdapterError extends Error {
-  /** @param {"content_filter"|"http"|"network"|"empty_completion"} kind */
+  /** @param {"content_filter"|"http"|"network"|"empty_completion"|"timeout"} kind */
   constructor(kind, message, status = 0) {
-    super(message);
+    // LAST LINE OF DEFENCE, not the only one. These messages travel: they are
+    // collected into `err.chain`, shipped to the browser as `chain_errors` and
+    // as the SSE `error` event, and stored in the session log. Several vendors
+    // echo the submitted credential in an auth-failure body, and the key in
+    // play on this path is the PLATFORM env key. The rule above is that upstream
+    // bodies are not relayed at all (see `upstreamFailure`); scrubbing here
+    // catches whatever a future call site forgets.
+    super(scrubCredentials(message));
     this.kind = kind;
     this.status = status;
   }
+}
+
+/**
+ * The error for a non-2xx vendor reply. THE BODY IS LOGGED, NEVER RETURNED.
+ *
+ * Relaying 200–300 characters of an upstream body was how `/api/models` became
+ * a read primitive: whatever the server had been pointed at answered, and its
+ * answer came back to the caller verbatim. The operator still needs to see the
+ * body to debug a vendor, so it goes to the server journal, where the operator
+ * is and the caller is not.
+ *
+ * @param {string} label who answered @param {string} base which address
+ * @param {Response} res @param {string} bodyText
+ */
+function upstreamFailure(label, base, res, bodyText) {
+  // Scrubbed even on the way to the journal: journalctl output gets pasted into
+  // chat when something breaks.
+  console.warn(`[adapter] ${label} (${base}) → ${res.status}: ${scrubCredentials(String(bodyText)).slice(0, 500)}`);
+  return new AdapterError('http', `${label}（${base}）返回 ${res.status}——详细原因见服务器日志`, res.status);
 }
 
 // Node's global fetch (undici) sends no User-Agent; Z.AI's coding endpoint
@@ -306,7 +334,7 @@ async function callNode(p, base, apiKey, body, timeoutMs, onDelta, idleTimeoutMs
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new AdapterError('http', `${p.label}（${base}）返回 ${res.status}：${text.slice(0, 300)}`, res.status);
+      throw upstreamFailure(p.label, base, res, text);
     }
     const completion = onDelta ? await readStream(p, res, wrappedDelta, armIdle) : await res.json();
     return { payload: extractPayload(p, completion), usage: completion.usage ?? null, base_url_used: base };
@@ -527,7 +555,7 @@ export async function listModels(p, apiKey, { timeoutMs = 20000 } = {}) {
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new AdapterError('http', `${p.label ?? p.baseURL} 返回 ${res.status}：${text.slice(0, 200)}`, res.status);
+    throw upstreamFailure(p.label ?? p.baseURL, p.baseURL, res, text);
   }
   const body = await res.json();
   const ids = (Array.isArray(body?.data) ? body.data : [])

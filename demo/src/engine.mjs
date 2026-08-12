@@ -89,20 +89,51 @@ function citedNodeOf(op, ctx = {}) {
  * Grounded means one of:
  *   - the entry's `quote` (preferred) or `content` occurs in her message, after
  *     the same punctuation/whitespace stripping every citation check here uses;
- *   - `source: 'demo_sample'` — the scripted 演示模式 walkthrough's own channel,
- *     which is marked as never-observed in every export it reaches (mock.mjs);
- *   - `upload_ref` — a photo/recording she uploaded. UNKNOWN and not invented
- *     here: no upload pipeline exists yet, so the field is accepted as a
- *     placeholder and nothing validates what it points at.
+ *   - `source: 'demo_sample'` AND `ctx.mock === true` — the scripted 演示模式
+ *     walkthrough's own channel, which is marked as never-observed in every
+ *     export it reaches (mock.mjs);
+ *   - `upload_ref` that `ctx.resolveUploadRef` confirms points at a material
+ *     row belonging to THIS teacher and THIS course.
+ *
+ * TWO EXEMPTIONS THAT USED TO BE FREE, AND WHY THEY ARE NOT ANY MORE:
+ *
+ *   `demo_sample` is a published enum value in
+ *   harness/schema/course-state.schema.json, so a real vendor turn can emit it.
+ *   Trusting the string meant one turn writing its own permission slip: the row
+ *   passed L3, entered the ledger unmarked, counted toward `countedEvidence`
+ *   and opened the stage-2 and stage-5 gates. The exemption now depends on
+ *   something the model cannot write — `ctx.mock`, set ONLY where mockTurn()
+ *   produced the payload (serve.mjs, ui/local-turn.mjs).
+ *
+ *   `upload_ref` grounded on any truthy value, validating nothing. That was
+ *   honest when there was no upload pipeline; `materials` now exists with owner
+ *   scoping in both store tiers and RLS policies (003_rls.sql), so
+ *   `{content: '孩子们发现龙舟要一起用力', upload_ref: 'x'}` counting as a record
+ *   is a fabrication channel with a one-character key. The field only grounds
+ *   when a caller passes a resolver that has already looked the reference up;
+ *   with no resolver it grounds nothing and the row is stamped
+ *   `pending_validation`.
+ *
+ * Both defaults are the closed direction: a caller that supplies neither piece
+ * of context gets the strict answer, not the permissive one.
  *
  * @param {Object} entry one `children_evidence` row
  * @param {string} teacherText this turn's teacher message
+ * @param {{mock?: boolean, resolveUploadRef?: (ref: string) => boolean}} [ctx]
+ *   `mock` — this payload came out of mockTurn(), not a vendor.
+ *   `resolveUploadRef` — SYNCHRONOUS predicate: does this ref name a material
+ *   row owned by this teacher on this course? Async lookups belong at the
+ *   caller, which is why this takes an answer rather than a promise (applyDelta
+ *   and validateTurn are pure and synchronous, and must stay that way).
  * @returns {boolean}
  */
-export function evidenceIsGrounded(entry, teacherText) {
+export function evidenceIsGrounded(entry, teacherText, ctx = {}) {
   if (!entry || typeof entry !== 'object') return false;
-  if (entry.source === 'demo_sample') return true;
-  if (entry.upload_ref) return true;
+  if (entry.source === 'demo_sample') return ctx.mock === true;
+  if (entry.upload_ref) {
+    return typeof ctx.resolveUploadRef === 'function'
+      && ctx.resolveUploadRef(String(entry.upload_ref)) === true;
+  }
   const said = citationKey(teacherText);
   if (!said) return false;
   const cited = citationKey(entry.quote) || citationKey(entry.content);
@@ -188,12 +219,15 @@ const APPEND_KEYS = {
  * Illegal stage jumps are stripped (logged), not fatal; unknown fields are dropped.
  * @param {Object} state  current course_state
  * @param {Object} delta  model's state_delta
- * @param {{ roundComplete?: boolean, teacherTurn?: boolean, teacherText?: string }} ctx
+ * @param {{ roundComplete?: boolean, teacherTurn?: boolean, teacherText?: string,
+ *          mock?: boolean, resolveUploadRef?: (ref: string) => boolean }} ctx
  *   `teacherText` is this turn's teacher message. Supplied, every incoming
  *   `children_evidence` row must trace back to it (`evidenceIsGrounded`) or it
  *   is kept but stamped `pending_validation` and stops counting toward the
  *   stage gates. Omitted, the check is dormant — fixtures and direct callers
  *   keep their old behaviour byte for byte.
+ *   `mock` and `resolveUploadRef` ride through to `evidenceIsGrounded`; see
+ *   there for why neither may be read off the model's own row.
  */
 export function applyDelta(state, delta, ctx = {}) {
   const violations = [];
@@ -222,7 +256,7 @@ export function applyDelta(state, delta, ctx = {}) {
       // negative — but marked, and a marked row buys no stage advance.
       if (key === 'children_evidence' && typeof ctx.teacherText === 'string') {
         incoming = value.map((e) => {
-          if (evidenceIsGrounded(e, ctx.teacherText)) return e;
+          if (evidenceIsGrounded(e, ctx.teacherText, ctx)) return e;
           violations.push({
             kind: 'fabrication',
             detail: `证据 ${e?.id ?? '(无 id)'} 在教师本轮的话里找不到出处，已标为 pending_validation：它不算数，也不能凭它推进阶段`,

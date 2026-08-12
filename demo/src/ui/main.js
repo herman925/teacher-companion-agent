@@ -1,10 +1,11 @@
 // main.js — app logic for the 小小探索家 demo chat (JSDoc-typed ESM, no build
 // step, ADR-0001). Talks to demo/serve.mjs over the /api/chat SSE protocol.
 // State custody: course_state + transcript + provider choice live in
-// localStorage. API keys: with a signed-in user on a vault-enabled backend
-// (health.key_vault) they are WRITE-ONLY to the per-account server vault
-// (ADR-0005) and never stored in this browser; only the no-backend
-// static/offline tier keeps keys in localStorage ('cst.keys').
+// localStorage. API keys never do. ADR-0013 §4 removed the browser key path
+// outright: a key is WRITE-ONLY to the per-account server vault (ADR-0005) or
+// it comes from the server env, and no request this file builds carries key
+// material under any code path. The cost, accepted in that ADR: the
+// paste-your-own-key offline demo is gone; local development uses env keys.
 
 import { createInitialState, STAGE_NAMES } from '../engine.mjs';
 import {
@@ -29,7 +30,6 @@ const LS = {
   state: 'cst.state',
   transcript: 'cst.transcript',
   provider: 'cst.provider',
-  keys: 'cst.keys',
   models: 'cst.models',
   custom: 'cst.custom',
   apiBase: 'cst.apiBase',
@@ -62,6 +62,34 @@ function save(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage full/blocked: demo keeps running in memory */ }
 }
 
+// Keys this build no longer writes, and must not leave behind. Deleting the
+// code that reads 'cst.keys' would otherwise leave the secrets sitting in the
+// browser forever — on a shared staffroom machine that is the exact leak
+// ADR-0013 §4 closes. Purged on load, once, before anything else reads storage.
+const LEGACY_KEY_STORE = 'cst.keys';
+function purgeLegacyKeyStorage() {
+  let purged = 0;
+  try {
+    if (localStorage.getItem(LEGACY_KEY_STORE) != null) {
+      localStorage.removeItem(LEGACY_KEY_STORE);
+      purged += 1;
+    }
+    // The custom endpoint kept its key inside the 'cst.custom' blob, not in
+    // 'cst.keys' — same removal, different hiding place.
+    const raw = localStorage.getItem(LS.custom);
+    if (raw) {
+      const cfg = JSON.parse(raw);
+      if (cfg && typeof cfg === 'object' && 'key' in cfg) {
+        delete cfg.key;
+        localStorage.setItem(LS.custom, JSON.stringify(cfg));
+        purged += 1;
+      }
+    }
+  } catch { /* storage blocked or the blob is unparseable: nothing to purge */ }
+  return purged;
+}
+const purgedLegacyKeys = purgeLegacyKeyStorage();
+
 // ------------------------------------------------------------- app state
 
 /** @type {Object} course_state (engine-owned shape) */
@@ -73,15 +101,17 @@ let courseState = load(LS.state, null) || createInitialState(`course-${Date.now(
  */
 let transcript = load(LS.transcript, []);
 let provider = load(LS.provider, 'mock');
-let apiKeys = load(LS.keys, {});
 
-// ---- per-account key vault (spec 2026-07-22): when the backend advertises
-// key_vault and a user is signed in, keys become WRITE-ONLY to the server —
-// saved once, stored encrypted per-account, never readable back (flags only).
-// localStorage keys are retired for this browser via the migration prompt.
+// ---- per-account key vault (ADR-0005; sole key path since ADR-0013 §4): when
+// the backend advertises key_vault and a user is signed in, a typed key is
+// WRITE-ONLY to the server — saved once, stored encrypted per-account, never
+// readable back (flags only). There is no second path any more: when this is
+// false the browser simply has nowhere to put a key, and the drawer says so.
 let keyVaultOn = false;   // /api/health key_vault
 let serverKeyFlags = {};  // { provider: true } — configured flags, never values
 
+/** Can this browser hand a key to the account vault? (Not "which key path" —
+ * there is only one.) False = the server env is the only remaining source. */
 const serverKeyMode = () => Boolean(keyVaultOn && backendOnline && me);
 
 async function loadServerKeyFlags() {
@@ -116,8 +146,10 @@ async function saveServerKey(pid, value, note) {
 }
 /** Chosen model per provider id; absent = use the provider default. */
 let modelChoices = load(LS.models, {});
-/** OpenAI-compatible custom endpoint config. */
-let customCfg = { baseURL: '', model: '', key: '', label: '', ...load(LS.custom, {}) };
+/** OpenAI-compatible custom endpoint config. No `key` field: the custom
+ * endpoint's key lives in the account vault under the provider id 'custom',
+ * like every other provider (ADR-0013 §4). */
+let customCfg = { baseURL: '', model: '', label: '', ...load(LS.custom, {}) };
 /** 开发者模式: show wf_trace annotations + workflow map details. */
 let devMode = Boolean(load(LS.devmode, false));
 
@@ -128,6 +160,9 @@ const logStore = createLogStore({
   saveConfig: (cfg) => save(LS.logcfg, cfg),
 });
 const logEvent = (cat, event, data) => logStore.log(cat, event, data);
+// Observable, per AGENTS.md: a purge that leaves no trace is indistinguishable
+// from a purge that never ran. Count only — never the values that were removed.
+if (purgedLegacyKeys) logEvent('session', 'legacy_key_storage_purged', { entries: purgedLegacyKeys });
 
 /** 教师档案 (PRD §7.4 v1, local-only): read-only context, never model-writable.
  * ageBand mirrors classBands when exactly one band is chosen (mock uses it). */
@@ -374,8 +409,10 @@ function providerInfo(id) {
  * both the drawer badge and which cards the 模型与服务 picker shows. */
 function isConfigured(id) {
   if (id === 'custom') return Boolean(customCfg.baseURL);
-  if (serverKeyMode()) return Boolean(serverKeyFlags[id] || providerInfo(id)?.hasEnvKey);
-  return Boolean(apiKeys[id] || providerInfo(id)?.hasEnvKey);
+  // Both sources are the server's word: the account vault's presence flag, or
+  // an env key the health endpoint reported. This browser knows of no third.
+  // serverKeyFlags is empty outside vault mode, so that case falls to hasEnvKey.
+  return Boolean(serverKeyFlags[id] || providerInfo(id)?.hasEnvKey);
 }
 
 const STARTERS = [
@@ -757,9 +794,14 @@ function wireHistory() {
 }
 
 /**
- * Assemble the /api/chat body: provider + keys, a model override when the
+ * Assemble the /api/chat body: which provider to use, a model override when the
  * teacher picked one that differs from the provider default, and the custom
  * endpoint config when provider === 'custom'.
+ *
+ * NO KEY MATERIAL, on any branch (ADR-0013 §4). The server resolves the key
+ * from the account vault, then its env; the browser only names the provider.
+ * A `keys` field must never reappear here — demo/tests/key-custody.test.mjs
+ * executes this function and inspects what it builds.
  * @param {string} text
  */
 function chatRequestBody(text) {
@@ -768,8 +810,6 @@ function chatRequestBody(text) {
     history: wireHistory(),
     message: text,
     provider,
-    // Vault mode: the server injects account keys itself — nothing rides the wire.
-    keys: serverKeyMode() ? {} : { ...apiKeys },
   };
   const prof = profileForRequest();
   if (prof) body.profile = prof;
@@ -779,8 +819,9 @@ function chatRequestBody(text) {
   const caps = providerCaps[provider];
   if (caps && (caps.webSearch || caps.thinking)) body.caps = { ...caps };
   if (provider === 'custom') {
+    // Address and model only. The custom endpoint's key is a vault entry under
+    // the id 'custom'; the server pairs the two.
     body.custom = { baseURL: customCfg.baseURL, model: customCfg.model, label: customCfg.label || undefined };
-    if (customCfg.key && !serverKeyMode()) body.keys.custom = customCfg.key;
   } else {
     const chosen = modelChoices[provider];
     if (chosen && chosen !== (providerInfo(provider)?.defaultModel ?? '')) body.model = chosen;
@@ -868,8 +909,8 @@ async function send(message, opts = {}) {
   // /api/chat) and pump its SSE / buffered-JSON events through dispatch.
   const postTurn = async (url, requestBody) => {
     const crossOrigin = Boolean(apiBase);
-    // The store redacts again on append; redacting here too keeps the raw keys
-    // object from ever entering the logging path.
+    // The body carries no key material any more (ADR-0013 §4), but the redactor
+    // stays: it is the belt to that braces, and it costs one call.
     logEvent('api_out', 'chat_request', {
       url, transport: crossOrigin ? 'buffered-json' : 'sse', body: redactSecrets(requestBody),
     });
@@ -1032,7 +1073,6 @@ function showError(message, chain) {
 
 // -------------------------------------------------------------- settings
 
-function saveKeys() { save(LS.keys, apiKeys); }
 function saveModels() { save(LS.models, modelChoices); }
 function saveCustom() { save(LS.custom, customCfg); }
 
@@ -1262,6 +1302,23 @@ function capRow(pid, kind) {
   return row;
 }
 
+/**
+ * Why there is no key box right now, in one plain sentence.
+ *
+ * ADR-0013 §4 removed the browser key path, so when the account vault is out of
+ * reach a key simply cannot be entered here. Saying that is the point: silently
+ * showing a dead input, or a 未配置 badge with no explanation, is the "degrade
+ * quietly" behaviour the ADR is against.
+ * @param {boolean} hasEnvKey  the server already holds a platform key for this provider
+ */
+function keyPathNote(hasEnvKey) {
+  if (hasEnvKey) return '服务器已经配好这个服务的密钥，可以直接使用。';
+  if (!backendOnline) return '这个页面没有连上后端，密钥只保存在服务器上的账号里，所以这里无法填写。想体验完整流程请选「演示模式」。';
+  if (!me) return '密钥只保存在你的账号里。请先登录，登录后可以在这里填写。';
+  if (!keyVaultOn) return '这台服务器还没有开启账号密钥保管，只能使用服务器已经配好的服务。请联系管理员。';
+  return '这个服务现在没有可用的密钥。';
+}
+
 /** One provider's config: key + model row + capability toggles inside a
  * collapsible drawer row (接入与服务). */
 function providerSection(info) {
@@ -1279,39 +1336,31 @@ function providerSection(info) {
     if (now !== configured) { configured = now; buildModelsPane(); }
   };
 
+  // The account vault is the only place a typed key can go. Without it there is
+  // no input at all — not a disabled one, not one that quietly writes to this
+  // browser (ADR-0013 §4).
   const vaultMode = serverKeyMode();
-  const keyNote = el('div', 'inline-error key-note');
-  keyNote.hidden = true;
-  const note = (msg, ok = false) => {
-    keyNote.textContent = msg;
-    keyNote.classList.toggle('ok-note', Boolean(ok));
-    keyNote.hidden = !msg;
-  };
-  const { field: keyField, input: keyInput } = settingsField(
-    'API 密钥',
-    `key-${info.id}`,
-    vaultMode ? {
+  /** Live value of the vault box, for the 获取模型 probe. Always '' without one. */
+  let typedKey = () => '';
+  if (!vaultMode) {
+    details.append(el('p', 'settings-note', keyPathNote(info.hasEnvKey)));
+  } else {
+    const keyNote = el('div', 'inline-error key-note');
+    keyNote.hidden = true;
+    const note = (msg, ok = false) => {
+      keyNote.textContent = msg;
+      keyNote.classList.toggle('ok-note', Boolean(ok));
+      keyNote.hidden = !msg;
+    };
+    const { field: keyField, input: keyInput } = settingsField('API 密钥', `key-${info.id}`, {
       // Write-only vault field: never pre-filled, never readable back.
       type: 'password',
       hint: '密钥保存在你的账号里，保存后不再显示',
       placeholder: serverKeyFlags[info.id] ? '已保存——输入新密钥可替换' : '在这里粘贴密钥，回车保存',
       value: '',
-    } : {
-      type: 'password',
-      hint: info.hasEnvKey ? '服务器已配密钥' : '',
-      placeholder: info.hasEnvKey ? '可留空——使用服务器密钥' : '在这里粘贴密钥',
-      value: apiKeys[info.id] ?? '',
-      onInput: (v) => {
-        if (v) apiKeys[info.id] = v;
-        else delete apiKeys[info.id];
-        saveKeys();
-        paintBadge(badge, info.id);
-        refreshPicker();
-      },
-    },
-  );
-  details.append(keyField);
-  if (vaultMode) {
+    });
+    typedKey = () => keyInput.value.trim();
+    details.append(keyField);
     const submitKey = async (value) => {
       const ok = await saveServerKey(info.id, value, note);
       if (ok) {
@@ -1331,9 +1380,8 @@ function providerSection(info) {
     removeBtn.type = 'button';
     removeBtn.hidden = !serverKeyFlags[info.id];
     removeBtn.addEventListener('click', () => submitKey(''));
-    details.append(removeBtn);
+    details.append(removeBtn, keyNote);
   }
-  details.append(keyNote);
 
   const rates = ratesBlock(() => modelChoices[info.id] ?? info.defaultModel ?? '');
 
@@ -1347,9 +1395,11 @@ function providerSection(info) {
       rates.paint();
       if (isConfigured(info.id)) buildModelsPane(); // the card names the model
     },
-    // Vault mode: a typed-but-unsaved key still works for the fetch; the
-    // server falls back to the account vault, then env, when absent.
-    modelsBody: () => ({ provider: info.id, key: (serverKeyMode() ? keyInput.value.trim() : apiKeys[info.id]) || undefined }),
+    // A key typed into the vault box but not yet saved still works for this
+    // probe — it is on its way to our own server either way, and never came
+    // from browser storage. Absent, the server falls back to the vault, then
+    // env; with no key anywhere it answers 缺少 API 密钥 rather than guessing.
+    modelsBody: () => ({ provider: info.id, key: typedKey() || undefined }),
   }));
 
   details.append(rates.node);
@@ -1391,14 +1441,19 @@ function customSection() {
     if (now !== configured) { configured = now; buildModelsPane(); }
   };
 
+  // The custom endpoint's key is a vault entry under the id 'custom' — the same
+  // single path as every other provider (ADR-0013 §4). Address and label are
+  // configuration, not secrets, so those stay local.
   const customVault = serverKeyMode();
+  /** Live value of the vault box, for the 获取模型 probe. Always '' without one. */
+  let typedKey = () => '';
   const fields = [
     ['baseURL', '接口地址（baseURL）', 'text', '如 https://api.example.com/v1'],
-    // Vault mode stores the custom key per-account like every other provider.
-    ...(customVault ? [] : [['key', 'API 密钥', 'password', '在这里粘贴密钥']]),
     ['label', '名称（可选）', 'text', '显示在调试信息里'],
   ];
-  if (customVault) {
+  if (!customVault) {
+    details.append(el('p', 'settings-note', keyPathNote(false)));
+  } else {
     const keyNote = el('div', 'inline-error key-note');
     keyNote.hidden = true;
     const note = (msg, ok = false) => {
@@ -1412,6 +1467,7 @@ function customSection() {
       placeholder: serverKeyFlags.custom ? '已保存——输入新密钥可替换' : '在这里粘贴密钥，回车保存',
       value: '',
     });
+    typedKey = () => input.value.trim();
     const submitKey = async (value) => {
       const ok = await saveServerKey('custom', value, note);
       if (ok) {
@@ -1452,7 +1508,9 @@ function customSection() {
     },
     modelsBody: () => ({
       provider: 'custom',
-      key: customCfg.key || undefined,
+      // Same rule as every other provider: only a key the teacher is typing
+      // into the vault box right now, never one read back from this browser.
+      key: typedKey() || undefined,
       custom: { baseURL: customCfg.baseURL, model: customCfg.model || 'unknown' },
     }),
   }));
@@ -1835,8 +1893,12 @@ function buildModelsPane() {
   pane.append(grid);
 
   if (!cards.length) {
-    pane.append(el('p', 'settings-note',
-      '还没有配置任何服务。在下方「接入与服务」里填好一个密钥，这里就会出现对应的模型卡。'));
+    // Two different empty states, and conflating them is the quiet-degrade
+    // failure ADR-0013 §4 warns about: 「go fill in a key」 is useless advice
+    // when this browser has nowhere to put one.
+    pane.append(el('p', 'settings-note', serverKeyMode()
+      ? '还没有配置任何服务。在下方「接入与服务」里填好一个密钥，这里就会出现对应的模型卡。'
+      : '还没有可用的服务。密钥只保存在服务器上的账号里，这个浏览器不再保存密钥——请先登录，或请管理员在服务器上配好密钥。现在可以用「演示模式」体验完整流程。'));
   }
 
   pane.append(el('p', 'mcard-legend',
@@ -2811,56 +2873,15 @@ async function performLogin(username, password) {
   applyDevInstruments(); // an admin logging in on public gains the spanner
   await enablePersistence();
   hideLoginGate();
-  offerKeyMigration();
   return { ok: true };
 }
 
-// ---- localStorage-key migration (spec 2026-07-22: ask once, then purge).
-// Never silently import — on a shared machine that would gift the previous
-// person's keys to whoever logs in next, the exact leak this fixes.
-function offerKeyMigration() {
-  const localCount = Object.keys(apiKeys).length + (customCfg.key ? 1 : 0);
-  if (!serverKeyMode() || !localCount || document.querySelector('.key-migrate')) return;
-  const wrap = el('div', 'key-migrate');
-  const card = el('div', 'key-migrate-card');
-  card.append(el('h3', '', '此浏览器里存有模型密钥'));
-  card.append(el('p', '', `发现 ${localCount} 个保存在本浏览器的 API 密钥。为避免同一台电脑上的其他账号看到或使用它们，密钥现在只保存在你的账号里。这些旧密钥要怎么处理？`));
-  const purgeLocal = () => {
-    apiKeys = {}; saveKeys();
-    if (customCfg.key) { delete customCfg.key; saveCustom(); }
-    buildProviderSections();
-  };
-  const actions = el('div', 'key-migrate-actions');
-  const keep = el('button', 'text-btn', '保存到我的账号');
-  const drop = el('button', 'text-btn danger', '仅清除');
-  keep.type = drop.type = 'button';
-  keep.addEventListener('click', async () => {
-    keep.disabled = drop.disabled = true;
-    keep.textContent = '保存中…';
-    const entries = [...Object.entries(apiKeys), ...(customCfg.key ? [['custom', customCfg.key]] : [])];
-    for (const [pid, v] of entries) {
-      try {
-        await fetch(apiUrl(`/api/me/keys/${pid}`), {
-          method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: v }),
-        });
-      } catch { /* one failed save must not strand the rest */ }
-    }
-    await loadServerKeyFlags();
-    purgeLocal();
-    logEvent('session', 'key_migration', { action: 'saved', count: entries.length });
-    wrap.remove();
-  });
-  drop.addEventListener('click', () => {
-    purgeLocal();
-    logEvent('session', 'key_migration', { action: 'cleared', count: localCount });
-    wrap.remove();
-  });
-  actions.append(keep, drop);
-  card.append(actions);
-  card.append(el('p', 'settings-note', '两种选择都会把密钥从此浏览器移除。'));
-  wrap.append(card);
-  document.body.append(wrap);
-}
+// The 「此浏览器里存有模型密钥」 migration card lived here. It is gone with the
+// browser key path it existed to drain (ADR-0013 §4): there is no local key to
+// offer any more. Anything left over from an older build is deleted without
+// asking, by purgeLegacyKeyStorage() at load — an unasked-for deletion of a
+// secret is the safe direction, and re-uploading it would need this browser to
+// read key material back, which is precisely what was removed.
 
 // Live lockout countdown on the login gate (spec 2026-07-22 §6): inline brick
 // message, button disabled until the window opens again — no raw error pages.
@@ -3317,7 +3338,6 @@ function boot() {
     if (!persistent) return;
     if (authRequired && !me) return;          // dev/tunnel visitor: localStorage-only 演示模式
     await enablePersistence();
-    offerKeyMigration();
     if (me?.must_change_password) openUserModal('account', '请先修改初始密码，再开始使用。');
   });
 }

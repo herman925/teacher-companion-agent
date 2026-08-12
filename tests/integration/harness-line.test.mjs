@@ -75,7 +75,20 @@ function detect(cmd, args) {
   catch { return false; }
 }
 const PY = ['python', 'python3', 'py'].find(c => detect(c, ['--version'])) || null;
-const SH = detect('sh', ['-c', 'exit 0']) ? 'sh' : (detect('bash', ['-c', 'exit 0']) ? 'bash' : null);
+// A shell has to be USABLE FROM ROOT, not merely present on PATH. `detect`'s
+// loose match (any digit in the output) says yes to Windows' WSL shim, whose
+// `bash.exe` cannot translate a mapped drive: it answers
+// 「Failed to translate 'G:\…'」 on stderr, exits non-zero, and the digits in
+// that error read as a version string. Probing WITH cwd: ROOT — the cwd every
+// call site actually uses — is what separates 「no shell here」 (skip) from
+// 「the hook is broken」 (fail).
+function detectShell(cmd) {
+  try {
+    const r = spawnSync(cmd, ['-c', 'exit 0'], { cwd: ROOT, encoding: 'utf8' });
+    return r.status === 0;
+  } catch { return false; }
+}
+const SH = ['sh', 'bash'].find(detectShell) || null;
 const GIT = detect('git', ['--version']);
 function runPy(scriptRelPath, args) {
   const r = spawnSync(PY, [path.join(ROOT, scriptRelPath), ...args], { cwd: ROOT, encoding: 'utf8', env: cleanEnv });

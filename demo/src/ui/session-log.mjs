@@ -8,6 +8,8 @@
 // The store core is DOM-free (unit-tested in demo/tests/session-log.test.mjs);
 // only mountLogPanel() touches the document.
 
+import { scrubCredentials } from '../redact.mjs';
+
 /** Log categories — ids are stable (they appear in exported files). */
 export const LOG_CATEGORIES = [
   { id: 'user_input', label: '用户输入' },
@@ -25,15 +27,26 @@ const CATEGORY_IDS = new Set(LOG_CATEGORIES.map((c) => c.id));
 const SECRET_KEY_RE = /^(key|apikey|api_key|token|password|secret|authorization)$/i;
 
 /**
- * Deep-copy a value with secret-bearing fields masked. Two rules:
+ * Deep-copy a value with secret-bearing fields masked. Three rules:
  * 1. any object property whose NAME matches SECRET_KEY_RE and whose value is a
  *    non-empty string becomes '••redacted••';
  * 2. a property literally named `keys` (the request-body provider→apiKey map)
- *    has every string value masked, whatever the provider ids are.
+ *    has every string value masked, whatever the provider ids are;
+ * 3. any STRING VALUE that looks like a credential is masked in place, whatever
+ *    the property is called.
+ *
+ * Rule 3 exists because rules 1 and 2 are name-based, and the way a key
+ * actually reached this log was inside a `message` — a vendor echoing the
+ * submitted credential in an auth-failure body, relayed through the SSE `error`
+ * event. There is no property name to match there. The server scrubs the same
+ * shapes on the way out (src/redact.mjs, one lexicon shared by both sides);
+ * this is the second of the two, because a log that is exported is a file that
+ * leaves the building.
  * @param {unknown} value
  * @returns {unknown} redacted deep copy (input is never mutated)
  */
 export function redactSecrets(value) {
+  if (typeof value === 'string') return scrubCredentials(value);
   if (Array.isArray(value)) return value.map(redactSecrets);
   if (value && typeof value === 'object') {
     const out = {};

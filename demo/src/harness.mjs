@@ -205,12 +205,16 @@ const QUESTIONS_WARN_ABOVE = 5;
  * warn (recorded + shown in dev drawer only — never retries, style checks live here).
  * @param {import('./types.mjs').Turn} turn
  * @param {Object} state current course_state
- * @param {{ stylePref?: string, teacherText?: string, facts?: Array<Object> }} opts
+ * @param {{ stylePref?: string, teacherText?: string, facts?: Array<Object>,
+ *          mock?: boolean, resolveUploadRef?: (ref: string) => boolean }} opts
  *   `stylePref` tunes warn-level style checks. `teacherText` is this turn's
  *   teacher message, so a quoted confirmation can be checked against words she
  *   actually said (rule 6); omitted, a present quote is trusted. `facts` are the
  *   memory rows already in front of the model (memory-scopes shape) — rule 7 is
- *   dormant without them.
+ *   dormant without them. `mock` says this payload came from mockTurn() rather
+ *   than a vendor, and `resolveUploadRef` answers whether an `upload_ref` names
+ *   one of this teacher's own materials; both gate evidence grounding and
+ *   neither may come off the model's own row (engine.evidenceIsGrounded).
  * @returns {import('./types.mjs').Violation[]}
  */
 /** Canonical shape for blueprint-module comparison (rule 3c): id/title/body/
@@ -288,10 +292,17 @@ export function validateTurn(turn, state, opts = {}) {
   // `opts.teacherText` there is nothing to trace against and every id counts,
   // the same dormancy the citation and memory rules keep.
   const teacherSaid = typeof opts.teacherText === 'string' ? opts.teacherText : null;
+  // `mock` and `resolveUploadRef` are the two pieces of context the MODEL
+  // cannot supply: whether mockTurn() produced this payload, and whether an
+  // `upload_ref` names a material row this teacher owns. Forwarded verbatim so
+  // L3 and the engine's apply step reach the same verdict on the same row —
+  // a harness that grounds what applyDelta then strips is a harness reporting
+  // a turn legal that the ledger will mark.
+  const groundCtx = { mock: opts.mock === true, resolveUploadRef: opts.resolveUploadRef };
   const known = evidenceIds(state);
   for (const e of turn.state_delta?.children_evidence || []) {
     if (!e || !e.id) continue;
-    if (teacherSaid !== null && !evidenceIsGrounded(e, teacherSaid)) {
+    if (teacherSaid !== null && !evidenceIsGrounded(e, teacherSaid, groundCtx)) {
       violations.push({
         kind: 'fabrication',
         detail: `本轮新增的证据 ${e.id} 在教师这条消息里找不到出处——证据要来自她说的话或她上传的东西，不能自己写一条再引用它`,
@@ -425,7 +436,7 @@ export function validateTurn(turn, state, opts = {}) {
       // Evidence the engine will refuse to count must not open the gate here
       // either, or the harness reports legal what the apply step then strips.
       const merged = key === 'children_evidence' && teacherSaid !== null
-        ? value.filter((e) => evidenceIsGrounded(e, teacherSaid))
+        ? value.filter((e) => evidenceIsGrounded(e, teacherSaid, groundCtx))
         : value;
       preview[key] = Array.isArray(merged) && Array.isArray(preview[key]) ? [...preview[key], ...merged] : merged;
     }

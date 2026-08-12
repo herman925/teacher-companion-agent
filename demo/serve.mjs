@@ -5,10 +5,17 @@
 // harness lives — the same core modules a CloudBase function will import later.
 //
 // Usage:  node demo/serve.mjs [--port 8787]
-// Keys:   per-account encrypted vault when KEYS_SECRET is set (ADR-0005;
-//         write-only via PUT /api/me/keys/:provider, injected at call time),
-//         env-seeded platform keys (ENV_KEYS below), or per-request body keys
-//         from the no-auth offline tier. Precedence: account > env > body.
+// Keys:   two sources, and only two (ADR-0013 §4). The per-account encrypted
+//         vault when KEYS_SECRET is set (ADR-0005; write-only via
+//         PUT /api/me/keys/:provider, decrypted at call time), and env-seeded
+//         platform keys (ENV_KEYS below). Precedence: account > env.
+//         A `keys` field in a request body is IGNORED — it is dropped at the
+//         endpoint before the pipeline can see it. The browser key path was
+//         removed rather than gated: with an admin-provisioned whitelist there
+//         is no legitimate user without a session, so the branch had no purpose,
+//         and a branch that must stay correctly configured eventually is not.
+//         Cost, accepted in that ADR: no paste-your-own-key offline demo. Local
+//         development uses env keys.
 
 import http from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
@@ -31,6 +38,9 @@ import { shouldRegenTitle, buildTitleMessages, sanitizeTitle, TITLE_INTERVALS, T
 import { parseCookies, sessionCookie, clearSessionCookie, SESSION_COOKIE, displayNameError } from './src/auth-util.mjs';
 import { vaultReady, encryptKey, decryptKey } from './src/key-vault.mjs';
 import { createRateGate } from './src/rate-gate.mjs';
+import { assertPublicHttpsUrl } from './src/net-guard.mjs';
+import { containsCredential } from './src/redact.mjs';
+import { appendAccess, pruneAccess, readAccess, RETENTION_DAYS } from './src/access-log.mjs';
 
 // Auth (SECURITY.md): opaque session cookie → store lookup. Courses are scoped
 // to the session user; no session = visitor (演示模式 only, /api/courses* 401s).
@@ -51,6 +61,10 @@ async function sessionUser(req) {
 // the server .env — never in the repo (AGENTS.md non-negotiable 5).
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 const ADMIN_TOKEN_SHA256 = ADMIN_TOKEN ? createHash('sha256').update(ADMIN_TOKEN).digest('hex') : '';
+// Which instance this is. The public deploy sets CHANNEL=public in its .env;
+// everything else is the tunnel-only dev box. Read once, because two places
+// make a security decision from it.
+const CHANNEL = process.env.CHANNEL === 'public' ? 'public' : 'dev';
 // Constant-time compare: hash both sides so lengths always match, then
 // timingSafeEqual — a plain `===` leaks match-prefix timing.
 const H = (s) => createHash('sha256').update(String(s)).digest();
@@ -61,12 +75,53 @@ function adminAuthorized(req) {
     || timingSafeEqual(H(supplied.toLowerCase()), H(ADMIN_TOKEN_SHA256));
 }
 
+/**
+ * A missing ADMIN_TOKEN used to mean 「open」 everywhere, which is right for the
+ * dev box and catastrophic in public: one .env that lost the line publishes
+ * /api/admin/export — every course, every message, every teacher — to anyone
+ * who asks, over plain HTTP, with no error anywhere to notice.
+ *
+ * The server already knows which instance it is, so an absent token on the
+ * public channel is a MISCONFIGURATION rather than a permission grant, and it
+ * answers 503 (「this instance is not configured to serve this」) rather than
+ * 401 (「try a password」). 401 would invite guessing at a door that has no lock.
+ * @returns {{status: number, message: string}|null} null when the request may proceed
+ */
+function adminRefusal(req) {
+  if (!ADMIN_TOKEN && CHANNEL === 'public') {
+    return { status: 503, message: '管理控制台在本实例上未启用（服务器缺少 ADMIN_TOKEN）' };
+  }
+  if (!adminAuthorized(req)) return { status: 401, message: '密码不对，或还没有输入密码' };
+  return null;
+}
+
 // ---------- per-account key vault (spec 2026-07-22, SECURITY.md) ----------
 // KEYS_SECRET lives in the server .env. Missing/short secret disables the
 // vault loudly: login still works, key-save answers 503, turns fall back to
 // env keys only.
 const KEYS_SECRET = process.env.KEYS_SECRET || '';
 const VAULT_ON = vaultReady(KEYS_SECRET);
+
+/** Serialized cap on `users.settings.profile`. A few KB is a generous 教师档案
+ * and a poor place to store anything else. */
+const PROFILE_MAX_BYTES = 4096;
+
+/**
+ * Strip every trace of client-supplied key material from a request body and
+ * attach the account's own keys under a name the pipeline reads.
+ *
+ * ADR-0013 §4: keys come from the account vault and the env, nothing else. The
+ * assignment is UNCONDITIONAL — a stale or hostile client that sends either
+ * `keys` or `accountKeys` has both replaced here, at the boundary, before
+ * anything downstream (runTurn, the title side-channel, the logs) can read it.
+ * @param {Object} body    parsed request body, mutated in place
+ * @param {string|null} userId
+ */
+async function withAccountKeys(body, userId) {
+  delete body.keys;
+  body.accountKeys = userId ? await accountKeys(userId) : {};
+  return body;
+}
 
 /** Decrypted account keys for one user (server-internal — never serialized). */
 async function accountKeys(userId) {
@@ -104,6 +159,18 @@ const gate = createRateGate({
 });
 
 const RATE_MSG = '尝试次数过多，请稍后再试';
+
+/**
+ * Clip to `max` CODE POINTS, not UTF-16 units.
+ *
+ * `scope_log.excerpt` carries `CHECK (length(excerpt) <= 60)`, and Postgres
+ * `length()` counts characters. `.slice(0, 60)` counts UTF-16 units, so a
+ * message containing an emoji or any astral character can pass the JavaScript
+ * cap and be rejected by the database — and it can also cut a surrogate pair in
+ * half. Two caps that count different things are one cap that sometimes lies.
+ * @param {string} s @param {number} max
+ */
+const clipToChars = (s, max) => Array.from(String(s ?? '')).slice(0, max).join('');
 
 /** Best client address: first X-Forwarded-For hop (nginx) else the socket. */
 function clientIp(req) {
@@ -146,6 +213,36 @@ const HOST = (process.env.FC_SERVER_PORT || process.env.PORT) ? '0.0.0.0' : (pro
 // a week of would-refuse logs, then set SCOPE_ENFORCE=1.
 const SCOPE_ENFORCE = process.env.SCOPE_ENFORCE === '1';
 
+// ---------- admin access log (ADR-0013 §7) ----------
+// The data root the JSON store already uses, so the access log files land
+// beside the other auth data rather than in a second place nobody backs up.
+// With DATABASE_URL set the store is PostgreSQL and this directory holds ONLY
+// the access log — which is deliberate (DATABASE.md §2b): an audit trail living
+// outside the database it audits is harder to quietly edit.
+const DATA_DIR = process.env.DEMO_DATA_DIR || path.join(ROOT, '.data');
+
+/**
+ * Record one admin content read. ADR-0013 §7 accepts full admin reach ONLY
+ * because every read is recorded, so this is the compensating control itself,
+ * not instrumentation.
+ *
+ * `admin_id` is 'console' until §8's session + role lands, because a shared
+ * token resolves no user and 「someone with the token」 is the honest answer.
+ * §8 says exactly that, and says it is a reason to land the log now.
+ *
+ * A write failure NEVER fails the request — refusing to show an admin a course
+ * because a disk was full would be the wrong trade — but it is shouted into the
+ * journal, because a silent audit log reads as 「nobody looked」.
+ * @param {Object} row {action, course_id?, subject?, excerpt?}
+ */
+async function recordAccess(row) {
+  try {
+    await appendAccess(DATA_DIR, { admin_id: 'console', ...row });
+  } catch (e) {
+    console.error('[access-log] WRITE FAILED — this read is unrecorded:', e?.message ?? e);
+  }
+}
+
 const ENV_KEYS = {
   minimax: process.env.MINIMAX_API_KEY || '',
   'minimax-intl': process.env.MINIMAX_INTL_API_KEY || '',
@@ -180,15 +277,25 @@ function loadPrompt(name) {
  * Supported overrides (all optional, from the settings drawer):
  *   req.model            — model id override for the preferred provider
  *   req.custom           — { baseURL, model, label? } OpenAI-compatible custom endpoint
- *                          (json_object_prompt strategy; key under keys.custom)
+ *                          (json_object_prompt strategy). Address only: its key is
+ *                          a vault entry under the provider id 'custom'.
+ *
+ * ASYNC BECAUSE `custom.baseURL` IS VALIDATED BEFORE IT CAN BE FETCHED.
+ * This is the one place in the server where a caller names an address the
+ * server will then request, which is the definition of a server-side
+ * request-forgery surface — and the Lighthouse VM has both a metadata service
+ * that hands out CAM credentials and a local PostgreSQL. `assertPublicHttpsUrl`
+ * resolves the host and refuses anything internal (net-guard.mjs); it throws,
+ * so an unsafe address never becomes a registry entry that something later
+ * fetches. Every caller is already async.
  */
-function effectiveRegistry(req) {
+async function effectiveRegistry(req) {
   const registry = { ...PROVIDERS };
   if (req.custom?.baseURL && req.custom?.model) {
     registry.custom = {
       id: 'custom',
       label: req.custom.label || '自定义端点',
-      baseURL: String(req.custom.baseURL).replace(/\/+$/, ''),
+      baseURL: await assertPublicHttpsUrl(req.custom.baseURL),
       model: req.custom.model,
       jsonStrategy: 'json_object_prompt',
       enabled: true,
@@ -205,13 +312,17 @@ function effectiveRegistry(req) {
 
 /**
  * Run one full turn: prompt → model (failover) → L2/L3 → L4 retry → engine apply.
- * @param {{state: Object, history: Array, message: string, provider: string, keys: Object}} req
+ * @param {{state: Object, history: Array, message: string, provider: string, accountKeys?: Object}} req
  * @param {(event: string, data: Object) => void} emit  SSE progress
  */
 async function runTurn(req, emit) {
   const state = req.state && req.state.course_id ? req.state : createInitialState(`course-${Date.now()}`);
-  const keys = { ...ENV_KEYS, ...(req.keys || {}) };
-  const registry = effectiveRegistry(req);
+  // Account vault over server env, and nothing else (ADR-0013 §4). `accountKeys`
+  // is set by withAccountKeys() at the endpoint, never by the client; `req.keys`
+  // is deliberately not read, so a stale client's key material is inert even if
+  // it somehow reached this far.
+  const keys = { ...ENV_KEYS, ...(req.accountKeys || {}) };
+  const registry = await effectiveRegistry(req);
   const preferred = req.provider === 'mock' ? 'mock'
     : req.provider && registry[req.provider] ? req.provider : 'minimax';
 
@@ -261,9 +372,15 @@ async function runTurn(req, emit) {
       refused: scope.refuse,
       // Truncated at the caller too: the 60-char cap is an interface promise
       // (store.mjs), not an implementation detail of the JSON store.
-      excerpt: String(req.message ?? '').slice(0, 60),
+      excerpt: clipToChars(String(req.message ?? ''), 60),
       userId: req.userId ?? null,
-    }).catch(() => {});
+      // A failure here must not take the turn down, but it must not vanish
+      // either: this log is the SOLE evidence base for the SCOPE_ENFORCE=1
+      // decision, and an empty 范围护栏 tab reads as 「no off-purpose traffic」
+      // rather than 「the writer is broken」. The Postgres tier has two real
+      // failure paths (the excerpt CHECK, and the unattributed-row policy note
+      // in pg-store), so this is not a theoretical branch.
+    }).catch((e) => console.warn('[scope] log write failed:', e?.message ?? e));
   }
   if (scope.refuse) {
     const refusal = refusalTurn(state);
@@ -328,6 +445,9 @@ async function runTurn(req, emit) {
   // harness verdict on each attempt. Never gated behind the model — pure transparency.
   const apiAttempts = [];
   let chainErrors = [];
+  // Whether the payload this loop accepted came out of mockTurn(). Declared
+  // outside the loop because the apply step below needs it.
+  let fromMock = false;
   const guards = []; // timeout-guard events across all attempts (adapter onDelta kind 'guard')
 
   while (attempt <= 2) {
@@ -353,9 +473,19 @@ async function runTurn(req, emit) {
       else if (d.kind === 'guard') { flushThink(); guards.push(d); emit('guard', d); }
     };
     // 'mock' provider: scripted walkthrough through the SAME L2/L3/L4 pipeline.
-    const result = preferred === 'mock'
-      ? { payload: mockTurn(state, req.history || [], req.message, { profile: req.profile }), usage: null, provider: 'mock', errors: [] }
-      : await callWithFailover(preferred, keys, messages, { registry, onDelta });
+    // `fromMock` is set HERE, at the one place mockTurn() produces a payload,
+    // and nowhere else — it is what licenses the `demo_sample` evidence
+    // exemption (engine.evidenceIsGrounded). Derived from the payload's origin
+    // rather than from `req.provider`, so a client claiming 'mock' cannot buy
+    // the exemption for a vendor turn.
+    let result;
+    if (preferred === 'mock') {
+      result = { payload: mockTurn(state, req.history || [], req.message, { profile: req.profile }), usage: null, provider: 'mock', errors: [] };
+      fromMock = true;
+    } else {
+      result = await callWithFailover(preferred, keys, messages, { registry, onDelta });
+      fromMock = false;
+    }
     flushThink();
     const elapsedMs = Date.now() - t0;
     provider = result.provider;
@@ -368,7 +498,7 @@ async function runTurn(req, emit) {
     // words. Coerced rather than passed through, so an absent message reads as
     // an empty one (nothing can be quoted from it) instead of as "unchecked".
     const violations = parsed.turn
-      ? validateTurn(parsed.turn, state, { stylePref: req.profile?.stylePref, teacherText })
+      ? validateTurn(parsed.turn, state, { stylePref: req.profile?.stylePref, teacherText, mock: fromMock })
       : parsed.violations;
     const blocking = violations.filter((v) => v.action === 'block');
     allViolations.push(...violations.map((v) => ({ ...v, attempt })));
@@ -418,6 +548,12 @@ async function runTurn(req, emit) {
     // Evidence must trace back to what she just wrote; a row the model minted
     // is kept but marked, and stops counting toward the stage gates.
     teacherText,
+    // The `demo_sample` exemption belongs to the scripted walkthrough alone.
+    // NO `resolveUploadRef` is passed: there is no upload endpoint yet, so
+    // there is nothing to resolve against and an `upload_ref` grounds nothing
+    // (engine.evidenceIsGrounded). When the endpoint lands, this is where the
+    // owned-material lookup is threaded in.
+    mock: fromMock,
   });
   allViolations.push(...applied.violations.map((v) => ({ ...v, attempt: 'apply' })));
   // Blueprint artifacts merge into the living mother plan (module-granularity
@@ -580,8 +716,10 @@ async function runCourseTurn(userId, courseId, body, emit) {
           let t = null;
           if (body.provider && body.provider !== 'mock') {
             try {
-              const keys = { ...ENV_KEYS, ...(body.keys || {}) };
-              const registry = effectiveRegistry(body);
+              // Same two sources as the turn itself — the naming side-channel
+              // is not a back door around ADR-0013 §4.
+              const keys = { ...ENV_KEYS, ...(body.accountKeys || {}) };
+              const registry = await effectiveRegistry(body);
               const msgs = buildTitleMessages(
                 all.map((m) => ({ role: m.role === 'agent' ? 'assistant' : 'user', content: m.content })),
                 captured.state,
@@ -623,6 +761,12 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
   if (url.pathname === '/api/health') {
+    // Which providers this instance holds a platform key for is a target list,
+    // and it was free to anyone who asked. A signed-out visitor cannot spend
+    // those keys any more (/api/models needs a session), so it also has no
+    // reason to know they exist: the flags now require a session, and the
+    // client's key box only ever renders after login anyway.
+    const healthMe = await sessionUser(req);
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       ok: true,
@@ -633,13 +777,15 @@ const server = http.createServer(async (req, res) => {
       auth: true,
       // Deploy channel: the public instance sets CHANNEL=public in its .env,
       // which hides dev instruments (the debug spanner) in the UI.
-      channel: process.env.CHANNEL === 'public' ? 'public' : 'dev',
-      // Per-account key vault available? Client switches to write-only server
-      // keys when true; false keeps the legacy localStorage path (honest note).
+      channel: CHANNEL,
+      // Per-account key vault available? True = the client offers a write-only
+      // key box. False = there is no way to enter a key from a browser at all
+      // (ADR-0013 §4 removed the localStorage path), only the server env — and
+      // the client says that in words rather than showing a dead input.
       key_vault: VAULT_ON,
       providers: Object.entries(PROVIDERS)
         .filter(([, p]) => p.enabled !== false)
-        .map(([id, p]) => ({ id, label: p.label, defaultModel: p.model, hasEnvKey: Boolean(ENV_KEYS[id]) })),
+        .map(([id, p]) => ({ id, label: p.label, defaultModel: p.model, hasEnvKey: Boolean(healthMe) && Boolean(ENV_KEYS[id]) })),
     }));
     return;
   }
@@ -727,6 +873,24 @@ const server = http.createServer(async (req, res) => {
           }
         }
         if (q.profile !== undefined) {
+          // DATABASE.md 「What we deliberately do NOT store」 puts this check at
+          // the API layer: `users.settings` must not accept key-shaped values.
+          // Nothing enforced it. The blast radius was contained (profileSectionText
+          // allowlists the fields it injects, so a pasted key never reached a
+          // vendor) but it would have sat at rest in the users table, ridden
+          // GET /api/me, and shown up in the admin console's course listing.
+          //
+          // REFUSED, not masked: she needs to know her key did not save, and a
+          // silently starred-out profile field teaches her the opposite.
+          if (containsCredential(q.profile)) {
+            return json(400, { ok: false, message: '档案里看起来有 API 密钥——密钥请填在「模型密钥」里，不要写进个人档案' });
+          }
+          // A bound on how much one account may park in a settings blob. Same
+          // reasoning as the workbench caps: this field has no retention story
+          // of its own, so it must not become storage.
+          if (JSON.stringify(q.profile ?? null).length > PROFILE_MAX_BYTES) {
+            return json(400, { ok: false, message: '个人档案太长了，请精简一些' });
+          }
           await store.saveUserProfile(me.id, q.profile);
           return json(200, { ok: true });
         }
@@ -828,8 +992,16 @@ const server = http.createServer(async (req, res) => {
       }
       // DELETE /api/courses/:id — whole-course erasure (data-subject deletion)
       if (seg.length === 1 && req.method === 'DELETE') {
+        // No COS client exists in this server yet, so no `deleteObject` is
+        // injected and the keys come back for the caller to own. They are
+        // LOGGED, not returned to the browser: an object key is the address of
+        // a photograph of children, and ADR-0013 §6 keeps the bucket private.
+        // The moment an upload endpoint lands, its deleter is injected here.
         const removed = await store.deleteCourse(uid, courseId);
-        if (!removed) return json(404, { ok: false, message: '课程不存在' });
+        if (!removed.deleted) return json(404, { ok: false, message: '课程不存在' });
+        if (removed.cos_keys.length && !removed.objects_deleted) {
+          console.warn(`[cos] ${removed.cos_keys.length} object(s) from course ${courseId} still need deleting: ${removed.cos_keys.join(' ')}`);
+        }
         return json(200, { ok: true, deleted: courseId });
       }
       // Ownership check for subresources: messages/chat must not leak across users.
@@ -871,9 +1043,9 @@ const server = http.createServer(async (req, res) => {
         for await (const chunk of req) body += chunk;
         const accept = req.headers.accept || '';
         const parsed = JSON.parse(body);
-        // Account keys override anything client-supplied; runTurn layers the
-        // merged map over ENV_KEYS (precedence: account > env > body).
-        parsed.keys = { ...(parsed.keys || {}), ...(await accountKeys(uid)) };
+        // Key custody boundary: whatever the client sent under `keys` is dropped
+        // here, and this account's own keys are attached (ADR-0013 §4).
+        await withAccountKeys(parsed, uid);
         // Spend protection: real-model turns count against the user's quota
         // (mock is free — it never leaves the process).
         if (parsed.provider && parsed.provider !== 'mock') {
@@ -913,27 +1085,47 @@ const server = http.createServer(async (req, res) => {
   }
 
   // List a provider's available models (proxied — the browser can't reach vendors directly).
+  //
+  // A SESSION IS REQUIRED. This endpoint takes a caller-supplied address, makes
+  // the server fetch it, and hands the answer back — the shape of a
+  // server-side request-forgery proxy. It used to do that for anyone on the
+  // internet, spending the platform env key while it did. Two locks now, not
+  // one: the session (below) and `assertPublicHttpsUrl` inside
+  // effectiveRegistry, so a signed-in teacher cannot aim it at the metadata
+  // service either.
   if (url.pathname === '/api/models' && req.method === 'POST') {
     let body = '';
     for await (const chunk of req) body += chunk;
-    res.writeHead(200, { 'content-type': 'application/json' });
+    const json = (status, obj) => {
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(obj));
+    };
+    const modelsMe = await sessionUser(req);
+    if (!modelsMe) return json(401, { ok: false, need_login: true, message: '请先登录' });
+    // Same gate as saving a key: this is the button next to that box, and an
+    // unmetered vendor round-trip per click is a spend channel too.
+    const v = await gate.use('keysave_user', modelsMe.id);
+    if (v.limited) return json(429, { ok: false, retry_after: v.retryAfterSec, message: RATE_MSG });
     try {
       const q = JSON.parse(body);
-      const registry = effectiveRegistry({ ...q, provider: q.provider });
+      const registry = await effectiveRegistry({ ...q, provider: q.provider });
       const p = registry[q.provider];
       if (!p) throw new Error(`未知供应商：${q.provider}`);
       // A freshly typed key wins (the teacher is testing it), then the
-      // account vault, then env.
-      const modelsMe = await sessionUser(req);
-      const acct = modelsMe ? await accountKeys(modelsMe.id) : {};
+      // account vault, then env. `q.key` is NOT the removed browser key path:
+      // it can only be a key being typed into the vault box right now, on its
+      // way to this same server — the client reads none back from storage.
+      const acct = await accountKeys(modelsMe.id);
       const key = q.key || acct[q.provider] || ENV_KEYS[q.provider] || '';
       if (!key) throw new Error('缺少 API 密钥——先填密钥再获取模型列表');
       const models = await listModels(p, key);
-      res.end(JSON.stringify({ ok: true, provider: q.provider, defaultModel: p.model, models }));
+      return json(200, { ok: true, provider: q.provider, defaultModel: p.model, models });
     } catch (e) {
-      res.end(JSON.stringify({ ok: false, message: e.message, status: e.status ?? 0 }));
+      // `e.message` is already scrubbed of any upstream body by adapter.mjs —
+      // reflecting one was how this endpoint turned into a read primitive for
+      // whatever it had been pointed at.
+      return json(200, { ok: false, message: e.message, status: e.status ?? 0 });
     }
-    return;
   }
 
   if (url.pathname === '/api/chat' && req.method === 'POST') {
@@ -944,7 +1136,11 @@ const server = http.createServer(async (req, res) => {
     // endpoint could otherwise burn env keys anonymously (per-IP quota); with
     // one, account keys ride along and the per-user quota applies.
     const chatMe = await sessionUser(req);
-    if (chatMe) chatBody.keys = { ...(chatBody.keys || {}), ...(await accountKeys(chatMe.id)) };
+    // Same key-custody boundary as the course endpoint, and it runs whether or
+    // not there is a session: a signed-out caller must have `keys` stripped too,
+    // which is exactly the path ADR-0013 §4 removed (ADR-0013 §3: the whitelist
+    // means a session-less caller is never a legitimate teacher).
+    await withAccountKeys(chatBody, chatMe?.id ?? null);
     chatBody.userId = chatMe?.id ?? null; // so runTurn's scope row names her
     // Scope shell (ADR-0012 §3) is evaluated BEFORE the quota so a refused turn
     // costs the teacher nothing: it never reached a model, so it is not a model
@@ -1023,20 +1219,45 @@ const server = http.createServer(async (req, res) => {
     if (adminGate.limited) {
       return json(429, { ok: false, retry_after: adminGate.retryAfterSec, message: RATE_MSG });
     }
-    if (!adminAuthorized(req)) {
-      await gate.record('admin_ip', adminIp);
-      return json(401, { ok: false, message: '密码不对，或还没有输入密码' });
+    const refusal = adminRefusal(req);
+    if (refusal) {
+      // Only a wrong PASSWORD feeds the brute-force counter. A 503 means there
+      // is no password to guess, so counting it would let a misconfigured
+      // instance rate-limit the operator who came to fix it.
+      if (refusal.status === 401) await gate.record('admin_ip', adminIp);
+      return json(refusal.status, { ok: false, message: refusal.message });
     }
     const seg = url.pathname.slice('/api/admin/'.length).split('/').filter(Boolean).map(decodeURIComponent);
     try {
       if (seg[0] === 'data' && req.method === 'GET') {
-        return json(200, { ok: true, token_required: Boolean(ADMIN_TOKEN), courses: await store.adminListCourses() });
+        const courses = await store.adminListCourses();
+        // ADR-0013 §7: full admin reach is accepted BECAUSE every content read
+        // is recorded. This listing carries titles, teacher names and profiles
+        // across every account, so it is a content read. Awaited before the
+        // response is written: a log appended after the bytes have left is a
+        // log that can be skipped by a client that hangs up.
+        await recordAccess({ action: 'read_course_list', excerpt: `${courses.length} 个课程` });
+        return json(200, { ok: true, token_required: Boolean(ADMIN_TOKEN), courses });
       }
       // Scope shell log (ADR-0012 §3). Warn-only is only worth running if the
       // would-refuse rows get read before enforcement is switched on.
       if (seg[0] === 'scope' && req.method === 'GET') {
         const log = await store.listScope({ limit: Number(url.searchParams.get('limit')) || 200 });
+        // Every row carries a 60-character excerpt of a teacher's message, so
+        // reading this tab is reading teacher content.
+        await recordAccess({ action: 'read_scope_log', excerpt: `${log.rows.length} 条` });
         return json(200, { ok: true, enforcing: SCOPE_ENFORCE, ...log });
+      }
+      // ---- the access log itself (ADR-0013 §7) ----
+      // A log nobody can read is not an audit trail. Reading it is NOT itself
+      // logged: an audit trail that audits its own reads grows without bound
+      // and tells nobody anything new.
+      if (seg[0] === 'access-log' && req.method === 'GET') {
+        const rows = await readAccess(DATA_DIR, {
+          from: url.searchParams.get('from') || undefined,
+          to: url.searchParams.get('to') || undefined,
+        });
+        return json(200, { ok: true, retention_days: RETENTION_DAYS, rows: rows.slice(-1000) });
       }
       // ---- user management (SECURITY.md §4): every action audited ----
       if (seg[0] === 'users' && seg.length === 1 && req.method === 'GET') {
@@ -1104,6 +1325,10 @@ const server = http.createServer(async (req, res) => {
       }
       if (seg[0] === 'export' && req.method === 'GET') {
         const courses = await store.adminExportAll();
+        // The broadest read this server can perform: every course on the
+        // instance, every message, every snapshot, in one file that then lives
+        // on somebody's laptop. One row per export, before a byte is written.
+        await recordAccess({ action: 'export_course', excerpt: `${courses.length} 个课程的完整记录` });
         res.writeHead(200, {
           'content-type': 'application/json; charset=utf-8',
           'content-disposition': 'attachment; filename="demo-data.json"',
@@ -1115,11 +1340,25 @@ const server = http.createServer(async (req, res) => {
         if (req.method === 'GET') {
           const course = await store.adminGetCourse(seg[1]);
           if (!course) return json(404, { ok: false, message: '课程不存在' });
+          // Messages, snapshots and the whole state document — child evidence
+          // included. Two actions rather than one, because 「opened a course」
+          // and 「read its conversation」 are the two ACCESS_ACTIONS the log
+          // documents and this endpoint does both at once.
+          await recordAccess({
+            action: 'read_course', course_id: seg[1], subject: 'course',
+            excerpt: `${course.title ?? ''} · ${course.messages?.length ?? 0} 条消息`,
+          });
           return json(200, { ok: true, course });
         }
         if (req.method === 'DELETE') {
           const removed = await store.adminDelete(seg[1]);
-          return json(removed ? 200 : 404, removed ? { ok: true, deleted: seg[1] } : { ok: false, message: '课程不存在' });
+          await store.audit('console', 'delete_course', null, {
+            course_id: seg[1], deleted: removed.deleted, objects: removed.cos_keys.length,
+          });
+          if (removed.cos_keys.length && !removed.objects_deleted) {
+            console.warn(`[cos] ${removed.cos_keys.length} object(s) from course ${seg[1]} still need deleting: ${removed.cos_keys.join(' ')}`);
+          }
+          return json(removed.deleted ? 200 : 404, removed.deleted ? { ok: true, deleted: seg[1] } : { ok: false, message: '课程不存在' });
         }
       }
       return json(405, { ok: false, message: 'method not allowed' });
@@ -1164,6 +1403,24 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   const seeded = Object.entries(ENV_KEYS).filter(([, v]) => v).map(([k]) => k);
   console.log(`小小探索家 demo → http://localhost:${PORT}`);
-  console.log(seeded.length ? `env keys detected: ${seeded.join(', ')}` : 'no env keys — enter one in the UI settings drawer');
+  // No third option to suggest any more (ADR-0013 §4): a key comes from this
+  // process's env, or from a signed-in teacher's vault. Never from a browser.
+  console.log(seeded.length
+    ? `env keys detected: ${seeded.join(', ')}`
+    : `no env keys — set one in .env, or sign in and save one to the account vault${VAULT_ON ? '' : ' (KEYS_SECRET unset: the vault is off)'}`);
   if (!existsSync(path.join(PROMPT_DIR, 'base.zh.md'))) console.warn('WARNING: prompts missing');
+  // Loud, not subtle: on the public channel an absent ADMIN_TOKEN now REFUSES
+  // /api/admin/* with 503 rather than opening it, and the operator has to be
+  // told why the console stopped working.
+  if (!ADMIN_TOKEN) {
+    console.warn(CHANNEL === 'public'
+      ? 'WARNING: CHANNEL=public with no ADMIN_TOKEN — /api/admin/* refuses every request (503). Set ADMIN_TOKEN in .env.'
+      : 'admin console is OPEN (no ADMIN_TOKEN) — correct only on the tunnel-only dev instance');
+  }
+  // ADR-0013 §7: 90 days, then pruned. An audit log that grows forever becomes
+  // its own liability, and the pilot runs one long-lived process, so startup is
+  // the one moment that reliably happens.
+  pruneAccess(DATA_DIR)
+    .then((r) => { if (r.removed.length) console.log(`[access-log] pruned ${r.removed.length} file(s) older than ${r.cutoff}`); })
+    .catch((e) => console.warn('[access-log] prune failed:', e?.message ?? e));
 });
