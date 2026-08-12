@@ -8,6 +8,7 @@ import { STAGE_NAMES } from '../engine.mjs';
 import { WF_NODES, NODE_PREREQS } from '../wf-nodes.mjs';
 import { BLUEPRINT_STATUS, normalizeBlueprint, numberBlueprint } from '../blueprint-util.mjs';
 import { numberPlan } from '../plan-tsv.mjs';
+import { layoutBlueprintMap, edgePath } from '../blueprint-map-layout.mjs';
 
 // ---------------------------------------------------------------- sanitizer
 
@@ -653,21 +654,226 @@ export function renderPlanTree(plan, opts = {}) {
     onOpenNode: opts.onOpenNode,
     onToggleFold: opts.onToggleFold,
   };
-  // 导图 is a REPRESENTATION of this same tree, not a second implementation:
-  // one DOM, one set of handlers, data-view for CSS to branch on — which is
-  // also why it inherits no document-level listeners and needs no position
-  // cache. The SVG map renderer that did is gone (ADR-0010 §3): it carried a
-  // click-to-open popover, an input surface a read-only panel must not have.
-  if (view === 'map') {
-    const zoom = Math.min(PLAN_ZOOM_MAX, Math.max(PLAN_ZOOM_MIN, Number(opts.zoom) || 1));
-    // ONE scaling channel only. The custom property is read by the CSS rule
-    // on each root node; an inline transform here as well would multiply, and
-    // the head's percentage label would disagree with the picture at every
-    // step but 100%.
-    tree.style.setProperty('--plan-zoom', String(zoom));
-  }
+  // 导图 is a real node-and-edge DIAGRAM (renderPlanMap), not this list under a
+  // CSS scale. The two are different tools: the list is for reading a branch in
+  // order, the map is for seeing the shape of the whole course at once, which is
+  // the thing a 主题网络图 exists to show. Read-only is satisfied by removing the
+  // popover's write affordances — clicking a node opens its conversation on the
+  // LEFT — not by removing the diagram.
+  if (view === 'map') return renderPlanMap(plan, { ...opts, numbers: ctx.numbers });
   for (const root of plan?.roots ?? []) tree.append(renderPlanNode(root, ctx));
   return tree;
+}
+
+// ------------------------------------------------------------- 导图 (map view)
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** Find a node by id in a numbered tree — the layout returns flat boxes and
+ * drops the fields the tooltip needs (work_status, staleness). */
+function findInTree(nodes, id) {
+  for (const n of nodes || []) {
+    if (n.id === id) return n;
+    const hit = findInTree(n.children, id);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** id → {x,y} of the last layout, per map key: a rebuilt map GLIDES (FLIP) from
+ * where the nodes were instead of re-growing from nothing on every repaint. */
+const MAP_POS_CACHE = new Map();
+
+/**
+ * Adapt the plan tree to the shape layoutBlueprintMap reads (numberBlueprint
+ * output): number inlined on each node, and a `rollup` of what is still
+ * unsettled beneath it so a collapsed branch can still show its badge.
+ * @param {Array} nodes plan nodes
+ * @param {Map<string,string>} numbers
+ */
+function toMapNodes(nodes, numbers) {
+  return (nodes ?? []).map((n) => {
+    const children = toMapNodes(n.children, numbers);
+    const rollup = { hypothesis: 0, pending_validation: 0, ai_suggestion: 0 };
+    for (const c of children) {
+      if (c.status in rollup) rollup[c.status] += 1;
+      for (const k of Object.keys(rollup)) rollup[k] += c.rollup?.[k] ?? 0;
+    }
+    return {
+      id: n.id, number: numbers.get(n.id) ?? '', title: n.title ?? '', body: n.body ?? '',
+      status: n.status ?? 'ai_suggestion', kind: n.kind ?? '', work_status: n.work_status ?? '',
+      stale_since: n.stale_since, children, rollup,
+    };
+  });
+}
+
+/**
+ * The 主题网络图: the course plan as a horizontal tidy tree of boxes and edges.
+ *
+ * READ-ONLY (ADR-0010 §3). The old blueprint map opened a detail popover that
+ * carried ✓确认 and 批注 buttons; those affordances are what a read-only panel
+ * must not have, so a node click now opens that node's conversation on the LEFT
+ * instead. Folding and zooming stay — both are ways of looking, not writing.
+ *
+ * @param {{version?: string|number, roots?: Array}} plan already through normalizePlan()
+ * @param {{numbers?: Map<string,string>, folded?: Set<string>, openNodeId?: string|null,
+ *   zoom?: number, mapKey?: string, onOpenNode?: (id: string) => void,
+ *   onToggleFold?: (id: string, folded: boolean) => void}} [opts]
+ * @returns {HTMLElement} .plan-map
+ */
+export function renderPlanMap(plan, opts = {}) {
+  const numbers = opts.numbers instanceof Map ? opts.numbers : numberPlan(plan);
+  const numbered = toMapNodes(plan?.roots ?? [], numbers);
+  const wrap = el('div', 'plan-map');
+  const scroller = el('div', 'plan-map-scroll');
+  wrap.append(scroller);
+  const zoom = Math.min(PLAN_ZOOM_MAX, Math.max(PLAN_ZOOM_MIN, Number(opts.zoom) || 1));
+  wrap.style.setProperty('--plan-zoom', String(zoom));
+
+  // Collapse state is the CALLER's (it persists in cst.planFold and is shared
+  // with the list view, so switching representation keeps her shape).
+  const collapsed = opts.folded instanceof Set ? new Set(opts.folded) : new Set();
+  const cached = opts.mapKey ? MAP_POS_CACHE.get(opts.mapKey) : null;
+  let first = !cached;
+  let prevPos = cached || new Map();
+
+  const draw = () => {
+    const { nodes, edges, width, height } = layoutBlueprintMap(numbered, collapsed);
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('width', width);
+    svg.setAttribute('height', height);
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.classList.add('plan-map-svg');
+    if (first) svg.classList.add('plan-map-enter');
+
+    edges.forEach((e, i) => {
+      const path = document.createElementNS(SVG_NS, 'path');
+      path.setAttribute('d', edgePath(e));
+      // Dash carries meaning: only the edge INTO an unverified child is dashed,
+      // mirroring the node, so tentative reads as tentative at the connector too.
+      const tentative = e.toStatus === 'hypothesis' || e.toStatus === 'pending_validation';
+      path.setAttribute('class', `plan-edge${tentative ? ' plan-edge-hyp' : ''}`);
+      if (first && !tentative) {
+        path.setAttribute('pathLength', '1');
+        path.classList.add('plan-edge-draw');
+        path.style.animationDelay = `${Math.min(i * 45 + 120, 1020)}ms`;
+      }
+      svg.append(path);
+    });
+
+    nodes.forEach((n, i) => {
+      const src = findInTree(numbered, n.id);
+      const g = document.createElementNS(SVG_NS, 'g');
+      g.setAttribute('class', `plan-mnode plan-m-${n.status}`
+        + (n.childCount ? ' plan-m-branch' : '')
+        + (src?.stale_since ? ' plan-m-stale' : '')
+        + (opts.openNodeId === n.id ? ' plan-m-open' : ''));
+      g.setAttribute('transform', `translate(${n.x} ${n.y})`);
+      // Inner group carries ALL motion (entry + FLIP); the outer g's transform
+      // attribute does positioning and CSS must never touch it.
+      const gi = document.createElementNS(SVG_NS, 'g');
+      gi.setAttribute('class', 'plan-mnode-in');
+      if (first) gi.style.animationDelay = `${Math.min(i * 45, 900)}ms`;
+
+      const rect = document.createElementNS(SVG_NS, 'rect');
+      rect.setAttribute('width', n.w);
+      rect.setAttribute('height', n.h);
+      rect.setAttribute('rx', 8);
+      gi.append(rect);
+
+      const text = document.createElementNS(SVG_NS, 'text');
+      text.setAttribute('x', 10);
+      text.setAttribute('y', n.h / 2 + 4.5);
+      const num = document.createElementNS(SVG_NS, 'tspan');
+      num.setAttribute('class', 'plan-mnum');
+      num.textContent = n.number;
+      const title = document.createElementNS(SVG_NS, 'tspan');
+      title.setAttribute('dx', '5');
+      title.textContent = n.label;
+      text.append(num, title);
+      gi.append(text);
+
+      // The full title, both axes and the staleness reason live in the tooltip:
+      // the box shows a truncated label, and a teacher must be able to read the
+      // whole thing without opening anything.
+      const tip = document.createElementNS(SVG_NS, 'title');
+      const axes = [BLUEPRINT_STATUS[n.status], PLAN_WORK_STATUS[src?.work_status]?.label].filter(Boolean).join(' · ');
+      tip.textContent = `${n.number} ${n.title}\n${axes}`
+        + (n.childCount ? `（${n.childCount} 项${n.collapsed ? '，已折叠' : ''}）` : '')
+        + (src?.stale_since ? '\n上游改过，待复查' : '');
+      gi.append(tip);
+
+      if (n.collapsed && n.childCount) {
+        const badge = document.createElementNS(SVG_NS, 'text');
+        badge.setAttribute('x', n.w + 6);
+        badge.setAttribute('y', n.h / 2 + 4);
+        badge.setAttribute('class', `plan-fold-badge${n.pending === 0 ? ' plan-fold-ok' : ''}`);
+        badge.textContent = n.pending === 0 ? '已齐' : `+${n.childCount}`;
+        gi.append(badge);
+      }
+
+      g.append(gi);
+      g.setAttribute('tabindex', '0');
+      g.setAttribute('role', 'button');
+      const open = () => opts.onOpenNode?.(n.id);
+      g.setAttribute('aria-label', `${n.number} ${n.title}：打开这个节点的对话`);
+
+      if (n.childCount) {
+        g.setAttribute('aria-expanded', String(!n.collapsed));
+        const toggleFold = () => {
+          const nowFolded = !collapsed.has(n.id);
+          if (nowFolded) collapsed.add(n.id); else collapsed.delete(n.id);
+          opts.onToggleFold?.(n.id, nowFolded);
+          draw();
+        };
+        // Dedicated fold affordance at the node's right edge; the node body
+        // opens the conversation. Two targets, two different things.
+        const hit = document.createElementNS(SVG_NS, 'g');
+        hit.setAttribute('class', 'plan-fold-hit');
+        hit.setAttribute('transform', `translate(${n.w - 13} ${n.h / 2})`);
+        const circle = document.createElementNS(SVG_NS, 'circle');
+        circle.setAttribute('r', 8);
+        const glyph = document.createElementNS(SVG_NS, 'text');
+        glyph.setAttribute('text-anchor', 'middle');
+        glyph.setAttribute('y', 3.5);
+        glyph.textContent = n.collapsed ? '＋' : '－';
+        hit.append(circle, glyph);
+        hit.addEventListener('click', (ev) => { ev.stopPropagation(); toggleFold(); });
+        gi.append(hit);
+        g.addEventListener('click', open);
+        g.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') { ev.preventDefault(); open(); }
+          if (ev.key === ' ') { ev.preventDefault(); toggleFold(); }
+        });
+      } else {
+        g.addEventListener('click', open);
+        g.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); }
+        });
+      }
+      svg.append(g);
+
+      // FLIP: persisting nodes glide from their previous position instead of
+      // snapping, so the deterministic reflow after a fold stays legible.
+      const prev = prevPos.get(n.id);
+      if (!first && prev && (prev.x !== n.x || prev.y !== n.y)) {
+        gi.style.transform = `translate(${prev.x - n.x}px, ${prev.y - n.y}px)`;
+        requestAnimationFrame(() => {
+          gi.classList.add('plan-flip');
+          gi.style.transform = '';
+        });
+      } else if (!first) {
+        gi.classList.add('plan-node-appear');
+      }
+    });
+
+    prevPos = new Map(nodes.map((n) => [n.id, { x: n.x, y: n.y }]));
+    if (opts.mapKey) MAP_POS_CACHE.set(opts.mapKey, prevPos);
+    scroller.replaceChildren(svg);
+    first = false;
+  };
+  draw();
+  return wrap;
 }
 
 /**

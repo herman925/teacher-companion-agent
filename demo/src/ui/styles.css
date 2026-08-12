@@ -1508,7 +1508,19 @@ body.rail-pinned .composer { left: 260px; }
 }
 .bp-view-btn.active { background: var(--green-wash); color: var(--green); }
 /* ------------------------------------------- 蓝图 workspace panel (§5b) */
-:root { --bp-w: 460px; } /* 工作台 default share widened (§5b) */
+/* 工作台 is the PRIMARY surface, not a sidebar (Herman, 2026-08-13). The plan is
+   the artifact the teacher is building; the chat is how she edits it, and a
+   conversation reads fine in a column while a 主题网络图 needs room to be a
+   picture. So the panel takes the larger share by default and the chat keeps
+   its comfortable reading column (--col 720px) rather than sprawling.
+
+   The width is "whatever is left after the chat keeps 760px", not a vw
+   fraction: a percentage that looks dominant at 1440px stops being dominant at
+   2478px, because the chat's slack grows with the screen while the panel's does
+   not. Capped at 1600px so the 导图 never becomes a hike, floored at 520px so a
+   laptop still gets a usable panel.
+   Still drag-resizable; the teacher's choice persists in cst.bpW. */
+:root { --bp-w: clamp(520px, calc(100vw - 760px), 1600px); }
 .bp-panel {
   position: fixed;
   top: var(--header-h, 74px); right: 0; bottom: 0;
@@ -2088,15 +2100,64 @@ body.rail-pinned .composer { left: 260px; }
 
 /* ---- the plan tree ---- */
 .plan-tree { display: flex; flex-direction: column; gap: 2px; }
-.plan-tree[data-view="map"] {
-  --plan-zoom: 1;
-  overflow: auto;
-  padding: calc(var(--sp) * 1.5) 2px;
+
+/* ---- 主题网络图 (导图): a real node-and-edge diagram, not the list scaled ---- */
+.plan-map { position: relative; --plan-zoom: 1; }
+.plan-map-scroll { overflow: auto; max-height: min(72vh, 900px); padding: calc(var(--sp) * 1.5) 2px; }
+/* paper-fade scroll hints: "there's more tree" is felt, not guessed */
+.plan-map::before, .plan-map::after { content: ''; position: absolute; pointer-events: none; z-index: 1; }
+.plan-map::after { top: 0; right: 0; bottom: 0; width: 12px; background: linear-gradient(to left, var(--cream), transparent); }
+.plan-map::before { left: 0; right: 0; bottom: 0; height: 12px; background: linear-gradient(to top, var(--cream), transparent); }
+.plan-map-svg { display: block; transform: scale(var(--plan-zoom)); transform-origin: top left; }
+.plan-edge { fill: none; stroke: var(--ink-faded); stroke-width: 1.5; stroke-linecap: round; opacity: 0.45; }
+.plan-edge-hyp { stroke: var(--ink-faded); stroke-dasharray: 4 3; opacity: 0.7; }
+/* Provenance lives in the box (fill + stroke), exactly as it does in the list;
+   dash means tentative. work_status rides the tooltip here — a second visual
+   channel inside a 30px box would make the map unreadable, and the list is
+   where a teacher compares the two axes node by node. */
+.plan-mnode rect { fill: var(--surface); stroke: var(--ink-faded); stroke-width: 1; }
+.plan-mnode text { font-size: 13px; fill: var(--ink); font-family: var(--font-serif); }
+.plan-mnum { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-faded); }
+.plan-m-confirmed rect { fill: var(--green-wash); stroke: var(--status-truth); stroke-width: 2; }
+.plan-m-teacher_preset rect { fill: var(--status-teacher-wash); stroke: var(--status-teacher); stroke-width: 1.5; }
+.plan-m-ai_suggestion rect { stroke: var(--status-ai); stroke-width: 1.5; }
+.plan-m-hypothesis rect, .plan-m-pending_validation rect { fill: var(--status-guess-wash); stroke: var(--status-guess); stroke-dasharray: 4 3; stroke-width: 1.5; }
+.plan-m-hypothesis text, .plan-m-pending_validation text { fill: var(--status-guess); }
+/* stale = an upstream edit may have invalidated this node; it is a MARK on top
+   of provenance, never a replacement for it (the two axes stay separable). */
+.plan-m-stale rect { stroke-dasharray: 2 2; }
+.plan-m-open rect { stroke: var(--green); stroke-width: 2.5; }
+.plan-mnode { cursor: pointer; }
+.plan-mnode:hover rect { stroke-width: 2; }
+.plan-fold-badge { font-size: 11px; fill: var(--persimmon); font-family: var(--font-sans); }
+.plan-fold-ok { fill: var(--green); }
+.plan-fold-hit circle { fill: var(--surface); stroke: var(--ink-faded); stroke-width: 1; }
+.plan-fold-hit text { font-size: 11px; fill: var(--ink-faded); font-family: var(--font-sans); }
+.plan-fold-hit:hover circle { stroke: var(--green); }
+/* Motion. The OUTER g's SVG transform attribute does positioning; ALL motion
+   lives on the inner group so CSS never fights the layout. */
+.plan-map-enter .plan-mnode-in {
+  animation: plan-node-in 640ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: left center; transform-box: fill-box;
 }
-.plan-tree[data-view="map"] > .plan-node {
-  transform: scale(var(--plan-zoom));
-  transform-origin: top left;
+@keyframes plan-node-in {
+  from { opacity: 0; transform: translateX(-12px) scale(0.94); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
 }
+.plan-edge-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: plan-edge-on 720ms ease-out both; }
+@keyframes plan-edge-on { to { stroke-dashoffset: 0; } }
+.plan-map-enter .plan-edge-hyp { animation: plan-fade 720ms ease-out both; }
+@keyframes plan-fade { from { opacity: 0; } to { opacity: 0.7; } }
+/* Reflow after fold/expand: persisting nodes glide (FLIP), revealed ones fade in. */
+.plan-flip { transition: transform 600ms cubic-bezier(0.22, 1, 0.36, 1); }
+.plan-node-appear { animation: plan-appear 480ms ease-out both; }
+@keyframes plan-appear { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .plan-map-enter .plan-mnode-in, .plan-edge-draw, .plan-map-enter .plan-edge-hyp, .plan-node-appear { animation: none; }
+  .plan-flip { transition: none; }
+}
+.plan-mnode:focus-visible rect { outline: none; stroke: var(--green); stroke-width: 2.5; }
+.plan-mnode:focus-visible { outline: none; }
 
 .plan-node { border-left: 2px solid var(--green-wash); padding-left: calc(var(--sp) * 1.5); }
 .plan-node .plan-node { margin-left: var(--sp); }

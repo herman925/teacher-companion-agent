@@ -2689,6 +2689,10 @@ function refreshBlueprintPanel() {
     folded,
     messageCounts: subjectCounts(),
     zoom,
+    // Per-course key for the 导图 FLIP cache: a repaint glides nodes from where
+    // they were instead of re-growing the whole diagram, but only within the
+    // same course — positions from another course's tree mean nothing here.
+    mapKey: key,
     onOpenNode: (id) => setSubject(id, { from: 'plan' }),
     onToggleFold: (id, isFolded) => {
       planFold = { ...planFold, [courseKey()]: toggleFold(planFold[courseKey()], id, isFolded) };
@@ -2974,15 +2978,22 @@ function wireBlueprintPanel() {
   // Resizable split (desktop): drag the left edge; width persists in
   // localStorage (survives reloads; resets only with site data / another
   // browser). Wider range since the panel became the 工作台 (§5b).
+  // Upper bound follows the panel becoming the primary surface (2026-08-13):
+  // 880px could not express "the plan takes most of the screen" on a wide
+  // monitor, so a teacher who dragged it wide got it clipped back. A saved
+  // width outside the range is IGNORED rather than clamped — it belongs to an
+  // older layout, and the new default is a better guess than a rounded relic.
   const saved = Number(load(LS.bpW, 0));
-  if (saved >= 300 && saved <= 880) document.documentElement.style.setProperty('--bp-w', `${saved}px`);
+  if (saved >= 300 && saved <= 1600) document.documentElement.style.setProperty('--bp-w', `${saved}px`);
   const resizer = $('#bp-resizer');
   resizer.addEventListener('pointerdown', (down) => {
     down.preventDefault();
     resizer.setPointerCapture(down.pointerId);
     const move = (ev) => {
       if (!(ev.buttons & 1)) { up(); return; } // canceled drags never keep resizing on hover
-      const w = Math.max(300, Math.min(880, window.innerWidth - ev.clientX));
+      // Leave at least a readable strip of chat: the panel may dominate, but a
+      // conversation squeezed under ~360px stops being usable to type into.
+      const w = Math.max(300, Math.min(Math.max(520, window.innerWidth - 360), window.innerWidth - ev.clientX));
       document.documentElement.style.setProperty('--bp-w', `${w}px`);
     };
     const up = () => {
