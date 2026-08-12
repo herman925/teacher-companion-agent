@@ -29,12 +29,15 @@ The design is **four layers** (UI + workflow + prompts + harness). All four have
 - [x] PostgreSQL + RLS + store contract, **verified against 16.14 on the VM**
 - [x] Access log wired to admin content reads
 - [x] Three account states in the JSON tier
-- [ ] **Axes are NOT wired to the prompt** — module exists, no call site
-- [ ] `revokeUser` NOT wired: the console still writes `status:'disabled'`, so `revoked_at` is never stamped and the retention window never starts
-- [ ] Fact extractor — the closed taxonomy is enforced by a DB CHECK, but nothing writes facts
-- [ ] Class object — no persistence, no selection at course start
-- [ ] Uploads / LighthouseCOS — nothing exists; only comments marking where it goes
-- [ ] Importer has never run against real course files
+- [x] Axes wired to the prompt (2026-08-13). An untouched axis stays `default` — writing a full vector on open would claim she set six handles she never touched
+- [x] `revokeUser` wired: `action: 'revoke'` stamps `revoked_at`, so the retention window starts. Revoking keeps the data; it stops access
+- [x] Fact extraction live, after `saveState` succeeds. The closed taxonomy does the refusing with NO keyword pre-filter — 「孩子们对鼓声特别有反应」 has no kind to be filed under, so it is refused rather than guessed at
+- [x] Classes with persistence and same-teacher binding checks (foreign keys bypass RLS, so nothing else locks the referenced class)
+- [x] Uploads: content decides the type, EXIF stripped before the bytes are written, size cap + per-user budget + free-disk floor, `object-store.mjs` is the seam for COS
+- [x] `resolveUploadRef` injected — verifies OWNERSHIP and is scoped to THIS course. The same teacher's material from another course does not ground evidence here
+- [x] **Importer has run against real data and PostgreSQL is LIVE on public** (2026-08-13) — see the entry below
+- [ ] `deleteClass` deliberately absent: `facts.class_id` is `ON DELETE CASCADE`, so deleting a class would silently destroy every class fact she widened by hand, with no archive and no notice. Do not add one without an archive path
+- [ ] Dev and public share one database. Dev needs its own before anyone tests against it
 
 ### Prompts — done (2026-08-12)
 
@@ -87,7 +90,29 @@ Browser-verified, not taken from agent reports. New modules: `demo/src/ui/plan-v
 
 **The mock is the next blocker.** It never emits `plan_delta`, so the shell that renders the plan tree cannot be demonstrated without live keys. Teach the mock to write a `course_plan` first. After that: class selection, the memory viewer, axis handles, mobile landing. Uploads and `revokeUser` are independent and slot anywhere.
 
-## 2026-08-12 (latest) — the prompt corpus speaks v2, and the tree write channel was never open
+## 2026-08-13 (latest) — memory, uploads, classes, and PostgreSQL is live
+
+**PostgreSQL now serves the public instance.** Dev stays on the JSON tier deliberately: both `.env` files point at the same `teacher_platform` database, so putting dev on it would let dev testing write into production data. Give dev its own database before anyone tests against it.
+
+The cutover found five blockers, and every one would have shipped as a silent failure:
+
+1. The importer **refused** to run rather than leave `auth/keys.json` and `auth/audit.json` behind — that is the encrypted key vault and the admin audit trail. Forcing past it with `--allow-unimported` would have logged all five teachers out of their own model access, discovered when a turn failed.
+2. `admin_audit.admin_id` is `uuid`; the JSON tier writes `"console"` for actions taken through the shared `ADMIN_TOKEN`. Ruled: `admin_id` NULL with `{"actor_label":"console"}` merged into `detail`. Minting a synthetic uuid would have **fabricated accountability** — the same class of error as fabricating child evidence, pointed at us instead of at a teacher.
+3. `DISABLED_DATABASE_URL` pointed at a role (`teacher_platform`) holding **zero table grants**. Uncommenting it would have started the service cleanly, connected, and failed every query. Now `app_rw` (25 grants), with `app_admin` for the auth plane per [DATABASE.md](docs/DATABASE.md) §255.
+4. Migration `006_facts_widened_at.sql` was unapplied; every facts query would have thrown 42703. Applied.
+5. `EnvironmentFile` does not strip inline comments the way a shell does, so `# uncomment AFTER…` became part of the connection string (`database "teacher_platform  " does not exist`). Both keys are now bare values.
+
+**Import verified, not assumed:** 6 users, 1 course, 27 audit rows, 9 vault keys — every course reconciled row for row, every audit row kept its own timestamp, every vault ciphertext read back byte for byte. A second run inserted only what was missing, proving idempotency.
+
+**RLS proven on live data:** the owner sees 1 course, another teacher sees 0, no `app.user_id` context sees 0.
+
+**Cleanup worth knowing:** `admin_audit` held 99 rows against 27 imported. The extra 72 were store-contract test residue — 60 `erase_user`, 6 `revoke_user`, 6 named `contract_probe_*` — written into the production database by a test run pointed at it. Deleted. **Test suites must never run against production**; that deserves a guard.
+
+**The feature work** is in `2da59ed` and the commit below: fact extraction with its guards, uploads with EXIF stripping and ownership-checked `resolveUploadRef`, classes, revoke, the six-axis vector, the 记忆 pane, mobile landing, and `mock.mjs` finally emitting `plan_delta` so a key-less demo shows the plan tree.
+
+**On the process, honestly:** three agent collisions this run, all in files where several agents had overlapping claims, including one live runtime break (`render.js` reading `grouped.counts.live` against a module returning `liveCount`). Two traced to resuming an agent while a workflow agent with the same brief was still live. Where ownership was clean — server, store, prompts, importer — the work came out strong. Scope by file, one owner each, and do not resume an agent whose workflow twin may still be running.
+
+## 2026-08-12 — the prompt corpus speaks v2, and the tree write channel was never open
 
 The corpus was the last layer still describing the V1.3 chain, which is why the agent behaved like v1 no matter what the engine could do. All seven files now describe Workflow v2. The rewrite is the smaller half of this entry; what rewriting them exposed is the larger half.
 
