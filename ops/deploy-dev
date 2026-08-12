@@ -1,0 +1,3 @@
+#!/bin/bash
+# Pull the dev branch and restart the dev instance. Logic lives in deploy-common.
+exec /usr/local/bin/deploy-common /home/app/platform-dev platform-dev 3001 dev

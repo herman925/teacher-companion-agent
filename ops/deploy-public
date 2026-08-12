@@ -1,0 +1,3 @@
+#!/bin/bash
+# Pull the public branch and restart the public instance. Logic lives in deploy-common.
+exec /usr/local/bin/deploy-common /home/app/platform platform 3000 main

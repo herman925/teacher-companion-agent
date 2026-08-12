@@ -1,0 +1,8 @@
+#!/bin/bash
+# Auto-deploy on push: dev branch -> dev instance, main -> public instance.
+while read old new ref; do
+  case "$ref" in
+    refs/heads/dev)  echo "[hook] deploying DEV..";  sudo /usr/local/bin/deploy-dev ;;
+    refs/heads/main) echo "[hook] deploying PUBLIC.."; sudo /usr/local/bin/deploy-public ;;
+  esac
+done

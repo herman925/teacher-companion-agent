@@ -21,6 +21,8 @@ If SSH stops working: Tencent console → instance → 登录 → 免密连接 (
 | Public | `/home/app/platform` | `main` | `platform.service` | `0.0.0.0:3000` | nginx → http://43.136.113.129/ |
 | Dev | `/home/app/platform-dev` | `dev` | `platform-dev.service` | `127.0.0.1:3001` | SSH tunnel only |
 
+**Deploy scripts are versioned in [ops/](../ops/)** — reinstall them after any VM rebuild, and read `ops/README.md` before editing them. They were rewritten 2026-08-12 after a push reported success while the public instance served month-old code for an hour: `post-receive` runs after the ref moves, so a failing hook cannot fail the push. The scripts now refuse a dirty checkout by name, run `npm ci` when the manifest changed (the repo gained its first dependency, `pg`, so a stale `node_modules` is a crash loop), require HTTP 200 after restart rather than trusting `systemctl is-active`, and report the commit actually being served.
+
 Both run `demo/serve.mjs` under user `app`, env in each checkout's `.env` (chmod 600 — model keys and `DATABASE_URL` live there, never in the repo). PostgreSQL 16 runs localhost-only, database `teacher_platform`; the DB password is in `/home/app/.env.dbpass` (root-readable) and inside each `.env`.
 
 ## Deploying
