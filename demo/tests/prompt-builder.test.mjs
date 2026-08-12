@@ -214,10 +214,13 @@ const PLAN = {
   }],
 };
 
+// `kind` is REQUIRED since ADR-0013 §9 closed the child-observation bypass by
+// construction: a fact without one of the five kinds is refused, not filed, so
+// a fixture without one would render an empty memory band.
 const FACTS = [
-  { id: 'f-class-1', scope: 'class', text: '我们班没有鼓', quote: '我们班没有鼓', at: '2026-07-30T09:00:00Z', source: 'teacher' },
-  { id: 'f-course-1', scope: 'course', text: '这门课想落在醒狮上', at: '2026-07-30T09:05:00Z', source: 'auto' },
-  { id: 'f-old-1', scope: 'course', text: '原本打算做龙舟', at: '2026-07-01T09:00:00Z', source: 'auto', archived: true, archive_reason: 'superseded' },
+  { id: 'f-class-1', kind: 'equipment', scope: 'class', text: '我们班没有鼓', quote: '我们班没有鼓', at: '2026-07-30T09:00:00Z', source: 'teacher' },
+  { id: 'f-course-1', kind: 'teacher_preference', scope: 'course', text: '这门课想落在醒狮上', at: '2026-07-30T09:05:00Z', source: 'auto' },
+  { id: 'f-old-1', kind: 'teacher_preference', scope: 'course', text: '原本打算做龙舟', at: '2026-07-01T09:00:00Z', source: 'auto', archived: true, archive_reason: 'superseded' },
 ];
 
 test('ACCEPTANCE — no course_plan, no facts, no subject: the note is byte-identical to the pre-band assembly', async () => {

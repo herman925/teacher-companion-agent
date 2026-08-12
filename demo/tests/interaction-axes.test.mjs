@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import {
   AXES, AXIS_IDS, VECTOR_VERSION, SOURCES, EVIDENCE_INVARIANT,
   PRESET_VECTORS, DEFAULT_PRESET, INFERENCE_CEILING, NUDGE_STEP,
-  ONBOARDING_CONFIDENCE, MIN_TURN_FOR_INFERENCE,
+  ONBOARDING_CONFIDENCE, MIN_TURN_FOR_INFERENCE, SIGNAL_MAX,
   defaultVector, normalizeVector, vectorFromPreset, applyOnboarding,
   nudge, pinAxis, unpinAxis, turnOverride,
   vectorToDirectives, axisDirective, describeVector, bandOf, sourceRank, resolveAxisId,
@@ -381,4 +381,37 @@ test('describe: the drawer can show where each axis is and why', () => {
   assert.equal(structure.confidence, 1);
   assert.equal(rows.find((r) => r.axis === 'pacing').turnOverride, true);
   assert.equal(rows.find((r) => r.axis === 'guidance').turnOverride, false);
+});
+
+// ---------- the signal is a label, not a transcript ----------
+
+test('signal: a short label survives verbatim, a sentence is clipped', () => {
+  // The axis vector lives in `users.settings` (DATABASE.md §2e), which has no
+  // retention story of its own. Every other teacher-derived string here is
+  // capped — scope_log.excerpt at 60 with a database CHECK, the access log at
+  // 60 code points — and this one was not, so a caller passing a teacher
+  // sentence would quietly park conversation text in a settings blob.
+  const label = '教师追问「为什么这样设计」';
+  let v = nudge(defaultVector(), 'depth', 'up', { turnIndex: 9, signal: label });
+  assert.equal(v.axes.depth.signal, label, '短标签必须原样保留');
+
+  const sentence = '老师说'.repeat(40);   // 120 characters, far past the cap
+  v = nudge(defaultVector(), 'depth', 'up', { turnIndex: 9, signal: sentence });
+  assert.equal(Array.from(v.axes.depth.signal).length, SIGNAL_MAX);
+  assert.ok(sentence.startsWith(v.axes.depth.signal), '截断是前缀，不是改写');
+
+  // MUST PASS UNTOUCHED: clipping the label changes nothing else on the axis.
+  const plain = nudge(defaultVector(), 'depth', 'up', { turnIndex: 9 });
+  assert.equal(v.axes.depth.value, plain.axes.depth.value);
+  assert.equal(v.axes.depth.confidence, plain.axes.depth.confidence);
+  assert.equal(v.axes.depth.source, plain.axes.depth.source);
+});
+
+test('signal: the cap bites on reload too, not only on the write', () => {
+  // A stored vector is re-normalized on every read, so a row that got past an
+  // older build is repaired rather than trusted.
+  const stored = {
+    version: VECTOR_VERSION, flavor: '', axes: { depth: { value: 4, confidence: 0.5, source: 'inferred', signal: '很长的一句话'.repeat(20) } },
+  };
+  assert.equal(Array.from(normalizeVector(stored).axes.depth.signal).length, SIGNAL_MAX);
 });

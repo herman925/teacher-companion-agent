@@ -171,6 +171,28 @@ export function axisMeta(axisId) {
 const clampValue = (v) => Math.min(5, Math.max(1, Math.round(Number(v))));
 const clampConfidence = (c) => Math.min(1, Math.max(0, Number.isFinite(Number(c)) ? Number(c) : 0));
 
+/** A short LABEL saying why an axis moved (`'asked_for_detail'`,
+ * `'skipped_card'`), never a sentence. */
+export const SIGNAL_MAX = 60;
+
+/**
+ * Clip a signal to a label.
+ *
+ * The axis vector lives in `users.settings` and the observations in
+ * `interaction_signals` (DATABASE.md §2e), and every other teacher-derived
+ * string in this codebase is capped — `scope_log.excerpt` at 60 with a database
+ * CHECK, the access log at 60 code points, workbench fields at 500/2000. This
+ * one was stored uncapped, so a caller passing a teacher sentence as the signal
+ * would quietly put conversation text into a settings blob that has no
+ * retention story of its own.
+ *
+ * Code points, not UTF-16 units, for the same reason access-log.mjs counts them
+ * that way: `.slice()` can cut a character in half, and Postgres `length()`
+ * counts characters.
+ * @param {unknown} raw
+ */
+const clipSignal = (raw) => Array.from(String(raw ?? '')).slice(0, SIGNAL_MAX).join('');
+
 /**
  * Numbers only, and NOT via bare Number(): `Number(null)` and `Number('')` are
  * both 0, which would clamp to 1 — an empty handle in the profile UI would
@@ -214,7 +236,7 @@ export function normalizeVector(data) {
       source: SOURCES.includes(raw.source) ? raw.source : 'default',
       pinned: raw.pinned === true,
     };
-    if (raw.signal) out.signal = String(raw.signal);
+    if (raw.signal) out.signal = clipSignal(raw.signal);
     if (raw.turn_override === true) out.turn_override = true;
     axes[axis.id] = out;
   }
@@ -380,7 +402,7 @@ export function nudge(vector, axis, direction, opts = {}) {
     confidence: Math.min(INFERENCE_CEILING, Math.max(cur.confidence, clampConfidence(cur.confidence + step))),
     source: 'inferred',
   };
-  if (opts.signal) moved.signal = String(opts.signal);
+  if (opts.signal) moved.signal = clipSignal(opts.signal);
   next.axes[id] = moved;
   return next;
 }

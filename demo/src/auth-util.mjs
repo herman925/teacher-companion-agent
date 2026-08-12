@@ -95,10 +95,37 @@ export function parseCookies(req) {
   return out;
 }
 
-/** Set-Cookie value for a session token. No Secure until TLS exists (SECURITY.md §7). */
-export function sessionCookie(token) {
-  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${THIRTY_DAYS_S}`;
+/**
+ * Is this process serving over TLS?
+ *
+ * `Secure` USED TO BE A COMMENT SAYING 「not until TLS exists」, which meant the
+ * day the certificate lands (ADR-0013 §2's launch gate) the session cookie
+ * would still travel without it unless somebody remembered to edit this source
+ * file — on the day everything else is being changed at once. A configuration
+ * gate that lives in a code comment is the kind that gets missed, so it is
+ * configuration now.
+ *
+ * Two spellings, either of which is enough: `COOKIE_SECURE=1` for a deliberate
+ * choice, and `CHANNEL=public`, because the public instance IS the one that
+ * gets the certificate and the one where a cleartext session cookie matters.
+ * Read at call time rather than at import so a test can set the variable.
+ * @returns {boolean}
+ */
+function cookieSecure() {
+  return process.env.COOKIE_SECURE === '1' || process.env.CHANNEL === 'public';
 }
+
+/** Set-Cookie value for a session token. Gains `Secure` from configuration —
+ * see `cookieSecure`; the plain-HTTP local demo keeps working without it. */
+export function sessionCookie(token) {
+  const secure = cookieSecure() ? '; Secure' : '';
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=${THIRTY_DAYS_S}`;
+}
+/** The clearing cookie carries the SAME attributes. A browser matches a
+ * Set-Cookie against the stored cookie by name/path/domain, but a `Secure`
+ * cookie cannot be overwritten from a non-secure context — so mismatched
+ * attributes here would be a logout that leaves the session cookie in place. */
 export function clearSessionCookie() {
-  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  const secure = cookieSecure() ? '; Secure' : '';
+  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=0`;
 }

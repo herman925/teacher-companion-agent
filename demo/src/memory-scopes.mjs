@@ -57,12 +57,45 @@ const WIDEN_STEPS = new Map([['course', 'class'], ['class', 'teacher']]);
 /** Where automatic extraction is allowed to file. The clamp, not a suggestion. */
 const AUTO_MAX_SCOPE = 'course';
 
+/**
+ * THE CLOSED TAXONOMY (ADR-0013 §9). A fact must be one of these five, and
+ * nothing else is a fact.
+ *
+ * WHY THIS EXISTS, in the ADR's own words: an extractor cannot distinguish
+ * 「班上没有鼓」 (a constraint) from 「孩子们对鼓声特别有反应」 (a child observation)
+ * — both are short sentences a teacher says — and a keyword heuristic 「would
+ * give false confidence exactly where the product cannot afford it」. The fix is
+ * STRUCTURAL, not textual: a child observation has no kind to be filed under,
+ * so the bypass closes by construction rather than by pattern-matching.
+ *
+ * `CHILD_CLAIM_RE` below is kept as a second belt, and it is worth saying out
+ * loud why it cannot be the guarantee: the ADR's own example,
+ * 「孩子们对鼓声特别有反应」, does not match it (harness.mjs lists
+ * 发现|理解|感受到|爱上|喜欢上?|学会|明白|掌握|着迷|兴奋 — 有反应 is absent), so
+ * that exact sentence would have filed as an ordinary live fact and ridden every
+ * prompt under a settled-looking header.
+ *
+ * Anything the model wants to record about what children did goes through
+ * `children_evidence` with an evidence reference — the existing gated path.
+ * Unclassifiable input is REFUSED, not guessed at.
+ *
+ * These five are also the `facts.kind` NOT NULL CHECK in DATABASE.md §2e, so a
+ * fact without one could not be written to the table anyway.
+ * @type {ReadonlyArray<string>}
+ */
+export const FACT_KINDS = Object.freeze([
+  'equipment', 'space', 'schedule', 'class_composition', 'teacher_preference',
+]);
+const FACT_KIND_SET = new Set(FACT_KINDS);
+
 /** Bump when the column set changes — the header carries it, so a stale reader
  * fails loudly instead of reading column 5 as column 4. */
-export const MEMORY_TSV_VERSION = 'v1';
+export const MEMORY_TSV_VERSION = 'v2';   // v2 adds `kind` (ADR-0013 §9)
 
-/** The column set. ~8 max (ADR-0011 §6); order is the contract. */
-export const MEMORY_COLUMNS = ['id', 'scope', 'fact', 'quote', 'at', 'source'];
+/** The column set. ~8 max (ADR-0011 §6); order is the contract. `kind` is in
+ * the table because a constraint the model cannot see the TYPE of is a
+ * constraint it will misread as a claim. */
+export const MEMORY_COLUMNS = ['id', 'kind', 'scope', 'fact', 'quote', 'at', 'source'];
 
 /** Written into any cell that would otherwise be empty. Two consecutive tabs
  * are how a model silently mis-reads the next column. Deliberately a local
@@ -157,13 +190,23 @@ const overLong = (f) => flatten(f.text).length > TEXT_MAX || flatten(f.quote).le
  * A fact with no text is dropped — there is nothing to file, and an empty row
  * would render as `-` and read to the model as a fact.
  *
+ * A fact with no valid `kind` is REFUSED, and that is the structural half of
+ * ADR-0013 §9 — see `FACT_KINDS`. Refused on reload too, not only on the way
+ * in: a stored row without a kind could never have been legitimately written,
+ * so treating it as data would be trusting the corruption. Refusals are
+ * reported through `screenFacts` rather than thrown, because one bad row must
+ * not take a whole memory page down.
+ *
  * @param {Array<Object>|Object|null|undefined} raw one fact or a list of them
- * @param {{now?: string, byTeacher?: boolean}} [opts] `now` stamps facts that
- *   arrive without `at`; pass it to keep callers and tests deterministic.
+ * @param {{now?: string, byTeacher?: boolean, rejected?: Array<Object>}} [opts]
+ *   `now` stamps facts that arrive without `at`; pass it to keep callers and
+ *   tests deterministic.
  *   `byTeacher` marks THIS CALL as her deliberate act — a tap in the memory
  *   page — and is the only thing that lets a fact arrive at `source: 'teacher'`
  *   or above course scope. Trust travels in the call, never in the data: a
  *   field on the fact object is a field an extractor can write.
+ *   `rejected` is an array this function PUSHES refusals into; `screenFacts`
+ *   is the public way to get it.
  * @returns {Array<Object>} normalized facts, input untouched
  */
 export function normalizeFacts(raw, opts = {}) {
@@ -171,11 +214,19 @@ export function normalizeFacts(raw, opts = {}) {
   const list = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? [raw] : []);
   const seen = new Set();
   const out = [];
+  const rejected = Array.isArray(opts.rejected) ? opts.rejected : null;
+  const refuse = (item, reason) => { if (rejected) rejected.push({ fact: item, reason }); };
 
   for (const item of list) {
     const f = item && typeof item === 'object' ? item : {};
     const text = flatten(f.text);
-    if (!text) continue;
+    if (!text) { if (item != null) refuse(item, 'no_text'); continue; }
+
+    // THE STRUCTURAL GUARD. Not a heuristic over the text — a required field
+    // with five legal values, which a child observation cannot honestly carry.
+    const kind = flatten(f.kind);
+    if (!kind) { refuse(item, 'missing_kind'); continue; }
+    if (!FACT_KIND_SET.has(kind)) { refuse(item, 'unknown_kind'); continue; }
 
     // `source: 'teacher'` is never taken on trust from the fact itself. Two
     // things can produce it: `opts.byTeacher` (this call IS her act), and
@@ -197,6 +248,7 @@ export function normalizeFacts(raw, opts = {}) {
 
     const fact = {
       id,
+      kind,
       scope,
       text,
       // The utterance this came from. ADR-0011's consequences require knowing
@@ -243,6 +295,25 @@ export function normalizeFacts(raw, opts = {}) {
 }
 
 /**
+ * `normalizeFacts` plus the refusals, for any caller that has to SAY what it
+ * would not accept.
+ *
+ * ADR-0013 §9 refuses unclassifiable input rather than guessing at it, and a
+ * refusal nobody can see is indistinguishable from a fact that quietly
+ * vanished. This is the reporting half of that.
+ *
+ * @param {Array<Object>|Object|null|undefined} raw
+ * @param {{now?: string, byTeacher?: boolean}} [opts]
+ * @returns {{facts: Array<Object>, rejected: Array<{fact: unknown, reason: string}>}}
+ *   `reason` is `missing_kind` | `unknown_kind` | `no_text`.
+ */
+export function screenFacts(raw, opts = {}) {
+  const rejected = [];
+  const facts = normalizeFacts(raw, { ...opts, rejected });
+  return { facts, rejected };
+}
+
+/**
  * File an incoming fact, merging it into an existing one when it merely
  * restates it (ADR-0011 §4: update the timestamp, do not append).
  *
@@ -260,17 +331,27 @@ export function normalizeFacts(raw, opts = {}) {
  * @param {Array<Object>} facts current facts, live and archived
  * @param {Object} incoming the candidate fact
  * @param {{now?: string}} [opts]
- * @returns {{facts: Array<Object>, action: 'merged'|'added'|'ignored'}}
+ * @returns {{facts: Array<Object>, action: 'merged'|'added'|'ignored'|'refused', reason?: string}}
  *   `'ignored'` is the third outcome, for input carrying no text: reporting
  *   `'added'` when nothing was added would be exactly the kind of lie this
- *   codebase bans.
+ *   codebase bans. `'refused'` is the fourth, for input with no valid `kind`
+ *   (ADR-0013 §9) — and it carries the reason, because 「your note was not
+ *   filed」 with no explanation is how a teacher learns to distrust the memory
+ *   page.
  */
 export function mergeFact(facts, incoming, opts = {}) {
   // The stored list is normalized WITHOUT `byTeacher`: her tap authorizes the
   // fact she is filing now, not a re-blessing of every row already on disk.
   const list = normalizeFacts(facts, stored(opts));
-  const [next] = normalizeFacts(incoming, opts);
-  if (!next) return { facts: list, action: 'ignored' };
+  const { facts: [next], rejected } = screenFacts(incoming, opts);
+  if (!next) {
+    const reason = rejected[0]?.reason ?? 'no_text';
+    // 「Nothing to file」 and 「this could not be classified」 are different
+    // answers, and only the second one is about the taxonomy.
+    return reason === 'no_text'
+      ? { facts: list, action: 'ignored', reason }
+      : { facts: list, action: 'refused', reason };
+  }
 
   const key = restatementKey(next);
   const hit = list.find((f) => !f.archived && restatementKey(f) === key);
@@ -307,8 +388,17 @@ export function mergeFact(facts, incoming, opts = {}) {
  */
 export function supersedeFact(facts, incoming, opts = {}) {
   const list = normalizeFacts(facts, stored(opts));
-  const [next] = normalizeFacts(incoming, opts);
-  if (!next) return { facts: list, archived: [], refused: [] };
+  const { facts: [next], rejected } = screenFacts(incoming, opts);
+  // A fact that cannot be classified cannot retire one that was. The refusal
+  // rides back in the same `refused` channel an unarchivable target uses, so a
+  // caller has one place to look.
+  if (!next) {
+    return {
+      facts: list,
+      archived: [],
+      refused: rejected.map((r) => ({ id: flatten(incoming?.id) || '(无 id)', reason: r.reason })),
+    };
+  }
 
   const targets = new Set(next.supersedes ?? []);
   const archived = [];
@@ -428,6 +518,7 @@ export function factsToTSV(facts, scope) {
   for (const f of rows) {
     lines.push([
       f.id,
+      f.kind,
       f.scope,
       f.text,
       f.quote,

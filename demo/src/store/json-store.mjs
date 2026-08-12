@@ -36,6 +36,78 @@ const DEFAULT_TITLE = '新课程';
 export const COURSE_SUBJECT = 'course';
 const SUBJECT_MAX = 120; // a node id, not prose; same cap as a workbench row id
 
+// ---- the three account states (ADR-0013 §11, DATABASE.md §5b) ----
+// active / revoked / erased are three OPERATIONS for three situations, not
+// points on a scale. Revoke refuses login and KEEPS the data, because the
+// kindergarten may still need last year's curriculum. Erase is the deletion
+// request and takes everything. Conflating them is the mistake DATABASE.md
+// §2 spends a CHECK constraint on.
+export const ACCOUNT_STATES = Object.freeze(['active', 'revoked', 'erased']);
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Default retention window for revoked accounts: 365 days, the ADR's 12
+// months. CONFIGURATION, NOT A CONSTANT — dueForErasure takes the window as an
+// argument so the pilot's compliance answer can set it. ADR-0013 records the
+// real value as still open; 365 is a defensible placeholder, not a legal
+// opinion, and nothing here should read as one.
+export const DEFAULT_ERASURE_WINDOW_DAYS = 365;
+
+// Materials are LighthouseCOS references, never bytes (ADR-0013 §6). Both
+// allowlists mirror the CHECK constraints in DATABASE.md §2: reject by
+// default, never blocklist.
+export const MATERIAL_KINDS = Object.freeze(['photo', 'observation', 'document', 'generated']);
+export const MATERIAL_MIME_TYPES = Object.freeze([
+  'application/pdf', 'image/jpeg', 'image/png',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]);
+
+// Row-shaped, user-scoped collections in this tier, relative to baseDir. Each
+// is a flat array of rows carrying `user_id`, mirroring the tables of the same
+// name in DATABASE.md §2, and erasure sweeps every one of them. Exported
+// because the list IS the contract: whoever implements facts, classes or
+// interaction signals in the JSON tier must write here, or their rows survive
+// an erase and nobody finds out until an audit does.
+export const USER_SCOPED_FILES = Object.freeze([
+  'materials.json', 'facts.json', 'interaction-signals.json', 'classes.json',
+]);
+
+/**
+ * Epoch milliseconds from a Date, a number, or an ISO string; NaN when the
+ * value cannot be read as a time.
+ * @param {unknown} v
+ * @returns {number}
+ */
+function toMillis(v) {
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === 'number') return Number.isFinite(v) ? v : NaN;
+  if (typeof v === 'string') return Date.parse(v);
+  return NaN;
+}
+
+/**
+ * Is this user row past its retention window? Pure, so the retention policy is
+ * testable without a clock or a file (DATABASE.md §5b).
+ *
+ * A `revoked` row with no `revoked_at` is a data defect, not an old account:
+ * the clock never started, so we do not know when the window opened. Guessing
+ * a date would erase early and erasure is irreversible, so such a row is never
+ * due — it stays visible in listUsers as revoked-without-a-date instead.
+ *
+ * @param {{status?: string, revoked_at?: string|null}|null|undefined} user
+ * @param {Date|number|string} nowMs
+ * @param {number} [windowDays]
+ * @returns {boolean}
+ */
+export function isDueForErasure(user, nowMs, windowDays = DEFAULT_ERASURE_WINDOW_DAYS) {
+  const now = toMillis(nowMs);
+  if (!Number.isFinite(now)) throw new Error('isDueForErasure: now must be a Date, epoch ms or ISO string');
+  if (!user || user.status !== 'revoked') return false;
+  const at = toMillis(user.revoked_at);
+  if (!Number.isFinite(at)) return false;
+  return now - at >= windowDays * DAY_MS;
+}
+
 /**
  * Normalize a message subject: the string 'course', or a node id.
  * Anything absent, blank or not a string becomes 'course', and that default is
@@ -151,16 +223,222 @@ export function createJsonStore(opts = {}) {
   const scopeFile = path.join(AUTH_DIR, 'scope-log.json'); // ADR-0012 §3 would-refuse log
   const keysFile = path.join(AUTH_DIR, 'keys.json');         // { userId: { provider: ciphertext } }
   const rateFile = path.join(AUTH_DIR, 'rate-limits.json');  // rate-gate state blob
+  // User-scoped row collections (USER_SCOPED_FILES above). They sit beside the
+  // courses rather than under auth/ because they are course-and-teacher data,
+  // not credentials.
+  const materialsFile = path.join(BASE, 'materials.json');
+  const factsFile = path.join(BASE, 'facts.json');
+  const signalsFile = path.join(BASE, 'interaction-signals.json');
+  const classesFile = path.join(BASE, 'classes.json');
   const readUsers = () => readJson(usersFile, []);
   const readSessions = () => readJson(sessionsFile, []);
-  /** Public shape: never the password hash. */
+  /** Public shape: never the password hash. `revoked_at` rides along because
+   * new state must be observable (AGENTS.md) — a retention clock nobody can
+   * see in the console is a clock nobody checks. */
   const sanitizeUser = (u) => u && {
     id: u.id, username: u.username, display_name: u.display_name, role: u.role,
     status: u.status, must_change_password: Boolean(u.must_change_password),
     display_name_changed_at: u.display_name_changed_at ?? null,
     created_at: u.created_at, last_login_at: u.last_login_at ?? null,
+    revoked_at: u.revoked_at ?? null,
     profile: u.settings?.profile ?? null,
   };
+
+  // ---- internals shared by the account-state operations ----
+  // These do NOT take the lock. withLock is one promise chain, so a nested
+  // acquire would wait for a lock only its own caller can release; every one of
+  // these runs inside an already-locked section.
+
+  /** Append one admin-audit row. The public audit() wraps this in the lock. */
+  async function appendAuditRow(adminId, action, targetUser, detail) {
+    const rows = await readJson(auditFile, []);
+    rows.push({
+      id: rows.length + 1, admin_id: adminId ?? null, action,
+      target_user: targetUser ?? null, detail: detail ?? null, created_at: nowISO(),
+    });
+    await writeAtomic(auditFile, rows);
+  }
+
+  /** Revoke every live session of one user. @returns how many died. */
+  async function killSessions(userId) {
+    const sessions = await readSessions();
+    let n = 0;
+    for (const s of sessions) {
+      if (s.user_id === userId && !s.revoked_at) { s.revoked_at = nowISO(); n += 1; }
+    }
+    if (n) await writeAtomic(sessionsFile, sessions);
+    return n;
+  }
+
+  /**
+   * Mark one user row revoked and start the retention clock. Idempotent on the
+   * stamp: a second revoke must not move `revoked_at` forward, or every click
+   * of the button would restart the window and 「revoked」 would quietly become
+   * 「kept forever」 — the outcome minimal retention exists to prevent.
+   */
+  function stampRevocation(u) {
+    u.status = 'revoked';
+    if (!u.revoked_at) u.revoked_at = nowISO();
+  }
+
+  /** Drop every row of one user from a flat user-scoped file. @returns count. */
+  async function purgeUserRows(file, userId) {
+    const rows = await readJson(file, null);
+    if (!Array.isArray(rows)) return 0;      // absent file: nothing to erase, not an error
+    const kept = rows.filter((r) => r?.user_id !== userId);
+    const removed = rows.length - kept.length;
+    if (removed) await writeAtomic(file, kept);
+    return removed;
+  }
+
+  /**
+   * Delete one course, its objects and its material rows, in the one order
+   * that cannot orphan a photograph. Shared by the teacher path and the admin
+   * console so the ordering cannot drift between them.
+   *
+   * The object deletion runs OUTSIDE the write lock, exactly as `eraseInternal`
+   * does: a network call to object storage must not hold the store's lock, and
+   * a throw there must leave every row intact so the operation can be repeated.
+   *
+   * @param {string} courseId
+   * @param {((cosKey: string) => Promise<void>|void)|null} deleteObject
+   * @returns {Promise<{deleted: boolean, cos_keys: string[], objects_deleted: boolean}>}
+   */
+  async function deleteCourseInternal(courseId, deleteObject) {
+    const rows = await withLock(async () => {
+      const all = await readJson(materialsFile, []);
+      return (Array.isArray(all) ? all : []).filter((m) => m?.course_id === courseId);
+    });
+    const cosKeys = [...new Set(rows.map((m) => m?.cos_key).filter((k) => typeof k === 'string' && k))];
+
+    // OBJECTS BEFORE ROWS — the same rule, and the same reason, as eraseUser.
+    if (typeof deleteObject === 'function') {
+      for (const key of cosKeys) await deleteObject(key);
+    }
+
+    return withLock(async () => {
+      const c = await readCourse(courseId);
+      if (!c) return { deleted: false, cos_keys: cosKeys, objects_deleted: typeof deleteObject === 'function' };
+      const all = await readJson(materialsFile, []);
+      const kept = (Array.isArray(all) ? all : []).filter((m) => m?.course_id !== courseId);
+      if (kept.length !== (Array.isArray(all) ? all.length : 0)) await writeAtomic(materialsFile, kept);
+      await unlink(coursePath(courseId)).catch(() => {});
+      return { deleted: true, cos_keys: cosKeys, objects_deleted: typeof deleteObject === 'function' };
+    });
+  }
+
+  /**
+   * Erase one account: everything goes (ADR-0013 §11, DATABASE.md §5b).
+   * Ordering is the whole design, so it is spelled out where it happens.
+   * @param {string|null} adminId who asked
+   * @param {string} userId
+   * @param {((cosKey: string) => Promise<void>|void)|null} deleteObject
+   */
+  async function eraseInternal(adminId, userId, deleteObject) {
+    const users = await readUsers();
+    const u = users.find((x) => x.id === userId);
+    if (!u) throw err(404, '用户不存在');
+
+    const courses = (await allCourses()).filter((c) => c.user_id === userId);
+    const materialRows = await readJson(materialsFile, []);
+    const mine = (Array.isArray(materialRows) ? materialRows : []).filter((m) => m?.user_id === userId);
+    // Keys are collected from the materials registry AND from any list a course
+    // file carries: a key recorded in one place and swept from the other is
+    // exactly the orphaned child photo ADR-0013 §6 designs against.
+    const cosKeys = [...new Set([
+      ...mine.map((m) => m?.cos_key),
+      ...courses.flatMap((c) => (Array.isArray(c.materials) ? c.materials : []).map((m) => m?.cos_key)),
+    ].filter((k) => typeof k === 'string' && k.length > 0))];
+
+    // OBJECTS BEFORE ROWS. A deleted row is a lost key, and a lost key is a
+    // child photo nobody can find to delete. So the bucket goes first, and a
+    // throw here aborts with every row still intact — a half-run erase can be
+    // repeated, an orphaned object cannot be found again.
+    // This store owns no COS client, so the caller injects the deleter. Without
+    // one, the keys ride back in the receipt and deleting them is the caller's
+    // obligation — stated, not assumed.
+    if (typeof deleteObject === 'function') {
+      for (const key of cosKeys) await deleteObject(key);
+    }
+
+    // Sessions first among the rows: an open session must stop resolving before
+    // its data starts disappearing, so no request can read a half-erased
+    // account.
+    await writeAtomic(sessionsFile, (await readSessions()).filter((s) => s.user_id !== userId));
+
+    const materials = await purgeUserRows(materialsFile, userId);
+
+    // Courses carry their messages and snapshots inside the same file in this
+    // tier, so one unlink is three tables in the Postgres shape. A pg-store
+    // deletes them as separate statements in this same order.
+    let messages = 0;
+    let snapshots = 0;
+    for (const c of courses) {
+      messages += (c.messages || []).length;
+      snapshots += (c.snapshots || []).length;
+      await unlink(coursePath(c.id)).catch(() => {});
+    }
+
+    const facts = await purgeUserRows(factsFile, userId);
+    const signals = await purgeUserRows(signalsFile, userId);
+
+    // Vaulted keys must not outlive the account (ADR-0005).
+    const keyRows = await readJson(keysFile, {});
+    const keyProviders = Object.keys(keyRows?.[userId] ?? {}).length;
+    if (keyRows?.[userId]) { delete keyRows[userId]; await writeAtomic(keysFile, keyRows); }
+
+    const classes = await purgeUserRows(classesFile, userId);
+
+    // The scope log keeps its ROWS and loses the PERSON: operational history
+    // survives, the subject does not (ADR-0013 §11).
+    const scopeRows = await readJson(scopeFile, []);
+    let scopeNulled = 0;
+    for (const r of Array.isArray(scopeRows) ? scopeRows : []) {
+      if (r?.user_id === userId) { r.user_id = null; scopeNulled += 1; }
+    }
+    if (scopeNulled) await writeAtomic(scopeFile, scopeRows);
+
+    // Same treatment for the admin audit: the action stays visible, its subject
+    // does not. `admin_id` is deliberately NOT nulled — accountability for what
+    // an admin did has to survive; it is the erased person who goes.
+    const auditRows = await readJson(auditFile, []);
+    let auditNulled = 0;
+    for (const r of Array.isArray(auditRows) ? auditRows : []) {
+      if (r?.target_user === userId) { r.target_user = null; auditNulled += 1; }
+    }
+    if (auditNulled) await writeAtomic(auditFile, auditRows);
+
+    // Rate-limit counters are deliberately left alone. They are keyed by
+    // identifier rather than by person, they expire on their own window, and
+    // clearing them would hand an attacker a free counter reset by asking for
+    // an erase. The rate gate also holds that blob in memory and flushes on a
+    // debounce, so a write from here would be overwritten anyway.
+
+    await writeAtomic(usersFile, users.filter((x) => x.id !== userId));
+
+    // The erase row names NO subject: recording who was erased in the log that
+    // outlives the erasure would defeat it. Counts are what an operator needs
+    // in order to see that it ran.
+    const deleted = {
+      courses: courses.length, messages, snapshots, materials,
+      facts, interaction_signals: signals, classes, key_providers: keyProviders,
+    };
+    await appendAuditRow(adminId, 'erase_user', null, {
+      ...deleted,
+      objects: cosKeys.length,
+      objects_deleted: typeof deleteObject === 'function',
+      scope_log_nulled: scopeNulled, audit_subjects_nulled: auditNulled,
+    });
+
+    return {
+      // The username rides back in the RESPONSE — the admin who asked needs to
+      // see which account went — and is written to no file.
+      username: u.username,
+      cos_keys: cosKeys,
+      objects_deleted: typeof deleteObject === 'function',
+      deleted, scope_log_nulled: scopeNulled, audit_subjects_nulled: auditNulled,
+    };
+  }
 
   return {
     // ================= courses (unchanged interface) =================
@@ -271,14 +549,31 @@ export function createJsonStore(opts = {}) {
       });
     },
 
-    /** Whole-course erasure (data-subject deletion, DATABASE.md §4). */
-    async deleteCourse(userId, courseId) {
-      return withLock(async () => {
+    /**
+     * Whole-course erasure (data-subject deletion, DATABASE.md §4).
+     *
+     * ADR-0013 §6: 「Deleting a course deletes its objects. Orphaned child
+     * photos in a bucket nobody tracks are the failure mode to design
+     * against.」 The materials row is the ONLY record of an object key, so the
+     * order is not negotiable: harvest the keys, delete the objects, THEN the
+     * rows. Deleting the row first loses the key, and a lost key is a child
+     * photo nobody can find to delete — which is why this returns the keys even
+     * when it deleted the objects itself.
+     *
+     * @param {string} userId @param {string} courseId
+     * @param {{deleteObject?: ((cosKey: string) => Promise<void>|void)|null}} [opts]
+     * @returns {Promise<{deleted: boolean, cos_keys: string[], objects_deleted: boolean}>}
+     *   `cos_keys` is what this course owned in the bucket. With no
+     *   `deleteObject` injected they are the caller's obligation, stated rather
+     *   than assumed.
+     */
+    async deleteCourse(userId, courseId, { deleteObject = null } = {}) {
+      const owned = await withLock(async () => {
         const c = await readCourse(courseId);
-        if (!c || c.user_id !== userId) return false;
-        await unlink(coursePath(courseId)).catch(() => {});
-        return true;
+        return Boolean(c && c.user_id === userId);
       });
+      if (!owned) return { deleted: false, cos_keys: [], objects_deleted: false };
+      return deleteCourseInternal(courseId, deleteObject);
     },
 
     /** Append one message (append-only). `msg.subject` tags it (ADR-0010 §1). */
@@ -454,41 +749,162 @@ export function createJsonStore(opts = {}) {
       });
     },
 
-    /** Admin: status/role changes. Disabling also revokes live sessions. */
+    /** Admin: status/role changes. Anything that is not `active` also revokes
+     * live sessions. `disabled` is the legacy spelling kept for the existing
+     * console button; ADR-0013's three states are `active` / `revoked` /
+     * `erased`, and `revoked` is the one that starts the retention clock —
+     * a `disabled` row is never seen by dueForErasure. */
     async updateUser(userId, patch) {
       return withLock(async () => {
         const users = await readUsers();
         const u = users.find((x) => x.id === userId);
         if (!u) throw err(404, '用户不存在');
-        if (patch.status && ['active', 'disabled'].includes(patch.status)) u.status = patch.status;
+        if (patch.status && ['active', 'disabled', 'revoked'].includes(patch.status)) {
+          if (patch.status === 'revoked') stampRevocation(u);
+          else {
+            u.status = patch.status;
+            // Reinstatement stops the retention clock. Leaving the stamp would
+            // hand the scheduled erasure job a live account to delete.
+            if (patch.status === 'active') u.revoked_at = null;
+          }
+        }
         if (patch.role && ['admin', 'teacher'].includes(patch.role)) u.role = patch.role;
         await writeAtomic(usersFile, users);
-        if (u.status === 'disabled') {
-          const sessions = await readSessions();
-          for (const s of sessions) if (s.user_id === userId && !s.revoked_at) s.revoked_at = nowISO();
-          await writeAtomic(sessionsFile, sessions);
-        }
+        if (u.status !== 'active') await killSessions(userId);
         return sanitizeUser(u);
       });
     },
 
-    /** Whole-account erasure: user row, all sessions, and every course the
-     * user owns — child data must not outlive the account (non-negotiable 4).
-     * The audit trail stays: it records admin actions, not user content, and
-     * the delete itself must remain visible in it. */
-    async deleteUser(userId) {
+    // ================= the three account states (ADR-0013 §11) =================
+
+    /**
+     * REVOKE — the teacher left the school, or was banned. Login is refused
+     * (verifyLogin and getSessionUser both require `active`), live sessions
+     * die, and THE DATA STAYS: the kindergarten may still need last year's
+     * curriculum. Stamping `revoked_at` starts the retention clock that
+     * dueForErasure reads; a revocation without it would sit in the database
+     * forever.
+     * @param {string|null} adminId who asked — the audit row keeps it
+     * @param {string} userId
+     * @returns {Promise<Object>} the sanitized user
+     */
+    async revokeUser(adminId, userId) {
       return withLock(async () => {
         const users = await readUsers();
         const u = users.find((x) => x.id === userId);
         if (!u) throw err(404, '用户不存在');
-        const courses = (await allCourses()).filter((c) => c.user_id === userId);
-        for (const c of courses) await unlink(coursePath(c.id)).catch(() => {});
-        await writeAtomic(sessionsFile, (await readSessions()).filter((s) => s.user_id !== userId));
-        // Vaulted keys must not outlive the account.
-        const keyRows = await readJson(keysFile, {});
-        if (keyRows[userId]) { delete keyRows[userId]; await writeAtomic(keysFile, keyRows); }
-        await writeAtomic(usersFile, users.filter((x) => x.id !== userId));
-        return { username: u.username, courses_deleted: courses.length };
+        stampRevocation(u);
+        await writeAtomic(usersFile, users);
+        const killed = await killSessions(userId);
+        await appendAuditRow(adminId, 'revoke_user', userId, {
+          revoked_at: u.revoked_at, sessions_revoked: killed,
+        });
+        return sanitizeUser(u);
+      });
+    },
+
+    /**
+     * ERASE — everything goes. Used for alpha cleanup and for any deletion
+     * request. Objects before rows; see eraseInternal, where the order lives.
+     * @param {string|null} adminId
+     * @param {string} userId
+     * @param {{deleteObject?: ((cosKey: string) => Promise<void>|void)|null}} [opts]
+     *   `deleteObject` removes one COS object. Provide it and the bucket is
+     *   emptied before any row is touched, with a throw aborting the whole
+     *   erase. Omit it and the receipt's `cos_keys` are the caller's to delete.
+     * @returns {Promise<Object>} receipt: username, cos_keys, per-table counts
+     */
+    async eraseUser(adminId, userId, { deleteObject = null } = {}) {
+      return withLock(() => eraseInternal(adminId, userId, deleteObject));
+    },
+
+    /**
+     * Revoked accounts whose retention window has passed. RETURNS IDS AND
+     * ERASES NOTHING — the caller decides, because erasure is irreversible and
+     * a scheduled job that both finds and deletes has no step where a human
+     * can look. The window is an argument, not a constant (DATABASE.md §5b).
+     * @param {Date|number|string} [now]
+     * @param {number} [windowDays]
+     * @returns {Promise<Array<string>>} user ids
+     */
+    async dueForErasure(now = Date.now(), windowDays = DEFAULT_ERASURE_WINDOW_DAYS) {
+      const days = Number(windowDays);
+      // A NaN window would compare false everywhere and quietly return nothing
+      // due — a retention job that silently stops is the failure to avoid.
+      if (!Number.isFinite(days) || days < 0) throw err(400, '保留期需为非负天数');
+      return withLock(async () => (await readUsers())
+        .filter((u) => isDueForErasure(u, now, days))
+        .map((u) => u.id));
+    },
+
+    /** Legacy name for erase, kept because serve.mjs's admin console calls it.
+     * Same operation, no COS deleter, legacy receipt shape plus the keys. */
+    async deleteUser(userId) {
+      return withLock(async () => {
+        const r = await eraseInternal(null, userId, null);
+        return { username: r.username, courses_deleted: r.deleted.courses, cos_keys: r.cos_keys };
+      });
+    },
+
+    // ================= materials (COS references, never bytes) =================
+
+    /**
+     * Record one uploaded object (ADR-0013 §6). The bytes live in the private
+     * LighthouseCOS bucket; this row is all the store keeps, and it exists so
+     * that erasure can find the key — an object nobody recorded is an object
+     * nobody can delete.
+     *
+     * The store neither mints the key nor enforces the size cap: the upload
+     * path owns both, because it knows the extension and the configured limit.
+     * It also owns non-negotiable #4 — no uploaded child photo reaches any
+     * model without its own compliance ADR, and that has to be enforced where
+     * the call is made, not commented about here.
+     */
+    async recordMaterial(userId, courseId, material) {
+      return withLock(async () => {
+        const kind = String(material?.kind ?? '');
+        const mime = String(material?.mime_type ?? '');
+        const key = String(material?.cos_key ?? '').trim();
+        if (!MATERIAL_KINDS.includes(kind)) throw err(400, '素材类型不支持');
+        if (!MATERIAL_MIME_TYPES.includes(mime)) throw err(400, '文件类型不支持');
+        if (!key) throw err(400, '缺少对象键');
+        // THE COURSE MUST BE HERS. The Postgres tier gets this from
+        // `materials_owner`'s WITH CHECK (003_rls.sql), so without it here the
+        // two tiers disagree about a security property and the shared contract
+        // suite cannot see the difference — neither tier was asked.
+        //
+        // The consequence once an upload endpoint exists is not abstract:
+        // teacher A files a material against teacher B's course, B's course
+        // deletion then removes A's row while the COS object survives, and an
+        // orphaned child photo is exactly what ADR-0013 §6 names as the failure
+        // mode to design against.
+        if (courseId != null) {
+          const owner = await readCourse(courseId);
+          if (!owner || owner.user_id !== userId) throw err(404, '课程不存在');
+        }
+        const existing = await readJson(materialsFile, []);
+        const rows = Array.isArray(existing) ? existing : [];
+        const row = {
+          id: randomUUID(), user_id: userId, course_id: courseId ?? null,
+          kind, cos_key: key, mime_type: mime,
+          size_bytes: Number(material?.size_bytes ?? 0) || 0,
+          exif_stripped: Boolean(material?.exif_stripped),
+          contains_children: Boolean(material?.contains_children),
+          retention_until: material?.retention_until ?? null,
+          created_at: nowISO(),
+        };
+        rows.push(row);
+        await writeAtomic(materialsFile, rows);
+        return row;
+      });
+    },
+
+    /** Owner-scoped list; optionally one course. */
+    async listMaterials(userId, courseId) {
+      return withLock(async () => {
+        const rows = await readJson(materialsFile, []);
+        return (Array.isArray(rows) ? rows : []).filter((m) => m?.user_id === userId
+          && (courseId == null || m?.course_id === courseId));
       });
     },
 
@@ -600,11 +1016,7 @@ export function createJsonStore(opts = {}) {
 
     /** Every admin action on another user leaves a row. */
     async audit(adminId, action, targetUser, detail) {
-      return withLock(async () => {
-        const rows = await readJson(auditFile, []);
-        rows.push({ id: rows.length + 1, admin_id: adminId, action, target_user: targetUser ?? null, detail: detail ?? null, created_at: nowISO() });
-        await writeAtomic(auditFile, rows);
-      });
+      return withLock(() => appendAuditRow(adminId, action, targetUser, detail));
     },
 
     async listAudit({ limit = 100 } = {}) {
@@ -682,13 +1094,10 @@ export function createJsonStore(opts = {}) {
       return withLock(async () => readCourse(courseId));
     },
 
-    async adminDelete(courseId) {
-      return withLock(async () => {
-        const c = await readCourse(courseId);
-        if (!c) return false;
-        await unlink(coursePath(courseId)).catch(() => {});
-        return true;
-      });
+    /** Same shape and the same object-first ordering as deleteCourse — a
+     * console delete must not be the path that orphans a child photo. */
+    async adminDelete(courseId, { deleteObject = null } = {}) {
+      return deleteCourseInternal(courseId, deleteObject);
     },
 
     async adminExportAll() {

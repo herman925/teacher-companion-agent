@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { createJsonStore, deriveCourseTitle, TITLE_MAX } from '../src/store/json-store.mjs';
-import { hashPassword, verifyPassword, displayNameError, parseCookies, sessionCookie } from '../src/auth-util.mjs';
+import { hashPassword, verifyPassword, displayNameError, parseCookies, sessionCookie, clearSessionCookie } from '../src/auth-util.mjs';
 
 const base = mkdtempSync(path.join(tmpdir(), 'cst-auth-'));
 const store = createJsonStore({ baseDir: base });
@@ -156,8 +156,11 @@ test('course scoping: users only see their own; cross-user reads miss', async ()
   assert.equal(listA.length, 1);
   assert.equal(listA[0].title, 'A 的醒狮');
   assert.equal(await store.getCourse(b.user.id, courseA.id), null, 'cross-user read misses');
-  assert.equal(await store.deleteCourse(b.user.id, courseA.id), false, 'cross-user delete refused');
-  assert.ok(await store.deleteCourse(a.user.id, courseA.id));
+  // deleteCourse returns a receipt rather than a boolean since ADR-0013 §6
+  // (「deleting a course deletes its objects」) — `deleted` is the old boolean,
+  // and `cos_keys` is what the caller still owns in the bucket.
+  assert.equal((await store.deleteCourse(b.user.id, courseA.id)).deleted, false, 'cross-user delete refused');
+  assert.ok((await store.deleteCourse(a.user.id, courseA.id)).deleted);
 });
 
 test('course titles: theme wins, fallback trims, nothing yields null', () => {
@@ -205,6 +208,34 @@ test('cookie helpers: parse + httpOnly attributes', () => {
   assert.equal(jar.cst_sid, 'tok/x');
   const set = sessionCookie('abc');
   assert.ok(set.includes('HttpOnly') && set.includes('SameSite=Lax') && set.includes('Max-Age='));
+});
+
+// `Secure` used to be a comment saying 「not until TLS exists」 — a configuration
+// gate living in a source file, to be remembered on the day the certificate
+// lands and everything else is being changed at once. It is configuration now.
+test('cookie: Secure comes from configuration, both directions', (t) => {
+  const before = { secure: process.env.COOKIE_SECURE, channel: process.env.CHANNEL };
+  t.after(() => {
+    process.env.COOKIE_SECURE = before.secure ?? '';
+    process.env.CHANNEL = before.channel ?? '';
+  });
+
+  // MUST PASS — the local plain-HTTP demo still gets a usable cookie.
+  process.env.COOKIE_SECURE = '';
+  process.env.CHANNEL = 'dev';
+  assert.ok(!sessionCookie('abc').includes('Secure'), 'no flag, no Secure — the local demo would stop logging in');
+  assert.ok(!clearSessionCookie().includes('Secure'));
+
+  process.env.COOKIE_SECURE = '1';
+  assert.ok(sessionCookie('abc').includes('; Secure'));
+  // The clearing cookie must carry the SAME attributes, or logout leaves the
+  // session cookie in place.
+  assert.ok(clearSessionCookie().includes('; Secure'));
+
+  // The public channel is the one that gets the certificate, so it implies it.
+  process.env.COOKIE_SECURE = '';
+  process.env.CHANNEL = 'public';
+  assert.ok(sessionCookie('abc').includes('; Secure'));
 });
 
 test('setWorkbench: mirrors 批注 + card answers onto the course record; scoped; sanitized; no version bump', async () => {
