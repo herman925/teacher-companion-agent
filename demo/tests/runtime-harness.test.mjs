@@ -297,6 +297,25 @@ test('MUST PASS — the same delta body marked hypothesis, or hedged, sails thro
   assert.equal(validateTurn(hedged, createInitialState('c1')).filter((x) => x.kind === 'unmarked_hypothesis').length, 0);
 });
 
+// 待现场验证 is the phrase the whole prompt corpus mandates ('预设，待现场验证')
+// and the one blueprint-util's status gloss uses; HEDGE_RE previously accepted
+// only 待现场确认, so a node marked exactly as instructed read as an unmarked
+// assertion. Both spellings hedge; neither spelling excuses an unmarked one.
+test('MUST PASS — 待现场验证 hedges a delta node body, exactly like 待现场确认', () => {
+  for (const marker of ['待现场验证', '待现场确认']) {
+    const t = goodTurn({ plan_delta: [{ op: 'set', id: 'a9', parent_id: 'w1', node: {
+      title: '划桨练习', body: `孩子们会掌握划桨的节奏（预设，${marker}）。`, status: 'ai_suggestion',
+    } }] });
+    assert.equal(validateTurn(t, createInitialState('c1')).filter((x) => x.kind === 'unmarked_hypothesis').length, 0,
+      `「${marker}」是标注，不该被判成未标注`);
+  }
+  const bare = goodTurn({ plan_delta: [{ op: 'set', id: 'a9', parent_id: 'w1', node: {
+    title: '划桨练习', body: '孩子们已经掌握了划桨的节奏。', status: 'ai_suggestion',
+  } }] });
+  assert.ok(validateTurn(bare, createInitialState('c1')).some((x) => x.kind === 'unmarked_hypothesis'),
+    '没有标注的断言照样拦');
+});
+
 test('MUST PASS — an ordinary delta edit is not a claim about children', () => {
   const t = goodTurn({ blueprint_delta: [{ op: 'update', id: 'network_map', node: {
     body: '按你的批注收拢到孩子问过的方向', status: 'teacher_preset',

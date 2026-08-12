@@ -68,6 +68,20 @@ test('normalize: staleness never touches provenance', () => {
   assert.equal(p.roots[0].stale_since, '7');
 });
 
+// `summary` is what an ancestor contributes to a descendant's focus band
+// (prompt-builder.ancestorSummary). normalizePlan rebuilds every node from a
+// fixed field list and applyPlanDelta pushes incoming nodes through it, so a
+// dropped `summary` meant every ancestor arrived as 「（尚无摘要）」 forever —
+// the model promised context it could never be given.
+test('normalize: keeps summary, and stays absent when nothing wrote one', () => {
+  const p = normalizePlan({ roots: [
+    { id: 'p1', title: '龙舟', summary: '一个月围绕真龙舟展开' },
+    { id: 'p2', title: '趁墟' },
+  ] });
+  assert.equal(p.roots[0].summary, '一个月围绕真龙舟展开');
+  assert.ok(!('summary' in p.roots[1]), '没写过摘要就不该凭空长一个');
+});
+
 // ---------- tree helpers ----------
 
 test('walk: depth-first, parents before children, stable order', () => {

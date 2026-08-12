@@ -81,6 +81,9 @@ export function normalizePlan(data) {
     // days without becoming two nodes.
     const dates = Array.isArray(n.dates) ? n.dates.map(flatten).filter(Boolean) : [];
     if (dates.length) out.dates = dates;
+    // One line an ancestor contributes to a descendant's focus band. Dropped
+    // here, every ancestor arrived as 「（尚无摘要）」 no matter what was written.
+    if (n.summary) out.summary = flatten(n.summary);
     if (n.org_type) out.org_type = flatten(n.org_type);
     if (Array.isArray(n.blueprint_refs) && n.blueprint_refs.length) out.blueprint_refs = n.blueprint_refs.map(flatten);
     // Staleness marks that an upstream edit MAY have invalidated this node. It

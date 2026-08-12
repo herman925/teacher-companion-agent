@@ -107,6 +107,9 @@
           "id": { "type": "string" },
           "kind": { "type": "string", "enum": ["child_words", "question_wall", "artifact", "photo", "video", "behavior", "dwell_point", "teacher_observation", "audience_feedback", "interview_record"] },
           "content": { "type": "string" },
+          "quote": { "type": "string", "description": "The teacher's own words from the turn that produced this row. THE grounding key: engine.evidenceIsGrounded traces this (falling back to content) against her message, and a row it cannot trace is stamped pending_validation and counts toward nothing." },
+          "upload_ref": { "type": "string", "description": "Reference to a material row this teacher uploaded. Grounds only when a caller supplies a resolver; no upload endpoint exists yet, so the corpus tells the model not to write it." },
+          "pending_validation": { "type": "boolean", "description": "ENGINE-OWNED. Set when the row could not be traced back to the teacher: kept (dropping it would lose her content on a false negative) but counting toward no stage gate and citable by nothing." },
           "child_ref": { "type": "string", "description": "Anonymized child reference (e.g. 男孩A), never full names." },
           "round": { "type": "integer", "minimum": 0 },
           "recorded_at": { "type": "string" },
@@ -365,7 +368,8 @@
             },
             "assumed": { "type": "string" },
             "pedagogy": { "type": "string" },
-            "profile_basis": { "type": "string" }
+            "profile_basis": { "type": "string" },
+            "adjust": { "type": "string", "description": "一条可操作的替代做法 — what to do instead if the assumption is wrong. Carried through by blueprint-util.normalizeBlueprint and mandated by contract.zh.md." }
           }
         },
         "evidence_refs": { "type": "array", "items": { "type": "string" } },
