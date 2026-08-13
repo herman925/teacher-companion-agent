@@ -83,7 +83,9 @@
 //   GENERATED ALWAYS AS IDENTITY, so audit rows are renumbered exactly as
 //   messages are. Nothing points at an audit row, so that is safe.
 //   Re-running stays safe WITHOUT a key: rows are grouped by the tuple that is
-//   actually imported — (admin_id, action, target_user, detail, created_at) —
+//   actually imported and never rewritten — (admin_id, action, detail,
+//   created_at); `target_user` is excluded because eraseUser NULLs it, see
+//   AUDIT_MATCH —
 //   and each group inserts only the SHORTFALL between the rows the file holds
 //   and the rows the database already holds. One identical row already present
 //   inserts nothing; two identical rows in the file and one in the database
@@ -751,9 +753,20 @@ function stableJson(v) {
 }
 
 /** The tuple that decides whether two audit rows are the same row. The file's
- * own `id` is deliberately absent: it is a per-file counter, not an identity. */
+ * own `id` is deliberately absent: it is a per-file counter, not an identity.
+ *
+ * MUST STAY FIELD-FOR-FIELD IDENTICAL TO `AUDIT_MATCH`. This one groups the
+ * rows read from the file; that one asks the database how many of a group are
+ * already present. The insert writes the difference, so if the two disagree
+ * about what makes rows equal, the arithmetic is wrong in one direction or the
+ * other — duplicates, or silently skipped rows. There is a test pinning them
+ * together.
+ *
+ * `target_user` is excluded for the reason spelled out at AUDIT_MATCH: eraseUser
+ * NULLs it, so it is not stable, and an identity key may only contain fields the
+ * application never rewrites. */
 export function auditGroupKey(row) {
-  return stableJson([row.admin_id ?? null, row.action, row.target_user ?? null,
+  return stableJson([row.admin_id ?? null, row.action,
     row.detail ?? null, row.created_at]);
 }
 
@@ -1252,16 +1265,34 @@ const REQUIRED_COLUMNS = Object.freeze([
 ]);
 
 /** The tuple that identifies an audit row, as SQL. IS NOT DISTINCT FROM, not `=`:
- * `admin_id`, `target_user` and `detail` are all nullable, and `NULL = NULL` is
- * NULL — which would make every row with a null actor look absent and insert a
- * duplicate on every run. Bind order matches auditParams(). */
-const AUDIT_MATCH = `admin_id    IS NOT DISTINCT FROM $1::uuid
-                 AND action      = $2::text
-                 AND target_user IS NOT DISTINCT FROM $3::uuid
-                 AND detail      IS NOT DISTINCT FROM $4::jsonb
-                 AND created_at  = $5::timestamptz`;
+ * `admin_id` and `detail` are nullable, and `NULL = NULL` is NULL — which would
+ * make every row with a null actor look absent and insert a duplicate on every
+ * run. Bind order matches auditParams().
+ *
+ * `target_user` IS DELIBERATELY NOT PART OF THIS KEY, and that is the whole
+ * lesson of this constant. The column is not stable: `eraseUser` NULLs it on
+ * purpose (005_auth_plane.sql:106 — accountability outlives the person, so the
+ * actor is kept and the subject is scrubbed). An identity key may only contain
+ * fields the application never rewrites. It contained `target_user` until
+ * 2026-08-13, and the failure went:
+ *
+ *   1. the first import wrote the row with the teacher's uuid;
+ *   2. she was erased, so the application NULLed that column;
+ *   3. a later re-import compared the file's row (uuid) against the stored row
+ *      (NULL), found no match, counted a shortfall, and inserted a SECOND copy
+ *      of an event that had happened once.
+ *
+ * Nothing errored. The ledger simply stopped being 1:1 with `audit.json`, and
+ * it was found by a count, which is the only way a duplicate in an audit trail
+ * ever is found. `detail` still carries the username, so the remaining four
+ * fields identify the event: one writer at millisecond precision cannot produce
+ * two different actions with the same actor, action, detail and timestamp. */
+export const AUDIT_MATCH = `admin_id   IS NOT DISTINCT FROM $1::uuid
+                 AND action     = $2::text
+                 AND detail     IS NOT DISTINCT FROM $3::jsonb
+                 AND created_at = $4::timestamptz`;
 
-const auditParams = (r) => [r.admin_id, r.action, r.target_user, jsonb(r.detail), r.created_at];
+export const auditParams = (r) => [r.admin_id, r.action, jsonb(r.detail), r.created_at];
 
 /** In-memory identity of one vault row, used to remember which rows THIS run
  * wrote. One helper, called from both sides: two spellings of the same key would

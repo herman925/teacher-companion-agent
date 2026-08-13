@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import {
   stripEmptyPlan, evidenceRefProblems, courseToRows, userToRow, materialToRow,
   auditToRow, keysToRows, groupAuditRows, auditGroupKey, CONSOLE_ACTOR, ACTOR_LABEL_KEY,
+  AUDIT_MATCH, auditParams,
   buildPlan, verifyTotals, verifyCourses, verifyAudit, verifyKeys, readDataDir,
   MESSAGE_ROLES, UNHANDLED_FILES, SKIPPED_FILES,
 } from '../scripts/import-json-to-pg.mjs';
@@ -1301,5 +1302,59 @@ describe('importPlan against a real database', { skip }, () => {
     } finally {
       await client.end();
     }
+  });
+});
+
+// ===========================================================================
+// THE AUDIT IDENTITY KEY — a regression found in production, 2026-08-13
+// ===========================================================================
+// `admin_audit` has no natural key, so re-runnability rests entirely on a tuple
+// that says whether two rows are the same event. That tuple contained
+// `target_user` — a column `eraseUser` NULLs by design (005_auth_plane.sql:106:
+// accountability outlives the person, so the actor is kept and the subject is
+// scrubbed).
+//
+// The failure needed three ordinary steps and produced no error:
+//   1. the first import wrote the row with the teacher's uuid;
+//   2. she was erased, so the application NULLed that column;
+//   3. a re-import compared the file's row (uuid) with the stored row (NULL),
+//      saw no match, counted a shortfall, and inserted a second copy of an
+//      event that happened once.
+//
+// It was caught by counting rows against the source file, which is the only way
+// a duplicate in an audit trail is ever caught. These tests exist so the next
+// person cannot put a mutable column back into an identity key.
+
+describe('audit identity key — only fields the application never rewrites', () => {
+  const base = {
+    admin_id: null, action: 'create_user', target_user: UID,
+    detail: { username: 'hermantest', actor_label: CONSOLE_ACTOR },
+    created_at: '2026-07-22T07:03:17.463Z',
+  };
+
+  test('MUST PASS — the same event still matches after eraseUser NULLs target_user', () => {
+    const scrubbed = { ...base, target_user: null };
+    assert.equal(auditGroupKey(base), auditGroupKey(scrubbed),
+      '抹掉 target_user 之后还是同一条：否则重跑导入会写出第二份');
+  });
+
+  test('MUST REFUSE — genuinely different events still key apart', () => {
+    assert.notEqual(auditGroupKey(base), auditGroupKey({ ...base, action: 'delete_user' }));
+    assert.notEqual(auditGroupKey(base), auditGroupKey({ ...base, created_at: '2026-07-22T07:03:17.464Z' }));
+    assert.notEqual(auditGroupKey(base), auditGroupKey({ ...base, admin_id: ADMIN }));
+    assert.notEqual(auditGroupKey(base),
+      auditGroupKey({ ...base, detail: { username: 'someone_else', actor_label: CONSOLE_ACTOR } }));
+  });
+
+  test('the in-memory key and the SQL predicate name the SAME columns', () => {
+    // They are two spellings of one rule: auditGroupKey groups the file's rows,
+    // AUDIT_MATCH counts how many of a group the database already holds, and the
+    // insert writes the difference. Drift between them is wrong arithmetic —
+    // duplicates one way, silently skipped rows the other.
+    const cols = [...AUDIT_MATCH.matchAll(/\b(admin_id|action|target_user|detail|created_at)\b/g)]
+      .map((m) => m[1]);
+    assert.deepEqual([...new Set(cols)].sort(), ['action', 'admin_id', 'created_at', 'detail'],
+      'SQL 谓词里不能出现 target_user，也不能漏掉其余四个');
+    assert.equal(auditParams(base).length, 4, 'bind 参数个数要跟谓词里的占位符对上');
   });
 });
