@@ -1758,7 +1758,12 @@ function memoryItem(fact, opts) {
     actions.append(forget);
   }
 
-  const widen = widenOffer(fact, { classId: opts.classId ?? null, className: opts.className ?? '' });
+  // `className` is NOT passed: widenOffer decides the RUNG (course→class→teacher)
+  // and needs only whether a class exists to widen into. The class's NAME is
+  // presentation, and it is used a few lines down to build the armed sentence.
+  // Passing it here was a dead argument that read as though the pure module
+  // formatted copy — which is exactly the confusion the split exists to avoid.
+  const widen = widenOffer(fact, { classId: opts.classId ?? null });
   if (widen && opts.onWiden) {
     // The label names the rung; the armed state names the REACH. One tap must
     // not assert 「这个班就是这样」 and 「我带的每个班都这样」 at once, which is the
