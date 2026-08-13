@@ -38,16 +38,78 @@ import assert from 'node:assert/strict';
 
 import { runStoreContract } from './store-contract.test.mjs';
 
+/**
+ * Refuse a database that already holds somebody's work.
+ *
+ * WHY THIS EXISTS: on 2026-08-13 this suite was pointed at the production
+ * database. Its users and courses were cleaned up afterwards, but `admin_audit`
+ * was not — 72 rows survived, 60 of them `erase_user`, 6 literally named
+ * `contract_probe_*`, sitting in the accountability record of a live pilot. The
+ * trail read as though an admin had erased sixty accounts. Nobody noticed until
+ * a count during the PostgreSQL cutover did not add up.
+ *
+ * `DATABASE_URL` being set is not consent to write to whatever it points at.
+ * The check is 「is this database empty of users」 rather than a name pattern:
+ * a name convention is a habit, and this needs to hold against a copy-pasted
+ * connection string at 2am. An empty database cannot be anyone's production.
+ *
+ * PG_TEST_ALLOW_NONEMPTY=1 exists for a deliberate re-run against a scratch
+ * database that already has fixtures. It is not for production, and if you are
+ * reaching for it on a database with real teachers in it, that is the bug.
+ *
+ * @returns {Promise<string|false>} a skip reason, or false to proceed
+ */
+async function refuseNonEmptyDatabase() {
+  if (!process.env.DATABASE_URL) return false;          // already skipped above
+  if (process.env.PG_TEST_ALLOW_NONEMPTY === '1') return false;
+  let createPgStore;
+  try { ({ createPgStore } = await import('../src/store/pg-store.mjs')); }
+  catch { return false; }                               // no pg installed: the skip above covers it
+  const probe = createPgStore({
+    connectionString: process.env.DATABASE_URL,
+    adminConnectionString: process.env.DATABASE_URL_ADMIN,
+  });
+  try {
+    const users = await probe.listUsers();
+    if (Array.isArray(users) && users.length > 0) {
+      const db = String(process.env.DATABASE_URL).replace(/\/\/[^@]*@/, '//<redacted>@');
+      return `拒绝在已有 ${users.length} 个用户的数据库上跑契约测试——这看起来是真人的数据，不是测试库：${db}`
+        + '（确实是临时库就设 PG_TEST_ALLOW_NONEMPTY=1）';
+    }
+    return false;
+  } catch (err) {
+    // A database we cannot even read is not one we should write to.
+    return `无法确认目标数据库是否为空，因此不写入：${err.message}`;
+  } finally {
+    await probe.close().catch(() => {});
+  }
+}
+
 // A string skip reason surfaces in the test report, so a run that quietly
 // tested nothing says so out loud instead of looking like 25 passing tests.
-const skip = !process.env.DATABASE_URL
-  && 'DATABASE_URL 未设置——本机没有 PostgreSQL，跳过（ADR-0013：数据库只在 Lighthouse 服务器上）';
+const skip = (!process.env.DATABASE_URL
+  && 'DATABASE_URL 未设置——本机没有 PostgreSQL，跳过（ADR-0013：数据库只在 Lighthouse 服务器上）')
+  // The emptiness check runs HERE, at module load, and turns into a skip —
+  // NOT inside the per-test factory. Throwing from the factory was the first
+  // shape of this guard and it did not hold: node:test still entered each test,
+  // and the contract's own setup and teardown reached the database anyway. It
+  // erased a real account from the pilot before refusing, which is a guard that
+  // performs the accident it was written to prevent. A skip computed before any
+  // test body exists cannot do that.
+  || await refuseNonEmptyDatabase();
+
 
 runStoreContract('pg-store', async () => {
   // Dynamic import for the same reason store.mjs uses one: `pg` is the only
   // dependency this repository has, and a static import here would break every
   // other test file's run on a machine that has not installed it.
   const { createPgStore } = await import('../src/store/pg-store.mjs');
+  // Second net, deliberately kept. The `skip` above is what actually prevents
+  // the accident, because it runs before any test body exists; this one only
+  // catches a future edit that breaks the skip. Belt and braces on a guard whose
+  // failure mode was erasing a real account.
+  const refusal = await refuseNonEmptyDatabase();
+  if (refusal) throw new Error(refusal);
   const store = createPgStore({
     connectionString: process.env.DATABASE_URL,
     adminConnectionString: process.env.DATABASE_URL_ADMIN,
