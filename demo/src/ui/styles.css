@@ -425,6 +425,19 @@ html, body {
   text-align: left;
   line-height: 1.5;
   transition: background-color 120ms ease-out;
+  /* A chip must never be wider than the column it sits in. Found on a phone
+     2026-08-14: the examples are `white-space: nowrap` by pill convention, and
+     one of them rendered 403px wide inside a 374px viewport — in a `.qcard`
+     with `overflow-x: visible` that does not scroll, on a page that does not
+     scroll sideways either. So it was simply CUT OFF, mid-sentence, with no
+     gesture that could reveal the rest.
+     These chips exist for the teacher who does not know what to say. A
+     truncated suggestion is worse than no suggestion: she cannot act on it and
+     cannot tell there was more. Long examples wrap to two lines; the pill shape
+     survives because the radius is larger than the line box. */
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .chip:hover, .chip:active { background: var(--persimmon-wash); }
