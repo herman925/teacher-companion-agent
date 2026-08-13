@@ -63,11 +63,13 @@ Browser-verified, not taken from agent reports. New modules: `demo/src/ui/plan-v
 - [x] Receipts: toast with undo, plus one compact line per turn
 - [x] Tree badges + 最近处理 strip
 - [x] `subject` wired into the request body — the gap that made the focus band dead in production
-- [ ] **The mock never emits `plan_delta`** (0 occurrences in `mock.mjs`), so a key-less demo run still drives the blueprint path and never shows the plan tree. Only a real vendor turn populates it. Fix this before demoing to anyone without keys
-- [ ] Class selection when she has more than one
-- [ ] Memory viewer across the four scopes
-- [ ] Interaction-axis handles in the profile
-- [ ] Mobile landing by course state
+- [x] **The mock emits `plan_delta`** (2026-08-13) — a key-less demo now shows the plan tree instead of the V1.3 blueprint path. It also emits `memory_facts`, tested end to end in `demo/tests/mock-memory-e2e.test.mjs`
+- [x] Class selection when she has more than one — silent at one class, because a question with one possible answer is not a question
+- [x] Memory viewer across the four scopes — shows what was extracted, lets her correct or forget it, and shows an archived fact AS archived with its reason. It is NOT a fact-entry form, and a test pins that no route creates a fact
+- [x] Interaction-axis handles in the profile — an untouched axis stays `default`; only her tap writes
+- [x] Mobile landing by course state
+
+**These five sat marked outstanding while they were already built** (spotted 2026-08-13 when Herman asked whether all the planned features were in). They landed in the ultracode run and nobody re-read the list. Verified before ticking: each renderer is actually CALLED from `main.js`, not merely defined — `renderMemoryView`, `renderClassChoice`, `renderLanding`, `renderAxisHandles`, and `renderPlanMap` via `renderPlanTree`'s map branch. A scoreboard that goes stale in the optimistic direction is worse than none: it hides finished work and invites building it twice.
 
 ### Superseded surfaces — removed (2026-08-12, same commit)
 
@@ -88,9 +90,36 @@ Browser-verified, not taken from agent reports. New modules: `demo/src/ui/plan-v
 
 ### Suggested order
 
-**The mock is the next blocker.** It never emits `plan_delta`, so the shell that renders the plan tree cannot be demonstrated without live keys. Teach the mock to write a `course_plan` first. After that: class selection, the memory viewer, axis handles, mobile landing. Uploads and `revokeUser` are independent and slot anywhere.
+**The planned feature set is in.** Every item above is built and reachable from a live path, verified by call site rather than by grep count. What is left is not features:
 
-## 2026-08-13 (latest) — memory, uploads, classes, and PostgreSQL is live
+1. **TLS / 备案.** It gates a real teacher, and it currently forces `COOKIE_SECURE=0` on public — a session cookie in cleartext. Delete that override the day the certificate lands.
+2. **Exercise the account-backed paths against a live vault.** Forget, widen and class-binding are unit-tested and have never run end to end with a real key.
+3. **`SCOPE_ENFORCE=1`**, after a week of would-refuse rows.
+4. **Retarget the `prompt-lint` anchors** — a governance call, see above.
+
+Uploads and `revokeUser` are done. `deleteClass` stays deliberately absent until there is an archive path.
+
+## 2026-08-13 — two-axis code review of the whole v2 change (`11696de...HEAD`, 14 commits, 64 files)
+
+Reviewed on two axes, Standards and Spec, kept separate so a clean pass on one cannot mask a failure on the other.
+
+**Standards: 0 hard violations.** Every `innerHTML` write is sanitized (the one exception at [render.js](demo/src/ui/render.js):1602 is a static SVG with `Math.trunc`). The memory TSV band meets all four ADR-0011 rules — 7 columns, `EMPTY = '-'` in every empty cell, version marker in the header, no prose. Export duty is met, and the two exclusions (`cst.planFold`, `cst.planZoom`) state their reason inline rather than being silently dropped.
+
+Two judgement calls, neither acted on:
+- **Divergent Change on [demo/serve.mjs](demo/serve.mjs)** — 2137 lines now carrying the turn pipeline, uploads, fact capture, memory routes, classes and revoke. Not a defect today, but it is the file where two agents collided, and that is usually the first symptom. A split is a real refactor, not a review fix.
+- **Duplicated Code, already resolved mid-run** — two agents independently wrote an object store and an upload intake; the duplicates (`demo/src/uploads.mjs`, `profile-view.mjs`) were deleted. Recorded because it is what parallel agents do, not because anything is wrong now.
+
+**Spec: 0 missing, 0 scope creep, 0 wrong.** The load-bearing rules hold, verified in code rather than assumed:
+- `PLAN_KINDS = ['phase','week','activity']`. The only 「日计划」 in the tree is at [mock.mjs](demo/src/mock.mjs):446, where the agent *explains* to the teacher that a date hangs on an activity and the tree grew no fourth level.
+- The two status axes stay separate fields, separate TSV columns, separate visual channels.
+- `renderMemoryView` contains **zero** input elements, and there is no route that creates a fact — [serve.mjs](demo/serve.mjs):1465 records why: a `POST /api/memory` would skip the taxonomy, the quote check, the cap and child-claim archiving in one call.
+- `resolveUploadRef` is built from `listMaterialIds(userId, courseId)` — ownership AND course, so her own material from another course grounds nothing here.
+
+**One ambiguity for a human, not a defect:** [WORKFLOW.zh-CN.md](docs/WORKFLOW.zh-CN.md) §4 says 「右侧我觉得可以先什么都不出」 for all of phase B, while the 「我已经有想法了」 opening must deliver a plan in the same turn. The build resolved it as threshold-based (panel empty while collecting, tree grows once the threshold is met) rather than phase-based. Two independent agents flagged the same conflict. Confirm the reading.
+
+**Caveat on this review:** both review sub-agents went idle without producing a report, so this is one reviewer's pass presented as such, not two independent opinions.
+
+## 2026-08-13 — memory, uploads, classes, and PostgreSQL is live
 
 **PostgreSQL now serves the public instance.** Dev stays on the JSON tier deliberately: both `.env` files point at the same `teacher_platform` database, so putting dev on it would let dev testing write into production data. Give dev its own database before anyone tests against it.
 
