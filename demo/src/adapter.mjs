@@ -357,7 +357,21 @@ async function callNode(p, base, apiKey, body, timeoutMs, onDelta, idleTimeoutMs
     res = await fetch(`${base}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}`, 'user-agent': USER_AGENT },
-      body: JSON.stringify(onDelta ? { ...body, stream: true } : body),
+      // `stream_options.include_usage` is REQUIRED to get token counts back on
+      // a streamed call: an OpenAI-compatible vendor reports usage only in a
+      // final chunk, and only when asked. Without it every streamed turn stored
+      // `usage: null` — the write path, the admin export and the session log
+      // were all carrying the field faithfully and there was simply nothing in
+      // it. Verified against a live MiniMax turn on 2026-08-14, which cost real
+      // tokens and recorded none of them.
+      //
+      // This is the number 冯浩然 needs to freeze the context format, and the
+      // only way to tell a cheap turn from an expensive one. cacheInfoFromUsage
+      // reads `prompt_tokens_details.cached_tokens` out of the same object, so
+      // prompt-cache reporting depends on this flag too.
+      body: JSON.stringify(onDelta
+        ? { ...body, stream: true, stream_options: { include_usage: true } }
+        : body),
       signal: ctl.signal,
     });
     if (!res.ok) {
