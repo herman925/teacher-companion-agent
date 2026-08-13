@@ -66,10 +66,27 @@ for (const s of ['stage0', 'stage1', 'stage2', 'stage3', 'stage5']) {
   const text = read(p);
   if (text.trim().length < 300) F('P1', `${s}.zh.md`, 'stage module suspiciously short (<300 chars)');
 }
-// stage-specific anchors that must never erode
+// Stage-specific anchors: the PRINCIPLE each stage must never lose, expressed
+// as a phrase the current corpus actually asserts.
+//
+// Retargeted to v2 on 2026-08-13 (Herman's call). Two of these had rotted into
+// traps — they still required V1.3 literals, so they passed for the wrong
+// reason and would have failed for the wrong reason too:
+//
+//   · stage0 required `WF03b`, a V1.3 workflow NODE ID. The corpus keeps it
+//     only as a parenthetical provenance label, which pins no principle at all.
+//     Dropped. 适配性筛查 and 切口卡 stay, because those are live engine
+//     surfaces — `theme_fit_level`, and the `entry_card`/`fit_screening`
+//     artifact types still in the adapter enum — not retired vocabulary.
+//   · stage1 required `核心驱动问题`, and v2 INVERTS that requirement. The
+//     phrase now survives only inside its own prohibition, so the anchor was
+//     satisfied by the sentence that forbids it — and any future rewording of
+//     that prohibition would have failed the lint while being correct. It now
+//     anchors the v2 principle instead: work in 探究点, and do not force a
+//     driving question (不强求).
 const anchors = {
-  'stage0.zh.md': ['WF03b', '三问', '切口卡', '适配性筛查'],
-  'stage1.zh.md': ['访谈卡', '问题池', '核心驱动问题', 'evidence'],
+  'stage0.zh.md': ['三问', '切口卡', '适配性筛查'],
+  'stage1.zh.md': ['访谈卡', '问题池', '探究点', '不强求', 'evidence'],
   'stage3.zh.md': ['三类儿童观察', '三句聚焦反馈', '第一优先级', '项目化探究信号', '等待'],
   'stage5.zh.md': ['缺口', '不虚构', '真实发生顺序'],
 };

@@ -66,7 +66,13 @@ A teacher with more than one class is asked once which class this course is for;
 
 The complete list of **six facts** lives in the message 陈栩锋 sent to the group; the transcript only names some of them — age band, children's existing experience, why the teacher is running this theme, duration, and the real resources within reach. Confirm the full list with him before it reaches code.
 
-Nothing appears on the right during this phase. 陈栩锋's instruction was 「右侧我觉得可以先什么都不出」 — let her watch the conversation rather than a half-built artifact.
+**No plan appears on the right during this phase — but the panel is not blank.** 陈栩锋's instruction was 「右侧我觉得可以先什么都不出」, and it means do not hand her a half-built artifact; it does not mean sit her in front of an empty board.
+
+What the panel holds instead is **step zero**: one line saying what this panel will grow into, a live checklist of what is still missing that ticks itself off as the conversation fills it in, and a collapsed sample for anyone who wants to see where this ends up. The checklist REPORTS; it never asks her to fill a field (non-negotiable #2).
+
+The moment a plan actually exists, the panel is **replaced whole** — cleared and redrawn as the plan tree, not appended below the checklist (`replaceChildren` in `main.js`).
+
+The swap is **threshold-based, not phase-based**: a teacher who opens with 「我已经有想法了」 should see her tree in that same turn. The question is whether enough is known, never how far through the phase she is.
 
 ## 5. C · Generation
 
