@@ -112,6 +112,21 @@ export function parseCookies(req) {
  * @returns {boolean}
  */
 function cookieSecure() {
+  // COOKIE_SECURE=0 is an EXPLICIT override and wins over the CHANNEL default.
+  // It exists because the assumption above — 「public IS the one that gets the
+  // certificate」 — ran ahead of reality: 备案 is still pending, so the public
+  // instance serves plain HTTP. A browser silently discards a `Secure` cookie
+  // over http://, so login succeeded server-side (the session row was written)
+  // while every request after it arrived anonymous. The teacher saw 请先登录 on
+  // a screen she had just logged into, and could not save her API key.
+  //
+  // Setting it to 0 does NOT weaken anything today: without TLS the token
+  // travels in cleartext either way, so `Secure` was protecting nothing and
+  // breaking login. DELETE THE OVERRIDE THE DAY THE CERTIFICATE LANDS — at that
+  // point CHANNEL=public gives the right answer on its own, and leaving it set
+  // would keep the cookie sendable over http on an instance that finally has a
+  // reason to refuse.
+  if (process.env.COOKIE_SECURE === '0') return false;
   return process.env.COOKIE_SECURE === '1' || process.env.CHANNEL === 'public';
 }
 
