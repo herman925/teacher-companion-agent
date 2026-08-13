@@ -99,6 +99,30 @@ Browser-verified, not taken from agent reports. New modules: `demo/src/ui/plan-v
 
 Uploads and `revokeUser` are done. `deleteClass` stays deliberately absent until there is an archive path.
 
+## 2026-08-14 (latest) — a staging database, and the write paths nobody had ever run
+
+`teacher_platform_dev` on the same PostgreSQL server is now a full structural twin of production: 15 tables, all owned by `app_owner`, all with forced RLS, 27 policies, 25 `app_rw` grants, 41 `app_admin` grants, `facts.widened_at`, the same migration ledger. Verified by a full structural diff — every table, policy, grant, column — not by counting. Zero lines of difference.
+
+**Run the contract suite there, never against production.** Point `DATABASE_URL` and `DATABASE_URL_ADMIN` at `teacher_platform_dev` (same credentials, database name swapped). The suite's own guard refuses any database that already has users and names the database in the refusal; if you see that refusal you are aimed at production — re-check, do not set `PG_TEST_ALLOW_NONEMPTY` to get past it.
+
+**All 37 previously-skipped tests pass**, including `RLS is real: teacher A cannot read teacher B's course`. Inserts and updates under `WITH CHECK`, erase, revoke, fact archive and widen, material ownership — every write path the read-only audit could not reach now has real execution behind it. Roughly 68 minutes over an SSH tunnel, so budget for it.
+
+### It caught a regression I had introduced two commits earlier
+
+Removing `target_user` from the audit identity key ([ba3a1e3](https://github.com/Chao0s/teacher-companion-agent/commit/ba3a1e3)) left TWO SQL statements still binding five parameters while `auditParams` supplied four. Every import against a real database died with `08P01: bind message supplies 4 parameters, but prepared statement requires 5` — the reconciliation query still named `target_user`, and the INSERT was handed the identity key instead of its own payload.
+
+**The entire local suite passed while the importer was completely broken**, because both statements only execute with a database attached. That is the same shape as the `plan_delta` schema gap, the dead `resolveUploadRef` and the `render.js` module mismatch: code that cannot be exercised locally rots silently, and a green suite says nothing about it.
+
+The fix separates the two concerns permanently — `auditParams` is the identity (4 fields, no `target_user`, because `eraseUser` rewrites it) and `auditInsertValues` is the payload (5 fields, `target_user` included, because the row should carry what the file recorded). New tests check bind arity WITHOUT a database: a statement's highest `$n` and its array length are both knowable from strings alone. My first version of that test anchored on `n_exact`, which appears in a comment above the query, so it measured prose and passed with the bug reintroduced — found only by putting the bug back. It fails on the bug now.
+
+### Cleanup
+
+Staging holds 6 rows, all in `schema_migrations` — the ledger stays so the schema is re-runnable. Every test user, course, fact, class, material and uploaded file removed; no credentials or scratch SQL left in `/tmp`. Production verified unchanged by an independent auditor querying it directly: 6 users, 1 course, 32 audit rows (27 imported plus the 5 real erase records), 9 vault keys.
+
+### Still unproven
+
+Mobile at a real viewport. Browser resize had no effect for two separate agents (`innerWidth` stayed 2478), so the `max-width: 1099px` landing gate has been read, never rendered on a phone-sized screen.
+
 ## 2026-08-13 — two-axis code review of the whole v2 change (`11696de...HEAD`, 14 commits, 64 files)
 
 Reviewed on two axes, Standards and Spec, kept separate so a clean pass on one cannot mask a failure on the other.

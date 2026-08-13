@@ -1294,6 +1294,17 @@ export const AUDIT_MATCH = `admin_id   IS NOT DISTINCT FROM $1::uuid
 
 export const auditParams = (r) => [r.admin_id, r.action, jsonb(r.detail), r.created_at];
 
+/** The INSERT payload, which is NOT the identity key. Five values, matching the
+ * five columns admin_audit actually stores. `target_user` belongs here and not
+ * in auditParams: the row should carry whatever the file recorded, but the
+ * column cannot identify the row because eraseUser rewrites it. Keeping these
+ * two arrays separate is the whole point — they were briefly the same array,
+ * and a four-value key bound into a five-placeholder INSERT made every import
+ * against a real database fail with 08P01. */
+export const auditInsertValues = (r) => [
+  r.admin_id, r.action, r.target_user, jsonb(r.detail), r.created_at,
+];
+
 /** In-memory identity of one vault row, used to remember which rows THIS run
  * wrote. One helper, called from both sides: two spellings of the same key would
  * silently never match, and the reconciliation would then blame the file for a
@@ -1566,9 +1577,15 @@ export async function importPlan(plan, opts) {
             await client.query(
               `INSERT INTO admin_audit (admin_id, action, target_user, detail, created_at)
                VALUES ($1::uuid, $2::text, $3::uuid, $4::jsonb, $5::timestamptz)`,
+              // NOT `params`. The identity key and the insert payload are two
+              // different things and must not share an array: `target_user` is
+              // excluded from the key (eraseUser NULLs it, see AUDIT_MATCH) but
+              // is still WRITTEN, because the row should carry whatever the file
+              // recorded. Passing the 4-value key here bound four values into a
+              // five-placeholder statement and every real import died 08P01.
               // created_at is BOUND, never defaulted: this row's own instant is
               // the thing being preserved.
-              params,
+              auditInsertValues(g.row),
             );
             inserted.audit += 1;
           }
@@ -1756,14 +1773,20 @@ export async function importPlan(plan, opts) {
     for (const g of auditGroups) {
       const params = auditParams(g.row);
       const { rows } = await client.query(
-        `SELECT count(*) FILTER (WHERE created_at = $5::timestamptz)::int AS n_exact,
+        // Placeholders follow auditParams() exactly: $1 admin_id, $2 action,
+        // $3 detail, $4 created_at. `target_user` is absent here for the same
+        // reason it is absent from AUDIT_MATCH — eraseUser NULLs it, so it is
+        // not a stable identity. When it was dropped there and left here, this
+        // query kept asking for five binds while auditParams supplied four, and
+        // every import against a real database died with 08P01. Nothing local
+        // caught it: this statement only executes with a database attached.
+        `SELECT count(*) FILTER (WHERE created_at = $4::timestamptz)::int AS n_exact,
                 count(*)::int AS n_any,
                 max(created_at) AS latest
            FROM admin_audit
-          WHERE admin_id    IS NOT DISTINCT FROM $1::uuid
-            AND action      = $2::text
-            AND target_user IS NOT DISTINCT FROM $3::uuid
-            AND detail      IS NOT DISTINCT FROM $4::jsonb`, params,
+          WHERE admin_id IS NOT DISTINCT FROM $1::uuid
+            AND action   = $2::text
+            AND detail   IS NOT DISTINCT FROM $3::jsonb`, params,
       );
       const { n_exact: exact, n_any: any, latest } = rows[0];
       reconciledAudit.push({

@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import {
   stripEmptyPlan, evidenceRefProblems, courseToRows, userToRow, materialToRow,
   auditToRow, keysToRows, groupAuditRows, auditGroupKey, CONSOLE_ACTOR, ACTOR_LABEL_KEY,
-  AUDIT_MATCH, auditParams,
+  AUDIT_MATCH, auditParams, auditInsertValues,
   buildPlan, verifyTotals, verifyCourses, verifyAudit, verifyKeys, readDataDir,
   MESSAGE_ROLES, UNHANDLED_FILES, SKIPPED_FILES,
 } from '../scripts/import-json-to-pg.mjs';
@@ -1358,3 +1358,52 @@ describe('audit identity key — only fields the application never rewrites', ()
     assert.equal(auditParams(base).length, 4, 'bind 参数个数要跟谓词里的占位符对上');
   });
 });
+
+// Placeholder/bind arity, checked WITHOUT a database.
+//
+// This is the test that should have existed already. Dropping `target_user`
+// from the identity key left two SQL statements still asking for five binds
+// while `auditParams` supplied four, and every import against a real database
+// died with `08P01: bind message supplies 4 parameters, but prepared statement
+// requires 5`. Nothing local caught it, because both statements only execute
+// with a connection attached — the whole suite passed while the importer was
+// broken.
+//
+// A statement's highest $n and its parameter array's length are both knowable
+// from strings alone, so the mismatch does not need a database to find.
+describe('bind arity — every audit statement matches the array it is given', () => {
+  const row = {
+    admin_id: null, action: 'create_user', target_user: UID,
+    detail: { username: 'x', actor_label: CONSOLE_ACTOR },
+    created_at: '2026-07-22T07:03:17.463Z',
+  };
+  /** Highest $n referenced anywhere in a SQL fragment. */
+  const highestPlaceholder = (sql) =>
+    Math.max(0, ...[...sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
+
+  test('AUDIT_MATCH asks for exactly as many binds as auditParams supplies', () => {
+    assert.equal(highestPlaceholder(AUDIT_MATCH), auditParams(row).length,
+      'SELECT 的占位符个数要跟 auditParams 的长度一致，否则真库上直接 08P01');
+  });
+
+  test('the identity key and the insert payload are DIFFERENT shapes, on purpose', () => {
+    assert.equal(auditParams(row).length, 4, '身份键：不含 target_user');
+    assert.equal(auditInsertValues(row).length, 5, '写入载荷：仍要写 target_user');
+    assert.equal(auditInsertValues(row)[2], UID, 'target_user 要照原样写进去');
+  });
+
+  test('the reconciliation query in importPlan binds four, like auditParams', async () => {
+    // Read the source rather than execute it: this statement runs only with a
+    // database attached, which is exactly why the mismatch survived.
+    const src = await readFile(SCRIPT, 'utf8');
+    // Anchor on the SQL itself, not on prose: `n_exact` is discussed in the
+    // comment above the query, and slicing from there measured the comment.
+    const start = src.indexOf('SELECT count(*) FILTER (WHERE created_at');
+    assert.ok(start > 0, '找不到对账查询——它被改名或删掉了，这个测试要跟着改');
+    const recon = src.slice(start, src.indexOf('`', start));
+    assert.equal(highestPlaceholder(recon), auditParams(row).length,
+      '对账查询的占位符也要跟 auditParams 对齐');
+    assert.ok(!/target_user\s+IS NOT DISTINCT/.test(recon),
+      'target_user 不能出现在对账谓词里——eraseUser 会把它抹掉');
+  });
+})
