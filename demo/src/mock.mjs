@@ -49,7 +49,65 @@ function demoEvidence(rows) {
  * @param {string} message the teacher's message
  * @returns {Object} a turn-contract object (see contract.zh.md)
  */
+/**
+ * Long-term constraints the walkthrough can lift out of what she just typed.
+ *
+ * The mock emitted no `memory_facts` at all until now, so the whole capture path
+ * — taxonomy, quote-in-this-turn, the per-turn cap, child-claim archiving — was
+ * exercised only by unit tests against a store, never through a turn. A demo
+ * that never writes a fact also never shows the 记忆 pane doing anything.
+ *
+ * Each pattern carries the EXACT substring to quote, because the server checks
+ * the quote against her message this turn and drops any row it cannot find
+ * (contract.zh.md §memory_facts). A mock that invented a tidier quote would pass
+ * itself and teach the demo a lie about how capture works.
+ *
+ * The last entry is deliberately a child claim: it is well-formed, it names a
+ * real kind, and it must still be ARCHIVED on arrival rather than remembered —
+ * that is non-negotiable #1 at the memory boundary, and the walkthrough is where
+ * it becomes visible.
+ */
+const MOCK_MEMORY_PATTERNS = Object.freeze([
+  { re: /我们班没有鼓/, kind: 'equipment', quote: '我们班没有鼓', text: '班上没有鼓' },
+  { re: /没有多余的(场地|空间)/, kind: 'space', quote: '没有多余的场地', text: '园里没有多余的场地' },
+  { re: /周三.*(午睡|半小时)/, kind: 'schedule', quote: '周三下午要午睡', text: '周三下午要午睡，可用时间只有半小时' },
+  { re: /二十八个孩子|28 ?个孩子/, kind: 'class_composition', quote: '二十八个孩子', text: '班上二十八个孩子' },
+  { re: /我习惯先看(大方向|整体)/, kind: 'teacher_preference', quote: '我习惯先看大方向', text: '她习惯先看大方向再看细节' },
+  // Well-formed and still refused downstream — see the note above.
+  { re: /孩子们特别喜欢打鼓/, kind: 'class_composition', quote: '孩子们特别喜欢打鼓', text: '孩子们已经喜欢上打鼓' },
+]);
+
+/**
+ * @param {string} message the teacher's message this turn
+ * @returns {Array<{kind: string, text: string, quote: string}>} at most 3, the
+ *   same cap the server enforces — a mock that offered four would be testing the
+ *   cap by accident rather than the capture.
+ */
+function mockMemoryFacts(message) {
+  const text = String(message ?? '');
+  return MOCK_MEMORY_PATTERNS
+    .filter((p) => p.re.test(text) && text.includes(p.quote))
+    .slice(0, 3)
+    .map(({ kind, text: body, quote }) => ({ kind, text: body, quote }));
+}
+
+/**
+ * @param {Object} state current course_state
+ * @param {Array} history prior chat messages
+ * @param {string} message the teacher's message
+ * @returns {Object} a turn-contract object (see contract.zh.md)
+ */
 export function mockTurn(state, history, message, opts = {}) {
+  const turn = mockTurnBody(state, history, message, opts);
+  // Attached here rather than inside each flow: a constraint is a constraint
+  // whichever branch she is in, and threading it through six functions would
+  // guarantee five of them forgot.
+  const facts = mockMemoryFacts(message);
+  if (facts.length) turn.memory_facts = facts;
+  return turn;
+}
+
+function mockTurnBody(state, history, message, opts = {}) {
   // WF01 has not run yet → entry recognition on first contact (状态机优先).
   if (!(state.completed_nodes || []).includes('WF01')) return turnEntry(message, opts);
   switch (state.teacher_mode) {

@@ -79,7 +79,19 @@ async function startServer(t, port) {
       MINIMAX_API_KEY: '', GLM_API_KEY: '', ZAI_API_KEY: '', KIMI_API_KEY: '',
     },
   });
-  t.after(async () => { child.kill(); await rm(dataDir, { recursive: true, force: true }); });
+  // The kill is asynchronous: on Windows (and on this Google Drive mount) the
+  // child can still hold a handle inside dataDir when rm runs, and rmdir then
+  // fails ENOTEMPTY — a teardown race that fails a test whose assertions all
+  // passed. Retry briefly, and never let cleanup be the thing that reports a
+  // defect: a flaky red is worse than a leaked temp directory, because it
+  // trains everyone to re-run instead of read.
+  t.after(async () => {
+    child.kill();
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try { await rm(dataDir, { recursive: true, force: true }); return; }
+      catch { await new Promise((r) => setTimeout(r, 100)); }
+    }
+  });
   const started = new Promise((resolve) => {
     child.stdout.on('data', (b) => { if (String(b).includes(String(port))) resolve(); });
   });
