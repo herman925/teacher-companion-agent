@@ -99,7 +99,38 @@ Browser-verified, not taken from agent reports. New modules: `demo/src/ui/plan-v
 
 Uploads and `revokeUser` are done. `deleteClass` stays deliberately absent until there is an archive path.
 
-## 2026-08-14 (latest) — a staging database, and the write paths nobody had ever run
+## 2026-08-14 (latest) — the admin console, a live model turn, and the token counts that were never asked for
+
+### A real teacher turn ran end to end for the first time
+
+Every turn before this was either the anonymous mock or a failure. With a MiniMax key on the **dev instance only** (never public, never the repo), an authenticated turn completed in 48s and persisted correctly: two messages tagged `subject: course`, one snapshot, `provider: minimax`. The reply read both constraints out of one sentence — 「二十八个孩子，也够搭一头狮。先说鼓：没鼓也能做」 — and answered around the missing drum instead of ignoring it.
+
+**Rotate that key.** It was pasted into a chat transcript. Public's `MINIMAX_API_KEY=` is still empty — verified by fingerprint, it hashes to the empty string.
+
+### The export is NOT stale — checked against real v2 data
+
+Herman suspected the admin export had rotted after the redesign. It has not. Seeded a course with a plan tree, a class, two facts (one archived), a material, an axis signal and subject-tagged messages, then ran the real endpoint:
+
+- all seven top-level keys present (`courses, users, materials, facts, classes, interaction_signals`)
+- plan tree with an activity carrying `dates` AND **both status axes** on the same node
+- facts with `archived`, `archive_reason: child_claim`, `widened_from`, `widened_at`
+- `subject` survives on every message, including a node-scoped one
+- **`cos_key` never appears** in materials, and no vault ciphertext or password hash anywhere
+
+### `usage` was never populated, on any turn this product has ever made
+
+A live turn cost real tokens and stored `usage: null`. Nothing downstream was broken — serve.mjs put it on the turn event, `appendMessage` persisted it, the export carried it, the session log rendered it. Every layer faithfully carried an empty field. **The request never asked for the number.**
+
+An OpenAI-compatible vendor reports usage on a STREAMED call only in a final chunk, and only when `stream_options.include_usage` is set. `cacheInfoFromUsage` reads `prompt_tokens_details.cached_tokens` out of that same object, so prompt-cache reporting — the thing the entire context band ordering was designed around — has also been silently empty this whole time.
+
+Fixed and verified live: `{total 9728, prompt 8553, completion 1175, reasoning 905, cached 128}`. Cost measurement is now possible; before this there was nothing to measure.
+
+### Two false alarms of my own, recorded so the next reader trusts the right things
+
+1. I nearly reported the turn pipeline as broken. `/api/courses/:id` does not embed messages, so my probe read the wrong shape and saw zero. The disk had two. **A wrong alarm costs as much as a missed bug.**
+2. A frontend verifier reported `widen.confirm` unused and an armed-text comment as contradictory. Both were wrong — `confirm` is the button tooltip, and the armed text is view state that correctly lives in `render.js`. Only its third finding (a dead `className` argument) was real. **Independent does not mean right; check before acting.**
+
+## 2026-08-14 — a staging database, and the write paths nobody had ever run
 
 `teacher_platform_dev` on the same PostgreSQL server is now a full structural twin of production: 15 tables, all owned by `app_owner`, all with forced RLS, 27 policies, 25 `app_rw` grants, 41 `app_admin` grants, `facts.widened_at`, the same migration ledger. Verified by a full structural diff — every table, policy, grant, column — not by counting. Zero lines of difference.
 
