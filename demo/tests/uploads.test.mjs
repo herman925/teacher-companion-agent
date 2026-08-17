@@ -25,6 +25,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { createServer } from 'node:net';
 import { mkdtemp, rm, readdir, readFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -69,7 +70,24 @@ const exeBytes = () => Buffer.concat([Buffer.from('MZ'), Buffer.alloc(64, 0x90)]
  * pass for a reason unrelated to uploads. A non-dot directory inside the served
  * root is the case where only the objects guard stands.
  */
-async function startServer(t, port) {
+/** Ask the OS for a port nobody is on, starting from the hint. Fixed ports made
+ * this file report a defect in the upload routes whenever something unrelated
+ * on the machine happened to hold 8942 — a red that says nothing about the code
+ * is worse than no test, because it teaches everyone to re-run instead of read. */
+async function freePort(hint) {
+  for (let port = hint; port < hint + 200; port += 1) {
+    const taken = await new Promise((resolve) => {
+      const probe = createServer();
+      probe.once('error', () => resolve(true));
+      probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(false)));
+    });
+    if (!taken) return port;
+  }
+  throw new Error(`no free port near ${hint}`);
+}
+
+async function startServer(t, hint) {
+  const port = await freePort(hint);
   const dataDir = path.join(DEMO, `tmp-uploads-${port}`);
   await mkdir(dataDir, { recursive: true });
   const child = spawn(process.execPath, [path.join(DEMO, 'serve.mjs'), '--port', String(port)], {

@@ -18,10 +18,23 @@
   "plan_delta": [
     {
       "op": "set",
+      "id": "p1",
+      "node": { "kind": "phase", "title": "龙舟．做一条自己的船", "summary": "两周", "body": "…", "status": "ai_suggestion", "work_status": "draft" },
+      "reason": "教师说两周，节前收尾"
+    },
+    {
+      "op": "set",
       "id": "w1",
       "parent_id": "p1",
       "node": { "kind": "week", "title": "第一周：看看真的龙舟", "body": "…", "status": "ai_suggestion", "work_status": "draft" },
       "reason": "教师说第一周想先带孩子去看船"
+    },
+    {
+      "op": "set",
+      "id": "w1-a1",
+      "parent_id": "w1",
+      "node": { "kind": "activity", "title": "去河边看龙舟", "body": "…", "status": "ai_suggestion", "work_status": "draft" },
+      "reason": "先有真实印象再动手"
     }
   ],
   "blueprint_delta": [],
@@ -66,6 +79,7 @@
 - `remove` 删除：根节点删不掉。
 - **`id` 一经使用保持稳定**，用简短的英文或拼音标识（如 `w2`、`w2-a1`）。**永远不要写显示编号**（1 / 1.2 / 1.2.3）——编号由界面按树结构算出来，你写的会被丢掉。指向未知 id 的 op 整条作废，不会悄悄长出第二棵树。
 - `reason` 写一句人话：它会印在被这次改动牵动的下游节点上，教师两周后打开那个节点，看到的就是这句。
+- **一棵树一次写完，先父后子。** `plan_delta` 是一个数组，一轮想长出多少个节点就写多少条 op，父节点排在子节点前面。正文里描述过的每一个节点，都要在同一个 `plan_delta` 里有对应的 op——**正文里写了、`plan_delta` 里没有的节点，教师看不到，等于没做**。一条 op 只带一个节点，不要把第二条 op 写成 `plan_delta` 之外的顶层字段：数组以外的东西引擎读不到，重名的还会互相覆盖。
 
 `node` 只认下面这些字段，别的键会被丢掉：
 

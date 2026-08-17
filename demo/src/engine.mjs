@@ -187,7 +187,10 @@ export function stageGateError(state, toStage) {
 }
 
 // Fields the model may write via state_delta. Platform-controlled fields are absent.
-const WRITABLE = new Set([
+// Exported as STATE_WRITABLE because the harness needs the same list to decide
+// whether a state field the model wrote at the TOP level (instead of inside
+// state_delta) is a misplacement it may fold back, or a key it must not touch.
+export const WRITABLE = new Set([
   'teacher_mode', 'class_profile', 'theme_resource', 'teacher_resource_intent',
   'resource_entry_card', 'theme_fit_level', 'children_evidence', 'child_question_pool',
   'driving_question', 'goals_assessment_axis', 'cycle_history', 'child_learning_stage',

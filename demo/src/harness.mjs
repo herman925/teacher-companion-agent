@@ -2,7 +2,8 @@
 // Constrains the MODEL, never the teacher (AGENTS.md non-negotiable 2).
 // Every rule here must have both-directions fixtures in demo/tests/.
 
-import { evidenceIds, evidenceIsGrounded, stageGateError } from './engine.mjs';
+import { WRITABLE as STATE_WRITABLE, evidenceIds, evidenceIsGrounded, stageGateError } from './engine.mjs';
+import { walkPlan } from './plan-tsv.mjs';
 
 /** Child-claim patterns: assertions that children HAVE discovered/felt/understood.
  * Exported because the same sentence is the same claim wherever it is written:
@@ -138,6 +139,165 @@ function proposalChunks(turn, blueprintNodeText) {
   return jsonSentences(parts.join('\n'));
 }
 
+// ---------------------------------------------------------------------------
+// Stray-field salvage.
+//
+// A model that loses the shape of the contract does not fail loudly. On
+// 2026-08-17 MiniMax described a nine-node plan in its prose, opened
+// `plan_delta` with the month, closed the array one element in, and wrote the
+// remaining eight nodes as top-level `"item": {…}` siblings. `JSON.parse` keeps
+// only the LAST value of a repeated key, so eight nodes vanished between the
+// wire and the parser with no error anywhere: the turn parsed, the gate passed
+// clean, and the teacher saw one node under prose promising nine.
+//
+// The salvage below reads the raw text at depth 1 WITHOUT collapsing repeats,
+// folds op-shaped strays into `plan_delta` and misplaced state fields into
+// `state_delta`, and records a warn naming what it moved. It repairs shape, not
+// meaning: an op is only accepted where the model already wrote a whole node.
+// ---------------------------------------------------------------------------
+
+/** Read a JSON string literal starting at `i` (which must be a quote). */
+function readJsonString(s, i) {
+  let j = i + 1;
+  while (j < s.length) {
+    if (s[j] === '\\') { j += 2; continue; }
+    if (s[j] === '"') return { text: s.slice(i, j + 1), end: j + 1 };
+    j++;
+  }
+  return null;
+}
+
+/** Read one JSON value starting at `i`; returns its source span. */
+function readJsonValue(s, i) {
+  const c = s[i];
+  if (c === '"') return readJsonString(s, i);
+  if (c === '{' || c === '[') {
+    const close = c === '{' ? '}' : ']';
+    let depth = 0;
+    let j = i;
+    while (j < s.length) {
+      const ch = s[j];
+      if (ch === '"') {
+        const str = readJsonString(s, j);
+        if (!str) return null;
+        j = str.end;
+        continue;
+      }
+      if (ch === c) depth++;
+      else if (ch === close) {
+        depth--;
+        if (depth === 0) return { text: s.slice(i, j + 1), end: j + 1 };
+      }
+      j++;
+    }
+    return null;
+  }
+  let j = i;
+  while (j < s.length && s[j] !== ',' && s[j] !== '}') j++;
+  return { text: s.slice(i, j).trim(), end: j };
+}
+
+/**
+ * Depth-1 key/value pairs of a JSON object literal, in source order, with
+ * repeats preserved. This is the whole point: `JSON.parse` silently keeps the
+ * last value for a repeated key, which is precisely how the loss above happened.
+ * Returns [] for anything that is not a plain object literal, and stops early
+ * at the first malformation rather than guessing.
+ * @returns {Array<{key: string, value: any}>}
+ */
+export function topLevelPairs(text) {
+  const s = String(text ?? '').trim();
+  if (s[0] !== '{') return [];
+  const pairs = [];
+  let i = 1;
+  while (i < s.length) {
+    while (i < s.length && (s[i] === ',' || /\s/.test(s[i]))) i++;
+    if (s[i] === '}' || i >= s.length) break;
+    if (s[i] !== '"') break;
+    const key = readJsonString(s, i);
+    if (!key) break;
+    i = key.end;
+    while (i < s.length && /\s/.test(s[i])) i++;
+    if (s[i] !== ':') break;
+    i++;
+    while (i < s.length && /\s/.test(s[i])) i++;
+    const val = readJsonValue(s, i);
+    if (!val) break;
+    try {
+      pairs.push({ key: JSON.parse(key.text), value: JSON.parse(val.text) });
+    } catch {
+      break;
+    }
+    i = val.end;
+  }
+  return pairs;
+}
+
+/** Does this value carry a whole plan-tree edit? Both an id and a node body —
+ * an op-shaped fragment with neither is a guess we decline to make. */
+function looksLikePlanOp(v) {
+  return Boolean(v) && typeof v === 'object' && !Array.isArray(v)
+    && typeof v.id === 'string' && v.id.trim()
+    && Boolean(v.node) && typeof v.node === 'object';
+}
+
+/** Top-level keys the contract defines. Anything else is a misplacement. */
+const CONTRACT_KEYS = new Set([
+  'reply_markdown', 'question', 'questions', 'artifacts', 'closure_loop',
+  'plan_delta', 'blueprint_delta', 'state_delta', 'evidence_refs',
+  'round_complete', 'wf_trace',
+]);
+
+/**
+ * Recover plan ops and state fields the model wrote outside their channel.
+ * @param {string|any} raw the turn payload as it arrived (only a string can carry repeats)
+ * @param {Object} obj the parsed object
+ * @returns {{ ops: Array, state: Object, moved: string[], dropped: string[] }}
+ */
+export function salvageStrayFields(raw, obj) {
+  const pairs = typeof raw === 'string'
+    ? topLevelPairs(extractJson(raw))
+    : Object.entries(obj ?? {}).map(([key, value]) => ({ key, value }));
+  const ops = [];
+  const state = {};
+  const moved = [];
+  const dropped = [];
+  const known = new Set((Array.isArray(obj?.plan_delta) ? obj.plan_delta : [])
+    .map((op) => op && op.id).filter(Boolean));
+  for (const { key, value } of pairs) {
+    if (CONTRACT_KEYS.has(key)) continue;
+    if (looksLikePlanOp(value)) {
+      if (known.has(value.id)) continue;
+      known.add(value.id);
+      ops.push({ op: 'set', ...value });
+      moved.push(`${key} → plan_delta（${value.id}）`);
+      continue;
+    }
+    if (Array.isArray(value) && value.length && value.every(looksLikePlanOp)) {
+      for (const v of value) {
+        if (known.has(v.id)) continue;
+        known.add(v.id);
+        ops.push({ op: 'set', ...v });
+        moved.push(`${key} → plan_delta（${v.id}）`);
+      }
+      continue;
+    }
+    if (STATE_WRITABLE.has(key)) {
+      // state_delta wins: a field written in the right place is the model's
+      // considered value, and the stray copy is the accident.
+      if (obj?.state_delta && typeof obj.state_delta === 'object' && key in obj.state_delta) {
+        dropped.push(key);
+        continue;
+      }
+      state[key] = value;
+      moved.push(`${key} → state_delta`);
+      continue;
+    }
+    dropped.push(key);
+  }
+  return { ops, state, moved, dropped };
+}
+
 /**
  * L2: parse + structurally normalize the model's raw turn object.
  * @returns {{ turn: import('./types.mjs').Turn|null, violations: Array }}
@@ -181,6 +341,23 @@ export function parseTurn(raw) {
     // Dev-facing workflow trace — passed through unvalidated (developer mode UI).
     wf_trace: obj.wf_trace && typeof obj.wf_trace === 'object' ? obj.wf_trace : null,
   };
+  const stray = salvageStrayFields(raw, obj);
+  if (stray.ops.length) turn.plan_delta = [...turn.plan_delta, ...stray.ops];
+  if (Object.keys(stray.state).length) turn.state_delta = { ...turn.state_delta, ...stray.state };
+  if (stray.moved.length) {
+    violations.push({
+      kind: 'contract_stray_field',
+      detail: `模型把内容写在了契约字段之外，已归位：${stray.moved.join('；')}`,
+      action: 'warn',
+    });
+  }
+  if (stray.dropped.length) {
+    violations.push({
+      kind: 'contract_unknown_field',
+      detail: `顶层出现契约以外的字段，已忽略：${stray.dropped.join('、')}`,
+      action: 'warn',
+    });
+  }
   return { turn, violations };
 }
 
@@ -481,6 +658,34 @@ export function validateTurn(turn, state, opts = {}) {
         action: 'strip',
       });
     }
+  }
+
+  // 6b. Orphan plan ops (2026-08-17). A `set` naming a parent that neither
+  // exists nor is created earlier in the same delta means the model believes it
+  // wrote that parent and did not — the signature of a tree announced in prose
+  // and half-delivered through the channel. engine.applyPlanDelta strips such an
+  // op, correctly and silently; the teacher then reads about a two-week plan and
+  // sees one node. Blocking here spends a retry to get the rest of the tree,
+  // which is the only place the tree can still come from.
+  const priorIds = new Set();
+  if (state?.course_plan) {
+    for (const { node } of walkPlan(state.course_plan)) priorIds.add(node.id);
+  }
+  const orphans = [];
+  const madeHere = new Set();
+  for (const op of Array.isArray(turn.plan_delta) ? turn.plan_delta : []) {
+    if (!op || typeof op !== 'object' || !op.id) continue;
+    if (op.op === 'set' && op.parent_id && !priorIds.has(op.parent_id) && !madeHere.has(op.parent_id)) {
+      orphans.push(`${op.id}（父节点 ${op.parent_id}）`);
+    }
+    if (op.op === 'set') madeHere.add(op.id);
+  }
+  if (orphans.length) {
+    violations.push({
+      kind: 'plan_orphan',
+      detail: `plan_delta 里这些节点的父节点不存在：${orphans.join('、')}——请把整棵树从上到下写进同一个 plan_delta（先父后子），正文里描述过的节点一个都不能少`,
+      action: 'block',
+    });
   }
 
   // 7. Memory contradiction (ADR-0011 §5). The assembler can put 「班上没有鼓」 in
