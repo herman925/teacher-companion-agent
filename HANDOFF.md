@@ -16,6 +16,8 @@ The design is **four layers** (UI + workflow + prompts + harness). All four have
 - [x] `uncited_confirmation` and `memory_contradiction` violation kinds
 - [x] Two fabrication channels closed: `demo_sample`, `upload_ref`
 - [x] Chain rules retired: `node_prerequisite`, V1.3 artifact gates
+- [x] Stray-field salvage + `plan_orphan` (2026-08-17) — a turn that writes ops outside `plan_delta` is repaired and reported, and an op with a missing parent retries instead of shipping a one-node tree
+- [x] `revision_question_cap` / `revision_asked_twice` ([ADR-0014](docs/adr/0014-one-question-per-revision-turn.md)) — one question once the tree exists, then move the tree. **Tuned on one session; the ADR has a rollback section**
 - [ ] Flip `SCOPE_ENFORCE=1` — waits on a week of would-refuse rows
 
 ### Engine and data — mostly done
@@ -99,7 +101,37 @@ Browser-verified, not taken from agent reports. New modules: `demo/src/ui/plan-v
 
 Uploads and `revokeUser` are done. `deleteClass` stays deliberately absent until there is an archive path.
 
-## 2026-08-14 (latest) — the admin console, a live model turn, and the token counts that were never asked for
+## 2026-08-17 (latest) — the model lost seven nodes quietly, DeepSeek, and a cap on asking
+
+### A turn can lose most of its work with nothing reporting a failure
+
+The 中秋 session produced a plan in prose — one month, two weeks, seven activities — and delivered **one node**. The raw payload shows why: the model opened `plan_delta`, closed the array one element in, and wrote the rest as top-level `"item"` siblings. `JSON.parse` keeps only the last value of a repeated key, so what reached the engine was the month plus one orphan activity whose parent had never been created. The engine stripped the orphan, correctly. The gate reported clean.
+
+Nothing failed. That was the defect. Three changes, in the order they would have caught it:
+
+- **L2 salvage** — `topLevelPairs` reads the raw payload at depth 1 without collapsing repeats; op-shaped strays fold back into `plan_delta`, misplaced state fields into `state_delta`, every move recorded as a warn. Fragments that are not whole nodes are dropped, not guessed at.
+- **`plan_orphan`, blocking** — a `set` whose parent neither exists nor is created earlier in the same delta now retries with that feedback. It is the only place the rest of the tree can still come from.
+- **The contract example taught the bug**: it showed `plan_delta` holding exactly one op. It now shows month → week → activity.
+
+Replaying the real payload through the fix recovers both ops, both lost state fields, and blocks — that turn would have retried instead of shipping one node.
+
+### Two questions were the wrong number
+
+Herman, watching the same session stall over three turns of asking: 最多只能追问一题，不能超过一题；一题之后…都要直接生成下一步. Now [ADR-0014](docs/adr/0014-one-question-per-revision-turn.md): once a plan tree exists, `revision_question_cap` blocks a second card and `revision_asked_twice` blocks asking again after she answered without writing a delta. Intake keeps its uncapped count — the asymmetry is the decision, and the ADR carries a rollback section because it was tuned on one session.
+
+This is a **fourth** job for the runtime harness. [ADR-0012](docs/adr/0012-runtime-harness-after-the-workflow.md) §1 said three and only three; AGENTS.md now says four rather than pretending interaction economy is structural integrity.
+
+### DeepSeek added
+
+`deepseek-v4-pro` default, `deepseek-v4-flash` selectable, OpenAI line at `api.deepseek.com/v1`, `DEEPSEEK_API_KEY`. `jsonStrategy` is `json_object_prompt` deliberately — whether v4 honours a forced tool call is untested against the live endpoint and guessing wrong fails the way the bug above failed. Open question in MODEL-APIS.md. Nothing else about DeepSeek was researched, and that doc says so rather than leaving the row looking evaluated.
+
+### Also
+
+`uploads.test.mjs` used fixed ports 8941–8946; a python server of Herman's holds three of them, so it reported three upload-route defects that were nothing of the kind, and blocked the gate. It now asks the OS for a free port.
+
+**Still open:** rotate the MiniMax key (in a transcript, dev only); 备案/TLS still gates `COOKIE_SECURE=0`; `SCOPE_ENFORCE=1` waits on pilot rows.
+
+## 2026-08-14 — the admin console, a live model turn, and the token counts that were never asked for
 
 ### A real teacher turn ran end to end for the first time
 

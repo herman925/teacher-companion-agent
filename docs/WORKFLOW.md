@@ -2,7 +2,7 @@
 
 Status: ratified at the 2026-07-28 team meeting · written 2026-07-29 · Chinese twin: [WORKFLOW.zh-CN.md](WORKFLOW.zh-CN.md)
 
-Source: [source-docs/20260728_Team Meeting.md](../source-docs/20260728_Team%20Meeting.md) (verbatim transcript). Decisions are recorded in [ADR-0006](adr/0006-workbench-first-plan-tree.md), [ADR-0007](adr/0007-tiered-context-and-change-propagation.md), [ADR-0008](adr/0008-v1-scope-amendment.md), [ADR-0009](adr/0009-teacher-interaction-axes.md), [ADR-0010](adr/0010-conversation-and-workbench-model.md), [ADR-0011](adr/0011-memory-scopes-and-serialization.md).
+Source: [source-docs/20260728_Team Meeting.md](../source-docs/20260728_Team%20Meeting.md) (verbatim transcript). Decisions are recorded in [ADR-0006](adr/0006-workbench-first-plan-tree.md), [ADR-0007](adr/0007-tiered-context-and-change-propagation.md), [ADR-0008](adr/0008-v1-scope-amendment.md), [ADR-0009](adr/0009-teacher-interaction-axes.md), [ADR-0010](adr/0010-conversation-and-workbench-model.md), [ADR-0011](adr/0011-memory-scopes-and-serialization.md). Later amendments: [ADR-0012](adr/0012-runtime-harness-after-the-workflow.md) (what the harness guards), [ADR-0014](adr/0014-one-question-per-revision-turn.md) (one question per revision turn).
 
 Diagram: [docs/assets/workflow-v2.drawio](assets/workflow-v2.drawio), open in draw.io desktop or diagrams.net. The flowchart below carries the same content as text.
 
@@ -98,6 +98,8 @@ The engine writes changes back to the node and the teacher sees an undoable rece
 
 There is no 调整 button and no ✓确认 button. Confirmation becomes an engine event, but one that must cite the teacher's own words from that turn — no citation, no confirmation.
 
+**One question, then move the tree** ([ADR-0014](adr/0014-one-question-per-revision-turn.md), 2026-08-17). Once a plan exists, a revision turn may ask at most one question card, and once she answers it — clearly, vaguely, or beside the point — the next turn must write a delta rather than ask again. Where the intake asks freely, revision does not: a wrong node costs her one click, while a question she has already answered costs her a whole round-trip. Short on information, the agent proposes anyway, hedged and marked 预设，待现场验证, and lets her correct it on the tree.
+
 ## 7. E · Light accompaniment
 
 **Reporting is not required.** Teachers resist the act of feeding information back, and the meeting had field evidence for it: at the experiment kindergarten's round table, after the 园长 approved the direction and invited comment, a teacher said 「最好分析批注都不要让我们写，你们要有个 AI 帮我来分析吧，因为我们的工作量太大了」, and the technical review turned into a complaints session on the spot.
@@ -154,6 +156,7 @@ Facts are extracted automatically and never through a form. Capture surfaces imm
 4. Whether 月计划 is a document submitted on a monthly cycle. If it is, the root must align to calendar months.
 5. Token and cost measurement for tiered context — 冯浩然 owns it — plus the cache cost of switching between nodes.
 6. Layout: v1 ships the left/right split; the floating dialogue and a customizable arrangement are deferred; phones show one side at a time.
+7. Whether one question is enough to aim a revision with. [ADR-0014](adr/0014-one-question-per-revision-turn.md) caps it at one on the strength of a single observed session; the cap-hit rate against the number of exchanges a revision still needs is what settles it.
 
 ## 12. Where academic depth goes
 

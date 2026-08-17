@@ -2,7 +2,7 @@
 
 状态：2026-07-28 团队会议共识 · 本文写于 2026-07-29 · 英文孪生文档 [WORKFLOW.md](WORKFLOW.md)
 
-依据：[source-docs/20260728_Team Meeting.md](../source-docs/20260728_Team%20Meeting.md)（逐字稿）。决策记录见 [ADR-0006](adr/0006-workbench-first-plan-tree.md)、[ADR-0007](adr/0007-tiered-context-and-change-propagation.md)、[ADR-0008](adr/0008-v1-scope-amendment.md)、[ADR-0009](adr/0009-teacher-interaction-axes.md)、[ADR-0010](adr/0010-conversation-and-workbench-model.md)、[ADR-0011](adr/0011-memory-scopes-and-serialization.md)。
+依据：[source-docs/20260728_Team Meeting.md](../source-docs/20260728_Team%20Meeting.md)（逐字稿）。决策记录见 [ADR-0006](adr/0006-workbench-first-plan-tree.md)、[ADR-0007](adr/0007-tiered-context-and-change-propagation.md)、[ADR-0008](adr/0008-v1-scope-amendment.md)、[ADR-0009](adr/0009-teacher-interaction-axes.md)、[ADR-0010](adr/0010-conversation-and-workbench-model.md)、[ADR-0011](adr/0011-memory-scopes-and-serialization.md)。后续修订：[ADR-0012](adr/0012-runtime-harness-after-the-workflow.md)（护栏守什么）、[ADR-0014](adr/0014-one-question-per-revision-turn.md)（改树时只问一题）。
 
 图：[docs/assets/workflow-v2.drawio](assets/workflow-v2.drawio)，用 draw.io 桌面版或 diagrams.net 打开。下面的流程图是同一份内容的文字版。
 
@@ -96,6 +96,8 @@ flowchart TD
 
 没有「调整」按钮，没有「✓确认」按钮。确认变成引擎事件，但要求引用老师当轮的原话，引不出来就不算确认。
 
+**只问一题，然后就动树**（[ADR-0014](adr/0014-one-question-per-revision-turn.md)，2026-08-17）。计划树长出来之后，改树的一轮最多只能问一张问题卡；她答完——答得清楚、答得含糊、答得驴唇不对马嘴都一样——下一轮必须写进 delta，不许再问一遍。建档阶段可以放开问，改树阶段不行：一个不合心意的节点，她一句话就换掉；一个她已经回答过的问题，却要花掉她一整轮。信息不够就先给一版，措辞用「可能／预计」并标「预设，待现场验证」，让她在树上改。
+
 ## 7. E · 陪跑（轻）
 
 **不强制回传。** 老师抗拒信息回流的动作，这一点会上有实地依据：实验园的圆桌会上，园长拍板之后请老师提意见，老师说「最好分析批注都不要让我们写，你们要有个 AI 帮我来分析吧，因为我们的工作量太大了」，技术研讨会当场变成吐槽大会。
@@ -152,6 +154,7 @@ flowchart TD
 4. 月计划是不是老师要按月上交的文件。是的话，根节点要改回自然月。
 5. 分层上下文的 Token 与成本实测，浩然负责；同时要测节点之间切换的缓存代价。
 6. 界面：第一版左右分栏，浮动对话框和自定义布局延后；手机一次只显示一边。
+7. 改一次树，一题够不够用来对焦。[ADR-0014](adr/0014-one-question-per-revision-turn.md) 只凭一次实测就定在一题；要看拦截率和「改一次树实际花了几轮」对比之后才算数。
 
 ## 12. 学术深度怎么放进去
 
