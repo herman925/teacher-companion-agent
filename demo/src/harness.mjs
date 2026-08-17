@@ -454,6 +454,39 @@ export function validateTurn(turn, state, opts = {}) {
     violations.push({ kind: 'no_forward_handle', detail: '本轮既无问题卡、无产物、也未收尾——给教师留一个前进抓手：至少一张问题卡或一个开放式建议', action: 'warn' });
   }
 
+  // 2c. ONE follow-up when a plan already exists (Herman, 2026-08-17).
+  //
+  // The cap above is for the intake, where a pile of cards is how the model
+  // learns the class. Revision is the opposite situation: she is looking at a
+  // tree, she has said what she wants changed, and every extra card is another
+  // round-trip before she sees the change. Her instruction, verbatim: 最多只能
+  // 追问一题，不能超过一题；一题之后如果用户回答了，无论答案是清晰、混乱还是
+  // 有的没的，都要直接生成下一步——不合心意的用户自己会修改。
+  //
+  // Which is the right trade for a tree: a wrong node is one click from being
+  // rewritten, while a question she has already answered costs her a whole
+  // turn and reads as not listening. So the model gets exactly one question to
+  // aim with, and after her answer it must move the tree — the answer being
+  // vague is not grounds for asking again, it is grounds for proposing
+  // something and marking it 预设，待现场验证.
+  const planExists = Boolean(state?.course_plan) && [...walkPlan(state.course_plan)].length > 0;
+  const wroteDelta = (Array.isArray(turn.plan_delta) ? turn.plan_delta.length : 0)
+    + (Array.isArray(turn.blueprint_delta) ? turn.blueprint_delta.length : 0) > 0;
+  if (planExists && questions.length > 1) {
+    violations.push({
+      kind: 'revision_question_cap',
+      detail: `计划树已经存在，本轮却提出 ${questions.length} 张问题卡——改树时最多问一题。把最要紧的那一个留下，其余的自己先给一版方案，标「预设，待现场验证」，让教师改`,
+      action: 'block',
+    });
+  }
+  if (planExists && opts.askedLastTurn && questions.length && !wroteDelta) {
+    violations.push({
+      kind: 'revision_asked_twice',
+      detail: '上一轮已经问过一题，教师也回答了，这一轮却继续提问且没有改动计划树——她答完就该看到改动。答案含糊也照样先出一版，标「预设，待现场验证」，再请她改',
+      action: 'block',
+    });
+  }
+
   // 2b. Style proxies (warn only — style is persuasion, safety is law; DESIGN.md §4).
   const stylePref = String(opts.stylePref ?? '');
   if (stylePref.startsWith('极简速览')) {

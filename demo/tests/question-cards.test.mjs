@@ -99,6 +99,66 @@ test('many_questions: silent at 5 cards', () => {
   assert.equal(v.filter((x) => x.kind === 'many_questions').length, 0);
 });
 
+// ---------- L3: one follow-up once a plan exists (rule 2c) ----------
+
+/** A course whose plan tree has already grown. Everything below turns on this:
+ * the intake may pile cards up, revision may not. */
+const withPlan = () => ({
+  ...createInitialState('c1'),
+  course_plan: { version: 3, roots: [{ id: 'p1', title: '中秋', children: [{ id: 'w1', title: '第一周', children: [] }] }] },
+});
+const setOp = (id) => ({ op: 'set', id, parent_id: 'p1', node: { kind: 'week', title: '第二周', body: '正文' } });
+
+test('revision_question_cap: two cards against an existing plan are blocked', () => {
+  const t = baseTurn({ questions: [q('第一周从哪里切入？'), q('孩子做过灯笼吗？')] });
+  const hit = validateTurn(t, withPlan()).find((x) => x.kind === 'revision_question_cap');
+  assert.ok(hit, '树已经在了，改树时问两题就是让她多跑一轮');
+  assert.equal(hit.action, 'block');
+});
+
+test('revision_question_cap: ONE card against an existing plan is the allowed follow-up', () => {
+  const t = baseTurn({ questions: [q('第一周从哪里切入？')] });
+  const v = validateTurn(t, withPlan());
+  assert.equal(v.filter((x) => x.kind === 'revision_question_cap').length, 0);
+  assert.equal(v.filter((x) => x.action === 'block').length, 0);
+});
+
+test('revision_question_cap: the intake keeps its old headroom — no plan, no cap', () => {
+  const t = baseTurn({ questions: Array.from({ length: 4 }, (_, i) => q(`问题${i + 1}？`)) });
+  const v = validateTurn(t, createInitialState('c1'));
+  assert.equal(v.filter((x) => x.kind === 'revision_question_cap').length, 0,
+    '建档阶段一次问几张卡是设计，不是缺陷');
+});
+
+test('revision_asked_twice: asking again after her answer, with nothing written, is blocked', () => {
+  const t = baseTurn({ questions: [q('那你想从哪个活动开始？')] });
+  const hit = validateTurn(t, withPlan(), { askedLastTurn: true })
+    .find((x) => x.kind === 'revision_asked_twice');
+  assert.ok(hit, '她答完了就该看到改动，不是看到下一个问题');
+  assert.equal(hit.action, 'block');
+});
+
+test('revision_asked_twice: silent when the turn actually moves the tree', () => {
+  const t = baseTurn({ questions: [q('这一版对吗？')], plan_delta: [setOp('w2')] });
+  const v = validateTurn(t, withPlan(), { askedLastTurn: true });
+  assert.equal(v.filter((x) => x.kind === 'revision_asked_twice').length, 0,
+    '边改边确认是正常的；被禁的是只问不改');
+});
+
+test('revision_asked_twice: silent on the FIRST follow-up', () => {
+  const t = baseTurn({ questions: [q('你想改哪一周？')] });
+  const v = validateTurn(t, withPlan(), { askedLastTurn: false });
+  assert.equal(v.filter((x) => x.kind === 'revision_asked_twice').length, 0,
+    '一题是允许的那一题');
+});
+
+test('revision rules stay out of the intake entirely', () => {
+  const t = baseTurn({ questions: [q('班里多少个孩子？')] });
+  const v = validateTurn(t, createInitialState('c1'), { askedLastTurn: true });
+  assert.equal(v.filter((x) => x.action === 'block').length, 0,
+    '还没有树可改的时候，追问就是建档，不受这条约束');
+});
+
 // ---------- L3: anti-dead-end ----------
 
 test('no_forward_handle: warns on a mid-round turn with nothing to grab', () => {

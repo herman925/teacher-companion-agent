@@ -88,4 +88,16 @@ test('the course endpoint writes scope rows, and only for off-purpose turns', as
   // trusted one are not the same row downstream.
   const turn = planning.json.events.find((e) => e.event === 'turn');
   assert.equal(turn.data.gate_report.citation_checked, true);
+
+  // The revision cap (harness rule 2c) reads `askedLastTurn` off the PREVIOUS
+  // agent row's stored `turn_contract`. The rule has its own both-directions
+  // fixtures; what only a live server can show is that the field it reads is
+  // actually there and actually populated — a cap computed from a field that is
+  // always undefined would pass every unit test and never fire once.
+  const stored = await api(`/api/courses/${id}/messages`, { cookie });
+  const agentRow = stored.json.messages.filter((m) => m.role === 'agent').at(-1);
+  assert.ok(agentRow, '应当存下 agent 这一轮');
+  assert.ok(agentRow.turn_contract, 'turn_contract 必须落库——追问上限就是从它读的');
+  assert.ok(Array.isArray(agentRow.turn_contract.questions),
+    'questions 要以数组形状留在记录里，而不是只留渲染后的正文');
 });

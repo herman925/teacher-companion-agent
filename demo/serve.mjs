@@ -573,6 +573,10 @@ async function runTurn(req, emit) {
         stylePref: req.profile?.stylePref,
         teacherText,
         mock: fromMock,
+        // Did the previous agent turn already ask? That is the whole difference
+        // between a first follow-up and a second one, and the model cannot be
+        // trusted to remember it — the rule has to read the record.
+        askedLastTurn: Boolean(req.askedLastTurn),
         resolveUploadRef: req.resolveUploadRef,
       })
       : parsed.violations;
@@ -787,8 +791,19 @@ async function runCourseTurn(userId, courseId, body, emit) {
   // `subject` and `userId` ride the same request object the pipeline already
   // takes: the subject selects the focus band, the user id puts this teacher's
   // scope verdicts in the 范围护栏 log next to the anonymous ones.
+  // Did the last thing the agent said carry a question card? The revision cap
+  // (harness rule 2c) needs the previous turn, not this one: one follow-up is
+  // aiming, two is asking her something she already answered. Read off the
+  // stored `turn_contract` rather than the rendered text, because a question
+  // mark in prose is not a card and a card is what she can actually answer.
+  const lastAgent = [...recent].reverse().find((m) => m.role === 'agent');
+  const lastContract = lastAgent?.turn_contract ?? null;
+  const askedLastTurn = Array.isArray(lastContract?.questions)
+    ? lastContract.questions.length > 0
+    : Boolean(lastContract?.question);
+
   await runTurn({
-    ...body, subject, userId, facts, resolveUploadRef,
+    ...body, subject, userId, facts, resolveUploadRef, askedLastTurn,
     state: course.course_state, history, message: body.message,
   }, wrap);
 
