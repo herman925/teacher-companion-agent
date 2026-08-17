@@ -300,6 +300,7 @@ const ENV_KEYS = {
   zai: process.env.ZAI_API_KEY || '',
   'zai-coding': process.env.ZAI_API_KEY || '',
   kimi: process.env.KIMI_API_KEY || '',
+  deepseek: process.env.DEEPSEEK_API_KEY || '',
   qwen: process.env.QWEN_API_KEY || '',
   freemodel: process.env.FREEMODEL_API_KEY || '',
   openrouter: process.env.OPENROUTER_API_KEY || '',

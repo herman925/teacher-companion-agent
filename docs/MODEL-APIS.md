@@ -43,6 +43,15 @@ Decision summary (details below): **MiniMax-M3 default · GLM-5.2 fallback-1 and
 - Structured output is the weakest: `json_object` only, incompatible with thinking mode, docs warn against `max_tokens`.
 - **Bailian is itself an aggregator** hosting MiniMax/GLM/Kimi behind one DashScope key — our disaster-recovery path if a vendor account is suspended.
 
+### DeepSeek (added 2026-08-17, unevaluated)
+
+Added to the registry at Herman's request, not off the back of an evaluation — the table above is a 2026-07-05 snapshot and DeepSeek is not in it.
+
+- Base URL `https://api.deepseek.com` (OpenAI-compatible). They also publish `https://api.deepseek.com/anthropic` for the Anthropic wire format; the adapter speaks `chat/completions`, so it uses the OpenAI base and ignores the other, the same call we made for FreeModel's `cc.` nodes.
+- Models: `deepseek-v4-pro` (registry default) and `deepseek-v4-flash`. Pro is the default because this product's turn is a large contract and the cheap tier is where structure gets mangled; a teacher can pick flash in 模型与服务.
+- `jsonStrategy` is `json_object_prompt` — the conservative choice. **Open question:** whether v4-pro/v4-flash honour a forced tool call or a strict `json_schema` the way MiniMax and GLM do is untested against the live endpoint. Promote to `tool_call` only once a real turn proves it; guessing wrong fails silently, which is exactly how the 2026-08-17 turn lost seven nodes.
+- Pricing, rate limits, cache behaviour and `content_filter` behaviour: **not researched**. Nothing here should be quoted as a cost or capacity fact.
+
 ## 3. Cross-cutting facts
 
 - **CORS**: none of the four sanction browser-direct calls; official guidance is env-var keys behind your own backend. → The **proxy is mandatory** even for the demo (local Node proxy in dev; CloudBase function in production). This is where the runtime harness validators live anyway.
@@ -52,7 +61,7 @@ Decision summary (details below): **MiniMax-M3 default · GLM-5.2 fallback-1 and
 ## 4. Adapter design consequences (normative for the demo)
 
 1. One OpenAI-compatible client; per-provider config = `{baseURL, model, key, jsonStrategy, quirks}`.
-2. `jsonStrategy`: `"json_schema"` (GLM) · `"tool_call"` (MiniMax) · `"json_object_prompt"` (Kimi, Qwen).
+2. `jsonStrategy`: `"json_schema"` (GLM) · `"tool_call"` (MiniMax) · `"json_object_prompt"` (Kimi, Qwen, DeepSeek, and every aggregator).
 3. Quirk handlers: strip interleaved thinking (MiniMax); catch `content_filter` (all, esp. Kimi); no `max_tokens` with Qwen structured output.
 4. Vendor calls stream (`stream: true`, 2026-07-20): the adapter accumulates chunks back into the non-streaming completion shape, so parse/validate is unchanged, while live progress flows out through an `onDelta` callback — `first` (TTFT), `thinking` (GLM-family `reasoning_content` chunks AND MiniMax `<think>…</think>` content, both handled generically), `content` (char count; tool-call argument chunks count here, raw JSON args are never teacher-facing). Usage = whatever the final chunk carries (`stream_options.include_usage` is NOT sent — not universally accepted); a null usage is tolerated. Side-channel plain calls (title agent) and any call without `onDelta` stay non-streaming.
 5. Timeout physics (reworked 2026-07-23 with Herman after a healthy ~8-min generation died to the old flat abort). Three timers on streaming calls, one on buffered calls:
@@ -79,6 +88,7 @@ Decision summary (details below): **MiniMax-M3 default · GLM-5.2 fallback-1 and
 - MiniMax: [pricing](https://platform.minimaxi.com/docs/guides/pricing-paygo) · [M3 product](https://www.minimaxi.com/models/text/m3) · [OpenAI-compat API](https://platform.minimax.io/docs/api-reference/text-openai-api)
 - GLM: [GLM-5.2 docs](https://docs.bigmodel.cn/cn/guide/models/text/glm-5.2) · [GLM-4.7-Flash free](https://docs.bigmodel.cn/cn/guide/models/free/glm-4.7-flash) · [structured output](https://docs.z.ai/guides/capabilities/struct-output) · [pricing](https://bigmodel.cn/pricing) · web search: [mainland guide](https://docs.bigmodel.cn/cn/guide/tools/web-search) · [mainland API](https://docs.bigmodel.cn/api-reference/工具-api/网络搜索) · [international guide](https://docs.z.ai/guides/tools/web-search) · [international API](https://docs.z.ai/api-reference/tools/web-search)
 - Kimi: [pricing](https://platform.kimi.com/docs/pricing/chat) · [rate limits](https://platform.kimi.com/docs/pricing/limits) · [JSON mode](https://platform.moonshot.cn/docs/guide/use-json-mode-feature-of-kimi-api)
+- DeepSeek: [platform](https://platform.deepseek.com/) — endpoint parameters supplied by Herman 2026-08-17; the rest of the row is unresearched.
 - Qwen: [model pricing](https://help.aliyun.com/zh/model-studio/model-pricing) · [structured output](https://help.aliyun.com/zh/model-studio/qwen-structured-output) · [OpenAI compat](https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope)
 - Regulatory: [产品层登记 vs 模型备案 analysis](https://zhuanlan.zhihu.com/p/1906399088192255516) · [安全要求](https://www.secrss.com/articles/64276)
 - Aggregator: [SiliconFlow](https://siliconflow.cn/)

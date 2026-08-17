@@ -68,6 +68,26 @@ export const PROVIDERS = {
     jsonStrategy: 'json_object_prompt',
     enabled: true,
   },
+  // DeepSeek (platform.deepseek.com): mainland, OpenAI-compatible on
+  // api.deepseek.com. It also publishes an Anthropic-format base
+  // (…/anthropic) — a different wire format, not used here, same reason we
+  // skip FreeModel's cc. nodes: this adapter speaks chat/completions.
+  // jsonStrategy is the conservative one on purpose. DeepSeek documents
+  // `response_format: {"type":"json_object"}`; whether v4-flash/v4-pro honour a
+  // FORCED tool call or a strict json_schema the way MiniMax and GLM do is not
+  // something we have tested against the live endpoint, and guessing it wrong
+  // fails the way the 2026-08-17 turn failed — the model writes the plan
+  // somewhere the parser cannot see it. Open question in MODEL-APIS.md §4;
+  // promote to tool_call once a real turn proves it.
+  deepseek: {
+    id: 'deepseek',
+    label: 'DeepSeek（deepseek.com）',
+    baseURL: 'https://api.deepseek.com/v1',
+    model: 'deepseek-v4-pro',
+    jsonStrategy: 'json_object_prompt',
+    stripThinking: true,
+    enabled: true,
+  },
   qwen: {
     id: 'qwen',
     label: 'Qwen (qwen-plus)',

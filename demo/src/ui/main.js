@@ -440,6 +440,7 @@ const DRAWER_META = {
   qwen: { name: 'Qwen', icon: 'qwen', region: 'cn' },
   minimax: { name: 'MiniMax 中国', icon: 'minimax', region: 'cn' },
   kimi: { name: 'Kimi', icon: 'kimi', region: 'cn' },
+  deepseek: { name: 'DeepSeek', icon: 'deepseek', region: 'cn' },
   zai: { name: 'Z.AI', icon: 'zai', region: 'intl' },
   'zai-coding': { name: 'Z.AI Coding', icon: 'zai', region: 'intl' },
   'minimax-intl': { name: 'MiniMax 国际', icon: 'minimax', region: 'intl' },
@@ -482,6 +483,11 @@ const MODEL_TRAITS = {
   'MiniMax-M3': { intel: 4, speed: 3, cost: 3 },
   'kimi-k2.6': { intel: 4, speed: 2, cost: 2 },
   'qwen-plus': { intel: 3, speed: 4, cost: 4 },
+  // DeepSeek's own split: -pro is the capable one, -flash trades depth for
+  // speed and price. Both are cheap by mainland standards, which is the whole
+  // reason a teacher would pick them.
+  'deepseek-v4-pro': { intel: 5, speed: 2, cost: 4 },
+  'deepseek-v4-flash': { intel: 3, speed: 5, cost: 5 },
 };
 /** Family fallback so a version bump (glm-5.2 → glm-5.3) or an aggregator id
  * (z-ai/glm-4.7:free) keeps a 档位 instead of going blank. Unmatched ids —
@@ -490,6 +496,8 @@ const FAMILY_TRAITS = [
   [/glm/i, { intel: 5, speed: 2, cost: 3 }],
   [/minimax/i, { intel: 4, speed: 3, cost: 3 }],
   [/kimi|moonshot/i, { intel: 4, speed: 2, cost: 2 }],
+  [/deepseek.*flash/i, { intel: 3, speed: 5, cost: 5 }],
+  [/deepseek/i, { intel: 5, speed: 2, cost: 4 }],
   [/qwen/i, { intel: 3, speed: 4, cost: 4 }],
 ];
 /** 档位 for a model id, or null when we genuinely do not know. */
@@ -508,6 +516,7 @@ const FALLBACK_PROVIDERS = [
   { id: 'zai', label: 'GLM · Z.AI（国际，按量计费）', defaultModel: '', hasEnvKey: false },
   { id: 'zai-coding', label: 'GLM · Z.AI Coding Plan（国际，订阅额度）', defaultModel: '', hasEnvKey: false },
   { id: 'kimi', label: 'Kimi', defaultModel: '', hasEnvKey: false },
+  { id: 'deepseek', label: 'DeepSeek（deepseek.com）', defaultModel: 'deepseek-v4-pro', hasEnvKey: false },
   { id: 'freemodel', label: 'FreeModel.dev', defaultModel: 'auto', hasEnvKey: false },
   { id: 'openrouter', label: 'OpenRouter', defaultModel: '', hasEnvKey: false },
   { id: 'kilocode', label: 'Kilo Gateway（kilo.ai）', defaultModel: '', hasEnvKey: false },

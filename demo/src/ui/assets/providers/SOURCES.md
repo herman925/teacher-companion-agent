@@ -10,6 +10,7 @@ static hosting, and behind the mainland firewall. No icon API, no CDN, no key.
 | `qwen.svg` | `@lobehub/icons-static-svg` → `qwen-color` | |
 | `minimax.svg` | `@lobehub/icons-static-svg` → `minimax-color` | serves `minimax` and `minimax-intl` |
 | `kimi.svg` | `@lobehub/icons-static-svg` → `kimi-color` | |
+| `deepseek.svg` | `@lobehub/icons-static-svg` → `deepseek-color` | the vector of the same whale mark Herman supplied as a PNG — traced art would have been a worse copy of the original, and an SVG has no white box to remove |
 | `openrouter.svg` | `@lobehub/icons-static-svg` → `openrouter` | |
 | `kilocode.svg` | `@lobehub/icons-static-svg` → `kilocode` | |
 | `opencode-zen.svg` | `@lobehub/icons-static-svg` → `opencode` | |

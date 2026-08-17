@@ -58,8 +58,9 @@ Update later with `s deploy` again; remove with `s remove`.
 ## Keys and config
 
 - **API keys are optional on the server.** The UI sends the teacher's key per request. If you prefer
-  server-seeded keys, set `MINIMAX_API_KEY` / `GLM_API_KEY` / `KIMI_API_KEY` as **environment
-  variables** on the function — never in code, never in the repo.
+  server-seeded keys, set `MINIMAX_API_KEY` / `GLM_API_KEY` / `KIMI_API_KEY` / `DEEPSEEK_API_KEY`
+  as **environment variables** on the function — never in code, never in the repo. The full map of
+  provider id to variable name is `ENV_KEYS` in `demo/serve.mjs`.
 - **Buffered responses.** When the UI calls a cross-origin proxy it requests
   `Accept: application/json`, and `serve.mjs` returns the whole turn as one JSON payload (no SSE). This
   sidesteps any serverless response-streaming limits. Same-origin local dev still streams via SSE.
